@@ -551,3 +551,123 @@ void ogfx_rp_BltBitMapRastPort(struct BitMap *src, LONG sx, LONG sy, struct Rast
         gfx_planar_blit(&s, bsx, bsy, &pl.bm, bdx, bdy, bw, bh, minterm & 0xF0, rp->Mask);
     }
 }
+
+/* ---- copies between RastPorts: ClipBlit and ScrollRaster --------------------
+ * Row by row, CHUNK pixels at a time: the source's pixels are read from
+ * every place of srp first, then the destination's from drp, mixed by the
+ * minterm and written back through the mask. A destination pixel whose
+ * source pixel lands in no place (outside the layer, or in a simple
+ * refresh layer's covered part) is left as it is. When both RastPorts draw
+ * on one bitmap, the rows and chunks go in the order that reads every
+ * source pixel before the copy overwrites it, judged on the screen (a
+ * layer's offset included), so the whole rectangle moves as one, as with
+ * the blitter's own ordering. */
+#define CHUNK 128
+
+static LONG off_x(struct RastPort *rp) { return rp->Layer ? rp->Layer->bounds.MinX - rp->Layer->Scroll_X : 0; }
+static LONG off_y(struct RastPort *rp) { return rp->Layer ? rp->Layer->bounds.MinY - rp->Layer->Scroll_Y : 0; }
+
+static void rp_copy(struct RastPort *srp, LONG sx, LONG sy, struct RastPort *drp, LONG dx, LONG dy,
+                    LONG w, LONG h, ULONG minterm, ULONG mask)
+{
+    uint8_t sbuf[CHUNK], kept[CHUNK], dbuf[CHUNK];
+    uint8_t m7 = minterm & 0x80 ? 0xFF : 0, m6 = minterm & 0x40 ? 0xFF : 0;
+    uint8_t m5 = minterm & 0x20 ? 0xFF : 0, m4 = minterm & 0x10 ? 0xFF : 0;
+    int same = srp->BitMap == drp->BitMap, p;
+    int up, left;
+    uint32_t depth = srp->BitMap->Depth < drp->BitMap->Depth ? srp->BitMap->Depth : drp->BitMap->Depth;
+    LONG j, c, nchunks = (w + CHUNK - 1) / CHUNK;
+
+    if (w <= 0 || h <= 0) return;
+    /* two BitMaps on the same planes are one bitmap */
+    for (p = 0; !same && p < (int)depth; p++)
+        if (srp->BitMap->Planes[p] == drp->BitMap->Planes[p] && srp->BitMap->BytesPerRow == drp->BitMap->BytesPerRow) same = 1;
+    up = same && dy + off_y(drp) > sy + off_y(srp);
+    left = same && dx + off_x(drp) > sx + off_x(srp);
+    if (depth < 8) mask &= (1u << depth) - 1;
+    for (j = 0; j < h; j++) {
+        LONG row = up ? h - 1 - j : j;
+        for (c = 0; c < nchunks; c++) {
+            LONG c0 = (left ? nchunks - 1 - c : c) * CHUNK, n = w - c0 < CHUNK ? w - c0 : CHUNK, i, k, r[4];
+            struct walk wk;
+            struct place pl;
+            for (i = 0; i < n; i++) kept[i] = 0;
+            walk_start(&wk, srp);
+            while (walk_next(&wk, &pl)) {
+                if (!cut_to(&pl, sx + c0, sy + row, sx + c0 + n - 1, sy + row, r)) continue;
+                i = r[0] - pl.dx - (sx + c0);
+                gfx_planar_read8(&pl.bm, r[0], r[1], r[2], r[3], sbuf + i, CHUNK);
+                for (k = 0; k <= r[2] - r[0]; k++) kept[i + k] = 1;
+            }
+            walk_start(&wk, drp);
+            while (walk_next(&wk, &pl)) {
+                LONG o;
+                if (!cut_to(&pl, dx + c0, dy + row, dx + c0 + n - 1, dy + row, r)) continue;
+                o = r[0] - pl.dx - (dx + c0);
+                gfx_planar_read8(&pl.bm, r[0], r[1], r[2], r[3], dbuf, CHUNK);
+                for (k = 0; k <= r[2] - r[0]; k++) {
+                    uint8_t b = sbuf[o + k], d = dbuf[k];
+                    if (kept[o + k]) dbuf[k] = (uint8_t)((b & d & m7) | (b & ~d & m6) | (~b & d & m5) | (~b & ~d & m4));
+                }
+                gfx_planar_write8(&pl.bm, r[0], r[1], r[2], r[3], dbuf, CHUNK, mask);
+            }
+        }
+    }
+}
+
+int ogfx_rp_takes_copy(struct RastPort *rp)
+{
+    struct Layer *l = rp->Layer;
+
+    /* a simple refresh layer: OS 3.2 adds damage for what a copy leaves; a
+     * clip region: what OS 3.2 does there is not measured yet */
+    return !l || !(l->Flags & (LAYERSUPER | LAYERSIMPLE) || l->ClipRegion);
+}
+
+/* 1 when the rectangle lies inside the RastPort's layer (or there is none) */
+static int inside(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    struct Layer *l = rp->Layer;
+
+    if (!l) return 1;
+    return x0 >= l->Scroll_X && y0 >= l->Scroll_Y && x1 <= l->Scroll_X + l->bounds.MaxX - l->bounds.MinX &&
+           y1 <= l->Scroll_Y + l->bounds.MaxY - l->bounds.MinY;
+}
+
+int ogfx_rp_ClipBlit(struct RastPort *srp, LONG sx, LONG sy, struct RastPort *drp, LONG dx, LONG dy,
+                     LONG w, LONG h, ULONG minterm)
+{
+    sx = (WORD)sx; sy = (WORD)sy; dx = (WORD)dx; dy = (WORD)dy; w = (WORD)w; h = (WORD)h;
+    if (w <= 0 || h <= 0) return 1;
+    if (!inside(srp, sx, sy, sx + w - 1, sy + h - 1) || !inside(drp, dx, dy, dx + w - 1, dy + h - 1)) return 0;
+    rp_copy(srp, sx, sy, drp, dx, dy, w, h, minterm & 0xF0, drp->Mask);
+    return 1;
+}
+
+int ogfx_rp_ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    LONG w, h, adx, ady;
+    UBYTE pen = rp->FgPen, mode = rp->DrawMode;
+    UWORD *ptrn = rp->AreaPtrn;
+
+    dx = (WORD)dx; dy = (WORD)dy; x0 = (WORD)x0; y0 = (WORD)y0; x1 = (WORD)x1; y1 = (WORD)y1;
+    if (x0 > x1 || y0 > y1) return 1;
+    w = x1 - x0 + 1; h = y1 - y0 + 1;
+    adx = dx < 0 ? -dx : dx; ady = dy < 0 ? -dy : dy;
+    /* unlayered, OS 3.2 leaves the rectangle alone when the shift is its
+     * size or more; in a layer it draws outside the rectangle then, and
+     * clips one that is partly outside the layer: those stay with it */
+    if (rp->Layer && (adx >= w || ady >= h || !inside(rp, x0, y0, x1, y1))) return 0;
+    if (adx >= w || ady >= h) return 1;
+    rp_copy(rp, x0 + (dx > 0 ? dx : 0), y0 + (dy > 0 ? dy : 0), rp, x0 + (dx < 0 ? -dx : 0), y0 + (dy < 0 ? -dy : 0),
+            w - adx, h - ady, 0xC0, rp->Mask);
+    /* the space it leaves: solid BgPen through the write mask, whatever the
+     * draw mode and area pattern */
+    rp->FgPen = rp->BgPen; rp->DrawMode = JAM1; rp->AreaPtrn = NULL;
+    if (dx > 0) ogfx_rp_RectFill(rp, x1 - dx + 1, y0, x1, y1);
+    if (dx < 0) ogfx_rp_RectFill(rp, x0, y0, x0 - dx - 1, y1);
+    if (dy > 0) ogfx_rp_RectFill(rp, x0, y1 - dy + 1, x1, y1);
+    if (dy < 0) ogfx_rp_RectFill(rp, x0, y0, x1, y0 - dy - 1);
+    rp->FgPen = pen; rp->DrawMode = mode; rp->AreaPtrn = ptrn;
+    return 1;
+}
