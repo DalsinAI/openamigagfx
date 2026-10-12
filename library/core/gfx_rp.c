@@ -3,6 +3,7 @@
 #include <graphics/gfx.h>
 #include <graphics/clip.h>
 #include <graphics/layers.h>
+#include <graphics/text.h>
 #include "gfx_rp.h"
 #include "gfx_core.h"
 
@@ -1157,5 +1158,209 @@ int ogfx_rp_ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0
     if (dy > 0) ogfx_rp_RectFill(rp, x0, y1 - dy + 1, x1, y1);
     if (dy < 0) ogfx_rp_RectFill(rp, x0, y0, x1, y0 - dy - 1);
     rp->FgPen = pen; rp->DrawMode = mode; rp->AreaPtrn = ptrn;
+    return 1;
+}
+
+/* ---- text -------------------------------------------------------------------
+ * A font's character c is glyph c - tf_LoChar, or for a character outside
+ * tf_LoChar..tf_HiChar the glyph after tf_HiChar's. A glyph's image is
+ * CharLoc's width bits from bit offset CharLoc's offset of each of the
+ * font's tf_YSize rows of tf_CharData (tf_Modulo bytes apart). The image
+ * lands CharKern's pixels (0 without CharKern) right of the pen, and the
+ * pen moves on by CharSpace's width (tf_XSize without CharSpace), the
+ * kerning and the RastPort's TxSpacing. The rows are drawn from the
+ * baseline at cp_y up tf_Baseline rows. Model to be measured (TEXTPROBE):
+ * algorithmic bold ORs the image again 1..tf_BoldSmear pixels right and
+ * widens each character by tf_BoldSmear; italic moves row r right by
+ * (tf_Baseline - r) / 2; underline fills the row below the baseline; the
+ * whole is drawn as BltTemplate does, JAM2 filling the text's box. */
+struct tx {
+    struct TextFont *tf;
+    const UBYTE *s;
+    LONG n, spacing, smear, style;
+};
+
+static void tx_start(struct tx *t, struct RastPort *rp, const UBYTE *s, LONG n)
+{
+    t->tf = rp->Font;
+    t->s = s;
+    t->n = n;
+    t->spacing = rp->TxSpacing;
+    t->style = rp->AlgoStyle & (FSF_UNDERLINED | FSF_BOLD | FSF_ITALIC);
+    t->smear = t->style & FSF_BOLD ? (LONG)t->tf->tf_BoldSmear : 0;
+}
+
+static LONG tx_index(const struct TextFont *tf, UBYTE c)
+{
+    if (c < tf->tf_LoChar || c > tf->tf_HiChar) return (LONG)tf->tf_HiChar - tf->tf_LoChar + 1;
+    return (LONG)c - tf->tf_LoChar;
+}
+
+static LONG tx_kern(const struct TextFont *tf, LONG i)
+{
+    return tf->tf_CharKern ? ((const WORD *)tf->tf_CharKern)[i] : 0;
+}
+
+/* how far character i (glyph g) moves the pen */
+static LONG tx_adv(const struct tx *t, LONG g)
+{
+    const struct TextFont *tf = t->tf;
+    LONG sp = tf->tf_CharSpace ? ((const WORD *)tf->tf_CharSpace)[g] : (LONG)tf->tf_XSize;
+    return sp + tx_kern(tf, g) + t->spacing + t->smear;
+}
+
+/* floor((tf_Baseline - r) / 2): how far italic moves row r right */
+static LONG tx_slant(const struct tx *t, LONG r)
+{
+    LONG d = (LONG)t->tf->tf_Baseline - r;
+    if (!(t->style & FSF_ITALIC)) return 0;
+    return d >= 0 ? d / 2 : -((1 - d) / 2);
+}
+
+/* The string's width (where the pen ends, from where it began) and the
+ * columns its pixels may touch, from the pen, inclusive; *x0 > *x1 when
+ * none. */
+static LONG tx_measure(const struct tx *t, LONG *x0, LONG *x1)
+{
+    const struct TextFont *tf = t->tf;
+    LONG i, pos = 0, lo = 0x7FFFFFFF, hi = -0x7FFFFFFF;
+
+    for (i = 0; i < t->n; i++) {
+        LONG g = tx_index(tf, t->s[i]), w = ((const UWORD *)tf->tf_CharLoc)[2 * g + 1], left = pos + tx_kern(tf, g);
+        if (w) {
+            if (left < lo) lo = left;
+            if (left + w - 1 > hi) hi = left + w - 1;
+        }
+        pos += tx_adv(t, g);
+    }
+    if (t->style & FSF_UNDERLINED && t->n) {
+        if (0 < lo) lo = 0;
+        if (pos - 1 > hi) hi = pos - 1;
+    }
+    if (lo <= hi) {
+        hi += t->smear + tx_slant(t, 0);
+        lo += tx_slant(t, (LONG)tf->tf_YSize - 1);
+    }
+    *x0 = lo;
+    *x1 = hi;
+    return pos;
+}
+
+/* n bits (1 to 16) of a glyph row from bit off, left aligned */
+static UWORD tx_get(const UBYTE *row, ULONG mod, ULONG off, LONG n)
+{
+    ULONG b = off >> 3, v = 0;
+    int k;
+    for (k = 0; k < 3; k++) v = v << 8 | (b + k < mod ? row[b + k] : 0);
+    return (UWORD)((v << (off & 7)) >> 8 & (0xFFFF0000UL >> n));
+}
+
+/* OR n bits (left aligned in v) into buf at bit d (0 <= d, d + n <= len) */
+static void tx_or(UBYTE *buf, LONG d, UWORD v)
+{
+    ULONG w = (ULONG)v << 8 >> (d & 7);
+    UBYTE *p = buf + (d >> 3);
+    p[0] |= (UBYTE)(w >> 16);
+    p[1] |= (UBYTE)(w >> 8);
+    p[2] |= (UBYTE)w;
+}
+
+#define TX_CHUNK 512            /* pixels of a row built at a time */
+
+/* Row r of the template, bitmap columns cx..cx + TX_CHUNK - 1, the pen at
+ * bitmap column px, into buf (TX_CHUNK / 8 + 4 bytes). */
+static void tx_row(const struct tx *t, LONG r, LONG px, LONG cx, UBYTE *buf)
+{
+    const struct TextFont *tf = t->tf;
+    const UBYTE *row = (const UBYTE *)tf->tf_CharData + (ULONG)r * tf->tf_Modulo;
+    LONG i, k, pos = px + tx_slant(t, r) - cx;
+
+    for (i = 0; i < TX_CHUNK / 8 + 4; i++) buf[i] = 0;
+    for (i = 0; i < t->n; i++) {
+        LONG g = tx_index(tf, t->s[i]);
+        LONG off = ((const UWORD *)tf->tf_CharLoc)[2 * g], w = ((const UWORD *)tf->tf_CharLoc)[2 * g + 1];
+        LONG left = pos + tx_kern(tf, g);
+        pos += tx_adv(t, g);
+        for (k = 0; k <= t->smear; k++) {
+            LONG a = left + k, j;
+            for (j = 0; j < w; j += 16) {
+                LONG n = w - j > 16 ? 16 : w - j, d = a + j;
+                UWORD v;
+                if (d >= TX_CHUNK || d + n <= 0) continue;
+                v = tx_get(row, tf->tf_Modulo, (ULONG)(off + j), n);
+                if (d < 0) { v = (UWORD)(v << -d); n += d; d = 0; }
+                if (d + n > TX_CHUNK) n = TX_CHUNK - d;
+                tx_or(buf, d, (UWORD)(v & (0xFFFF0000UL >> n)));
+            }
+        }
+    }
+    if (t->style & FSF_UNDERLINED && r == (LONG)tf->tf_Baseline + 1) {
+        LONG a = px + tx_slant(t, r) - cx, b = a + (pos - (px + tx_slant(t, r) - cx)) - 1, x;
+        if (a < 0) a = 0;
+        if (b > TX_CHUNK - 1) b = TX_CHUNK - 1;
+        for (x = a; x <= b; x++) buf[x >> 3] |= (UBYTE)(0x80 >> (x & 7));
+    }
+}
+
+WORD ogfx_rp_TextLength(struct RastPort *rp, CONST_STRPTR s, ULONG n)
+{
+    struct tx t;
+    LONG x0, x1;
+    tx_start(&t, rp, (const UBYTE *)s, (LONG)(UWORD)n);
+    return (WORD)tx_measure(&t, &x0, &x1);
+}
+
+void ogfx_rp_TextExtent(struct RastPort *rp, CONST_STRPTR s, ULONG n, struct TextExtent *te)
+{
+    struct tx t;
+    LONG x0, x1;
+    tx_start(&t, rp, (const UBYTE *)s, (LONG)(UWORD)n);
+    te->te_Width = (WORD)tx_measure(&t, &x0, &x1);
+    te->te_Height = t.tf->tf_YSize;
+    if (x0 > x1) x0 = x1 = 0;
+    te->te_Extent.MinX = (WORD)x0;
+    te->te_Extent.MaxX = (WORD)x1;
+    te->te_Extent.MinY = (WORD)-t.tf->tf_Baseline;
+    te->te_Extent.MaxY = (WORD)(t.tf->tf_YSize - 1 - t.tf->tf_Baseline);
+}
+
+int ogfx_rp_takes_text(struct RastPort *rp)
+{
+    struct TextFont *tf = rp->Font;
+    return tf && !(tf->tf_Style & FSF_COLORFONT) && !(tf->tf_Flags & FPF_REVPATH) && ogfx_rp_takes(rp, 0);
+}
+
+int ogfx_rp_Text(struct RastPort *rp, CONST_STRPTR s, ULONG n)
+{
+    struct tx t;
+    struct walk w;
+    struct place pl;
+    UBYTE buf[TX_CHUNK / 8 + 4];
+    LONG x0, x1, len, top, r[4], y, cx, j;
+
+    if (!ogfx_rp_takes_text(rp)) return 0;
+    tx_start(&t, rp, (const UBYTE *)s, (LONG)(UWORD)n);
+    len = tx_measure(&t, &x0, &x1);
+    if (t.n && x0 <= x1) {
+        top = rp->cp_y - (LONG)t.tf->tf_Baseline;
+        walk_start(&w, rp);
+        while (walk_next(&w, &pl)) {
+            if (!cut_to(&pl, rp->cp_x + x0, top, rp->cp_x + x1, top + t.tf->tf_YSize - 1, r)) continue;
+            for (y = r[1]; y <= r[3]; y++)
+                for (cx = r[0] & ~15L; cx <= r[2]; cx += TX_CHUNK) {
+                    tx_row(&t, y - pl.dy - top, rp->cp_x + pl.dx, cx, buf);
+                    for (j = 0; j < TX_CHUNK / 16 && cx + 16 * j <= r[2]; j++) {
+                        uint32_t pat = (uint32_t)buf[2 * j] << 8 | buf[2 * j + 1];
+                        LONG a = cx + 16 * j, b = a + 15;
+                        int mode = pat_mode(rp, &pat);
+                        if (a < r[0]) a = r[0];
+                        if (b > r[2]) b = r[2];
+                        if (a > b || (mode == GFX_JAM1 && !pat) || (mode == GFX_XOR && !pat)) continue;
+                        gfx_planar_span(&pl.bm, a, b, y, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
+                    }
+                }
+        }
+    }
+    rp->cp_x = (WORD)(rp->cp_x + len);
     return 1;
 }

@@ -12,8 +12,10 @@
  * plane masks, overlapping copies), ClipBlit and ScrollRaster (overlapping,
  * and in a layer whether OS 3.2 adds damage, which the core never does),
  * AreaMove, AreaDraw, AreaEllipse and AreaEnd (polygons and ellipses, with
- * AREAOUTLINE and area patterns), DrawEllipse and EraseRect; after a line,
- * an area or an ellipse the RastPort's pen position,
+ * AREAOUTLINE and area patterns), DrawEllipse, EraseRect, Text (fonts
+ * made here, topaz 8 and disk fonts, with algorithmic styles and
+ * TxSpacing), TextLength and TextExtent; after a line, an area, an
+ * ellipse or text the RastPort's pen position,
  * pattern count and Flags are compared too. Prints the first DIFFs of each
  * call with what was asked and the first pixels that differ, and a count
  * per call. Exit 0 when
@@ -37,6 +39,8 @@
  *                                AreaEllipse sizes, outline modes, EraseRect)
  *   GfxCoreABITest AREAPROBE3   (flat and thin ellipses)
  *   GfxCoreABITest AREAPROBE4   (two-point polygons, pattern phase, outline pen position)
+ *   GfxCoreABITest TEXTPROBE    (what OS 3.2's Text draws and measures, for
+ *                                the rules)
  */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -50,14 +54,16 @@
 #include <proto/dos.h>
 #include <proto/graphics.h>
 #include <proto/layers.h>
+#include <proto/diskfont.h>
+#include <graphics/text.h>
 #include <string.h>
 #include "../library/core/gfx_rp.h"
 
-#define NCALLS 17
+#define NCALLS 19
 static const char *const names[NCALLS] = {
     "WritePixel", "ReadPixel", "SetRast", "WritePixelArray8", "ReadPixelArray8", "WriteChunkyPixels",
     "Draw", "PolyDraw", "RectFill", "BltPattern", "BltBitMap", "BltBitMapRastPort", "ClipBlit", "ScrollRaster",
-    "AreaEnd", "DrawEllipse", "EraseRect"
+    "AreaEnd", "DrawEllipse", "EraseRect", "Text", "TextExtent"
 };
 static ULONG runs[NCALLS], diffs[NCALLS], pad_runs, refused, junk;
 static int nochip;
@@ -1026,10 +1032,206 @@ static int areaprobe4(void)
     return 0;
 }
 
+/* ---- text ----------------------------------------------------------------
+ * The fonts Text is tried with: four made here (Chip RAM), glyphs A to E
+ * and the default glyph, whose shapes say which glyph and row drew a
+ * pixel: F0 proportional with CharSpace and CharKern (some kerning
+ * negative), F1 the same arrays without FPF_PROPORTIONAL, F2 neither
+ * array, F3 BoldSmear 2, the baseline on the last row and FSF_BOLD in
+ * tf_Style; then topaz 8 from ROM and whichever disk fonts open. */
+#define NFONTS 10
+struct tfont { struct TextFont *tf; const char *name; int disk, made; };
+static struct tfont fonts[NFONTS];
+static int nfonts;
+struct Library *DiskfontBase;
+static const UWORD mk_loc[12] = { 0, 5, 5, 3, 8, 7, 15, 1, 16, 8, 24, 4 };
+static const WORD mk_space[6] = { 6, 4, 8, 2, 9, 5 }, mk_kern[6] = { 0, -1, 2, 1, -2, 0 };
+
+static struct TextFont *make_font(int v)
+{
+    UBYTE *mem = AllocVec(sizeof(struct TextFont) + 7 * 6 + 24 + 12 + 12, MEMF_CHIP | MEMF_CLEAR);
+    struct TextFont *tf = (struct TextFont *)mem;
+    UBYTE *data;
+    UWORD *loc;
+    WORD *sp, *kn;
+    int r, g, k;
+    if (!mem) return NULL;
+    data = mem + sizeof(struct TextFont);
+    loc = (UWORD *)(data + 42);
+    sp = (WORD *)(data + 66);
+    kn = (WORD *)(data + 78);
+    for (k = 0; k < 12; k++) loc[k] = mk_loc[k];
+    for (k = 0; k < 6; k++) { sp[k] = mk_space[k]; kn[k] = mk_kern[k]; }
+    for (r = 0; r < 7; r++)
+        for (g = 0; g < 6; g++)
+            for (k = 0; k < loc[2 * g + 1]; k++)
+                if (k == 0 || (r + g) % 3)
+                    data[r * 6 + (loc[2 * g] + k) / 8] |= (UBYTE)(0x80 >> ((loc[2 * g] + k) % 8));
+    tf->tf_YSize = 7; tf->tf_XSize = 6; tf->tf_Baseline = 5; tf->tf_BoldSmear = 1;
+    tf->tf_LoChar = 'A'; tf->tf_HiChar = 'E';
+    tf->tf_CharData = data; tf->tf_Modulo = 6; tf->tf_CharLoc = loc;
+    tf->tf_Flags = FPF_PROPORTIONAL | FPF_DESIGNED;
+    tf->tf_CharSpace = sp; tf->tf_CharKern = kn;
+    if (v == 1) tf->tf_Flags = FPF_DESIGNED;
+    if (v == 2) { tf->tf_Flags = FPF_DESIGNED; tf->tf_CharSpace = tf->tf_CharKern = NULL; }
+    if (v == 3) { tf->tf_BoldSmear = 2; tf->tf_Baseline = 6; tf->tf_Style = FSF_BOLD; }
+    return tf;
+}
+
+static void open_fonts(void)
+{
+    static const char *const made[4] = { "F0 proportional", "F1 arrays, not proportional", "F2 no arrays", "F3 smear 2, baseline 6, bold" };
+    static const char *const disk[5] = { "topaz.font", "helvetica.font", "times.font", "courier.font", "garnet.font" };
+    static const UWORD dsize[5] = { 11, 13, 18, 13, 16 };
+    struct TextAttr ta;
+    int i;
+    for (i = 0; i < 4; i++)
+        if ((fonts[nfonts].tf = make_font(i))) { fonts[nfonts].name = made[i]; fonts[nfonts].made = 1; nfonts++; }
+    ta.ta_Name = (STRPTR)"topaz.font"; ta.ta_YSize = 8; ta.ta_Style = 0; ta.ta_Flags = FPF_ROMFONT;
+    if ((fonts[nfonts].tf = OpenFont(&ta))) fonts[nfonts++].name = "topaz 8";
+    if (!(DiskfontBase = OpenLibrary("diskfont.library", 36))) return;
+    for (i = 0; i < 5 && nfonts < NFONTS; i++) {
+        ta.ta_Name = (STRPTR)disk[i]; ta.ta_YSize = dsize[i]; ta.ta_Style = 0; ta.ta_Flags = FPF_DISKFONT;
+        if ((fonts[nfonts].tf = OpenDiskFont(&ta)) && fonts[nfonts].tf->tf_YSize == dsize[i]) {
+            fonts[nfonts].name = disk[i]; fonts[nfonts].disk = 1; nfonts++;
+        } else if (fonts[nfonts].tf) CloseFont(fonts[nfonts].tf);
+    }
+}
+
+static void close_fonts(void)
+{
+    int i;
+    for (i = 0; i < nfonts; i++) {
+        if (fonts[i].made) FreeVec(fonts[i].tf);
+        else CloseFont(fonts[i].tf);
+    }
+    nfonts = 0;
+    if (DiskfontBase) CloseLibrary(DiskfontBase);
+    DiskfontBase = NULL;
+}
+
+static void show_font(int i)
+{
+    struct TextFont *f = fonts[i].tf;
+    Printf("font %ld %s: YSize %ld XSize %ld Baseline %ld BoldSmear %ld Style $%02lx Flags $%02lx chars %ld-%ld",
+           (LONG)i, (LONG)fonts[i].name, (LONG)f->tf_YSize, (LONG)f->tf_XSize, (LONG)f->tf_Baseline,
+           (LONG)f->tf_BoldSmear, (LONG)f->tf_Style, (LONG)f->tf_Flags, (LONG)f->tf_LoChar, (LONG)f->tf_HiChar);
+    Printf("%s%s\n", (LONG)(f->tf_CharSpace ? " space" : ""), (LONG)(f->tf_CharKern ? " kern" : ""));
+}
+
+/* TEXTPROBE: each font, style and string drawn JAM2 pen 1 on pen 2 over
+ * pen 0 = '.', so '#' is a glyph pixel, '.' the box JAM2 fills and ' '
+ * untouched; with what TextLength, TextExtent and the pen say. The core
+ * draws the same on a second bitmap; a grid of its own follows where it
+ * differs. */
+struct tprobe { int font; UBYTE style, direct, mode; BYTE spacing; const char *s; };
+static const struct tprobe tprobes[] = {
+    { 0, 0, 0, JAM2, 0, "ABCDE" }, { 0, FSF_BOLD, 0, JAM2, 0, "ABCDE" }, { 0, FSF_ITALIC, 0, JAM2, 0, "ABCDE" },
+    { 0, FSF_UNDERLINED, 0, JAM2, 0, "ABCDE" }, { 0, 7, 0, JAM2, 0, "ABCDE" }, { 0, 0, 0, JAM2, 0, "EDBA" },
+    { 0, 0, 0, JAM2, 0, "AZ@C" }, { 0, 0, 0, JAM2, 2, "ABCDE" }, { 0, FSF_BOLD, 0, JAM2, -1, "ABCDE" },
+    { 0, 0, 0, JAM2, 0, "D" }, { 0, FSF_ITALIC, 0, JAM2, 0, "D" }, { 0, FSF_UNDERLINED, 0, JAM2, 0, "D" },
+    { 0, 0, 0, JAM1, 0, "ABCDE" }, { 0, 0, 0, JAM1 | INVERSVID, 0, "ABCDE" }, { 0, 0, 0, JAM2 | INVERSVID, 0, "ABCDE" },
+    { 0, 0, 0, COMPLEMENT, 0, "ABCDE" }, { 0, 0, 0, COMPLEMENT | JAM2, 0, "ABCDE" },
+    { 1, 0, 0, JAM2, 0, "ABCDE" }, { 1, FSF_ITALIC, 0, JAM2, 0, "ABCDE" },
+    { 2, 0, 0, JAM2, 0, "ABCDE" }, { 2, 7, 0, JAM2, 0, "ABCDE" },
+    { 3, FSF_BOLD, 0, JAM2, 0, "ABCDE" }, { 3, FSF_BOLD, 1, JAM2, 0, "ABCDE" }, { 3, 5, 0, JAM2, 0, "ABCDE" }, { 3, 7, 1, JAM2, 0, "ABCDE" },
+    { 4, 0, 0, JAM2, 0, "Wj_g" }, { 4, FSF_BOLD, 0, JAM2, 0, "Wj_g" }, { 4, FSF_ITALIC, 0, JAM2, 0, "Wj_g" },
+    { 4, FSF_UNDERLINED, 0, JAM2, 0, "Wj_g" }, { 4, 7, 0, JAM2, 0, "Wj_g" }, { 4, 0, 0, JAM2, 0, "a\x7f\x80\xff" },
+    { 5, 0, 0, JAM2, 0, "AVjy" }, { 5, 7, 0, JAM2, 0, "AVjy" }, { 6, 0, 0, JAM2, 0, "fjTy" }, { 6, 7, 0, JAM2, 0, "fjTy" },
+};
+
+static void tgrid(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    LONG x, y;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > 255) x1 = 255;
+    if (y1 > 47) y1 = 47;
+    Printf("   x %ld..%ld\n", x0, x1);
+    for (y = y0; y <= y1; y++) {
+        char line[260];
+        int k = 0;
+        for (x = x0; x <= x1; x++) { ULONG p = ReadPixel(rp, x, y); line[k++] = p == 1 ? '#' : p == 0 ? '.' : p == 2 ? ' ' : '?'; }
+        line[k] = 0;
+        Printf("%3ld %s\n", y, (LONG)line);
+    }
+    Flush(Output());
+}
+
+static int textprobe(void)
+{
+    struct BitMap *bm = AllocBitMap(256, 48, 2, BMF_CLEAR, NULL), *bm2 = AllocBitMap(256, 48, 2, BMF_CLEAR, NULL);
+    struct RastPort rp, rp2;
+    ULONG s;
+    int i, last = -1;
+
+    open_fonts();
+    if (!bm || !bm2 || nfonts < 5) {
+        PutStr("no Chip RAM or fonts\n");
+        if (bm) FreeBitMap(bm);
+        if (bm2) FreeBitMap(bm2);
+        close_fonts();
+        return 20;
+    }
+    Printf("TEXTPROBE, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    if (DiskfontBase) Printf("with %s", (LONG)DiskfontBase->lib_IdString);
+    for (i = 0; i < nfonts; i++) show_font(i);
+    InitRastPort(&rp); rp.BitMap = bm;
+    InitRastPort(&rp2); rp2.BitMap = bm2;
+    for (s = 0; s < sizeof tprobes / sizeof tprobes[0]; s++) {
+        const struct tprobe *t = &tprobes[s];
+        struct TextFont *f;
+        struct TextExtent te, te2;
+        LONG n = (LONG)strlen(t->s), x = 40, y, len, len2, cp, cp2, same = 1, gx, gy;
+        ULONG got = 0, ask;
+        if (t->font >= nfonts) continue;
+        f = fonts[t->font].tf;
+        y = (LONG)f->tf_Baseline + 4;
+        SetFont(&rp, f); SetFont(&rp2, f);
+        if (t->direct) { rp.AlgoStyle = rp2.AlgoStyle = t->style; }
+        else { got = SetSoftStyle(&rp, t->style, 0xFF); SetSoftStyle(&rp2, t->style, 0xFF); }
+        ask = AskSoftStyle(&rp);
+        rp.TxSpacing = rp2.TxSpacing = t->spacing;
+        SetWriteMask(&rp, 0xFF); SetWriteMask(&rp2, 0xFF);
+        SetRast(&rp, 2); SetRast(&rp2, 2);
+        SetAPen(&rp, 1); SetBPen(&rp, 0); SetDrMd(&rp, t->mode);
+        SetAPen(&rp2, 1); SetBPen(&rp2, 0); SetDrMd(&rp2, t->mode);
+        len = TextLength(&rp, (STRPTR)t->s, n);
+        TextExtent(&rp, (STRPTR)t->s, n, &te);
+        len2 = ogfx_rp_TextLength(&rp2, t->s, n);
+        ogfx_rp_TextExtent(&rp2, t->s, n, &te2);
+        Move(&rp, x, y); Move(&rp2, x, y);
+        Text(&rp, (STRPTR)t->s, n);
+        if (!ogfx_rp_Text(&rp2, t->s, n)) PutStr("(core refused)\n");
+        WaitBlit();
+        cp = rp.cp_x; cp2 = rp2.cp_x;
+        if (t->font != last) { PutStr("\n"); show_font(t->font); last = t->font; }
+        Printf("== font %ld style $%lx%s mode %ld spacing %ld '", (LONG)t->font, (LONG)t->style,
+               (LONG)(t->direct ? " (AlgoStyle set)" : ""), (LONG)t->mode, (LONG)t->spacing);
+        for (i = 0; i < n; i++) Printf((UBYTE)t->s[i] >= 32 && (UBYTE)t->s[i] < 127 ? "%lc" : "\\x%02lx", (LONG)(UBYTE)t->s[i]);
+        Printf("': SetSoftStyle %lx Ask %lx AlgoStyle %lx TextLength %ld TextExtent w %ld h %ld %ld,%ld..%ld,%ld cp %ld->%ld\n",
+               got, ask, (LONG)rp.AlgoStyle, len, (LONG)te.te_Width, (LONG)te.te_Height, (LONG)te.te_Extent.MinX,
+               (LONG)te.te_Extent.MinY, (LONG)te.te_Extent.MaxX, (LONG)te.te_Extent.MaxY, (LONG)x, cp);
+        if (len2 != len || te2.te_Width != te.te_Width || te2.te_Height != te.te_Height || te2.te_Extent.MinX != te.te_Extent.MinX ||
+            te2.te_Extent.MinY != te.te_Extent.MinY || te2.te_Extent.MaxX != te.te_Extent.MaxX || te2.te_Extent.MaxY != te.te_Extent.MaxY || cp2 != cp)
+            Printf("   ours: TextLength %ld TextExtent w %ld h %ld %ld,%ld..%ld,%ld cp %ld\n", len2, (LONG)te2.te_Width, (LONG)te2.te_Height,
+                   (LONG)te2.te_Extent.MinX, (LONG)te2.te_Extent.MinY, (LONG)te2.te_Extent.MaxX, (LONG)te2.te_Extent.MaxY, cp2);
+        for (gy = 0; gy < 48; gy++)
+            for (gx = 0; gx < 256; gx++)
+                if (ReadPixel(&rp, gx, gy) != ReadPixel(&rp2, gx, gy)) same = 0;
+        tgrid(&rp, x - 14, y - (LONG)f->tf_Baseline - 2, x + len + 14, y - (LONG)f->tf_Baseline + (LONG)f->tf_YSize + 1);
+        if (!same) { PutStr("   ours:\n"); tgrid(&rp2, x - 14, y - (LONG)f->tf_Baseline - 2, x + len + 14, y - (LONG)f->tf_Baseline + (LONG)f->tf_YSize + 1); }
+        else PutStr("   ours the same\n");
+    }
+    FreeBitMap(bm); FreeBitMap(bm2);
+    close_fonts();
+    return 0;
+}
+
 int main(void)
 {
-    LONG args[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S,AREAPROBE2/S,AREAPROBE3/S,AREAPROBE4/S", args, NULL);
+    LONG args[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S,AREAPROBE2/S,AREAPROBE3/S,AREAPROBE4/S,TEXTPROBE/S", args, NULL);
     ULONG rounds = rd && args[0] ? *(ULONG *)args[0] : 400, r, k, total = 0, bad = 0;
 
     if (rd && args[1]) { int rc = probe(); FreeArgs(rd); return rc; }
@@ -1038,6 +1240,7 @@ int main(void)
     if (rd && args[5]) { int rc = areaprobe2(); FreeArgs(rd); return rc; }
     if (rd && args[6]) { int rc = areaprobe3(); FreeArgs(rd); return rc; }
     if (rd && args[7]) { int rc = areaprobe4(); FreeArgs(rd); return rc; }
+    if (rd && args[8]) { int rc = textprobe(); FreeArgs(rd); return rc; }
     if (rd && args[2]) {
         layered = 1;
         if (!(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no layers.library\n"); FreeArgs(rd); return 20; }
@@ -1048,6 +1251,8 @@ int main(void)
     areapat = AllocVec(16 * sizeof(UWORD), MEMF_CHIP);
     bltmask = AllocVec(BLTMASK, MEMF_CHIP);
     if (!arr_a || !arr_b || !areapat || !bltmask) { PutStr("no memory\n"); return 20; }
+    open_fonts();
+    if (!nfonts) { PutStr("no fonts\n"); return 20; }
     Printf("OpenGfx core against %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
     if (layered) Printf("in layers, against %s", (LONG)LayersBase->lib_IdString);
 
@@ -1184,6 +1389,64 @@ int main(void)
                     for (j = 0; j < nv; j++) Printf("%s %ld,%ld", (LONG)(j && starts & 1L << j ? " |" : ""), (LONG)pts[2 * j], (LONG)pts[2 * j + 1]);
                     PutStr("\n");
                     if (!layered) show_pixels(0, 0, (LONG)W - 1, (LONG)H - 1);
+                }
+                break;
+            }
+            case 17: case 18: {
+                /* Text, and TextLength with TextExtent, in one of the fonts
+                 * with a random style, TxSpacing and string (sometimes
+                 * characters outside the font). Unlayered, the text's box
+                 * inside the bitmap (OS 3.2 does not clip); in a layer,
+                 * anywhere near it. */
+                struct tfont *tfo = &fonts[rnd() % nfonts];
+                struct TextFont *f = tfo->tf;
+                struct TextExtent tea, teb;
+                UBYTE str[24];
+                LONG n = (LONG)(rnd() % 21), j, st = (LONG)(rnd() % 8), spc = rnd() % 4 ? 0 : (LONG)(rnd() % 6) - 2, la, lb, top;
+                int mine;
+                for (j = 0; j < n; j++) str[j] = (UBYTE)(rnd() % 4 ? 32 + rnd() % 95 : rnd());
+                SetFont(&rpa, f); SetFont(&rpb, f);
+                SetSoftStyle(&rpa, (ULONG)st, 0xFF); SetSoftStyle(&rpb, (ULONG)st, 0xFF);
+                rpa.TxSpacing = rpb.TxSpacing = (WORD)spc;
+                if (sel == 18) {
+                    la = TextLength(&rpa, (STRPTR)str, (ULONG)n);
+                    lb = ogfx_rp_TextLength(&rpb, (CONST_STRPTR)str, (ULONG)n);
+                    TextExtent(&rpa, (STRPTR)str, (ULONG)n, &tea);
+                    ogfx_rp_TextExtent(&rpb, (CONST_STRPTR)str, (ULONG)n, &teb);
+                    ASKED("font %ld style %ld spacing %ld n %ld: width %ld extent %ld..%ld", (LONG)(tfo - fonts), st, spc, n,
+                          (LONG)tea.te_Width, (LONG)tea.te_Extent.MinX, (LONG)tea.te_Extent.MaxX);
+                    if (la == lb && memcmp(&tea, &teb, sizeof tea)) lb = la + 0x10000;
+                    if (report(18, la, lb, 0, 0))
+                        Printf("  ours: width %ld height %ld extent %ld,%ld..%ld,%ld\n", (LONG)teb.te_Width, (LONG)teb.te_Height,
+                               (LONG)teb.te_Extent.MinX, (LONG)teb.te_Extent.MinY, (LONG)teb.te_Extent.MaxX, (LONG)teb.te_Extent.MaxY);
+                    break;
+                }
+                if (rnd() % 4 == 0) {
+                    LONG sz = (LONG)(rnd() % 3);
+                    for (j = 0; j < 16; j++) areapat[j] = (UWORD)rnd();
+                    SetAfPt(&rpa, areapat, sz); SetAfPt(&rpb, areapat, sz);
+                } else { SetAfPt(&rpa, NULL, 0); SetAfPt(&rpb, NULL, 0); }
+                TextExtent(&rpa, (STRPTR)str, (ULONG)n, &tea);
+                top = y - (LONG)f->tf_Baseline;
+                if (!layered) {
+                    /* 8 pixels to spare on each side */
+                    if (x + tea.te_Extent.MinX - 8 < 0 || x + tea.te_Extent.MaxX + 8 >= (LONG)W ||
+                        top < 0 || top + (LONG)f->tf_YSize + 1 >= (LONG)H) break;
+                } else x -= 16;
+                rpa.cp_x = rpb.cp_x = (WORD)x; rpa.cp_y = rpb.cp_y = (WORD)y;
+                Text(&rpa, (STRPTR)str, (ULONG)n);
+                if (!(mine = ogfx_rp_Text(&rpb, (CONST_STRPTR)str, (ULONG)n))) Text(&rpb, (STRPTR)str, (ULONG)n);
+                SetAfPt(&rpa, NULL, 0); SetAfPt(&rpb, NULL, 0);
+                ASKED("%ld,%ld font %ld style %ld spacing %ld n %ld mode %ld", x, y, (LONG)(tfo - fonts), st, spc, n, (LONG)rpa.DrawMode);
+                if (!mine) { refused++; break; }
+                plane = same(&at);
+                if (report(17, 0, line_state(), plane, at)) {
+                    show_state();
+                    Printf("  fg %ld bg %ld writemask %02lx pattern rows %ld; string", (LONG)(UBYTE)rpa.FgPen, (LONG)(UBYTE)rpa.BgPen,
+                           (LONG)rpa.Mask, (LONG)(rpa.AreaPtrn ? 1L << rpa.AreaPtSz : 0));
+                    for (j = 0; j < n; j++) Printf(" %02lx", (LONG)str[j]);
+                    PutStr("\n");
+                    if (!layered) show_pixels(x + tea.te_Extent.MinX - 8, top, x + tea.te_Extent.MaxX + 8, top + (LONG)f->tf_YSize);
                 }
                 break;
             }
@@ -1487,6 +1750,7 @@ int main(void)
         if (chip_kept[k]) Printf("call kind %ld kept %ld bytes of Chip RAM until its round ended\n", (LONG)k, chip_kept[k]);
     if (junk) Printf("%lu AreaEnd calls on a table with no draw: OS 3.2 answered junk (not compared)\n", junk);
     if (pad_runs) Printf("%lu ReadPixelArray8 calls wrote the row padding differently (not counted)\n", pad_runs);
+    close_fonts();
     FreeVec(arr_a); FreeVec(arr_b); FreeVec(areapat); FreeVec(bltmask);
     if (LayersBase) CloseLibrary(LayersBase);
     if (rd) FreeArgs(rd);
