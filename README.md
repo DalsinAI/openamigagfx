@@ -10,9 +10,9 @@ It is the home for the open graphics.library work (amigachrome-guest `libraries/
 
 | File | What |
 | --- | --- |
-| `library/core/gfx_core.c`, `.h` | Drawing on a bitmap's own memory, in plain C: pixels, SetRast, and pens to and from byte arrays (an 8x8 bit transpose for planar). Pure: any core may run it. |
-| `library/core/gfx_rp.c`, `.h` | graphics.library's WritePixel, ReadPixel, SetRast, WritePixelArray8, ReadPixelArray8 and WriteChunkyPixels on an unlayered RastPort, through the core. |
-| `tests/m68k/test_gfx_core.sh` | The core for the 68000, 68020 and 68040 at -O0 and -O2 under qemu-m68k, against a pixel-at-a-time model. |
+| `library/core/gfx_core.c`, `.h` | Drawing on a bitmap's own memory, in plain C: pixels, SetRast, pens to and from byte arrays (an 8x8 bit transpose for planar), and rows through a 16-pixel pattern a byte at a time. Pure: any core may run it. |
+| `library/core/gfx_rp.c`, `.h` | graphics.library's WritePixel, ReadPixel, SetRast, WritePixelArray8, ReadPixelArray8, WriteChunkyPixels, Move, Draw, PolyDraw, RectFill and BltPattern on an unlayered RastPort, through the core. Multicolour area patterns come later. |
+| `tests/m68k/test_gfx_core.sh` | The core for the 68000, 68020 and 68040 at -O0 and -O2, each on that CPU under qemu-m68k, against a pixel-at-a-time model. |
 | `tests/GfxCoreABITest.c`, `build-amiga.sh` | The RastPort calls side by side with OS 3.2's graphics.library on Chip RAM bitmaps, byte for byte. |
 
 These are the calls OpenGfx 1.4 still hands to graphics.library's own code. WritePixelArray8 and WriteChunkyPixels are how a browser that renders into a chunky buffer gets its page onto an AGA screen.

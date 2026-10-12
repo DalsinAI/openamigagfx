@@ -25,4 +25,12 @@ LONG ogfx_rp_ReadPixelArray8(struct RastPort *rp, ULONG xstart, ULONG ystart, UL
 void ogfx_rp_WriteChunkyPixels(struct RastPort *rp, ULONG xstart, ULONG ystart, ULONG xstop, ULONG ystop,
                                UBYTE *array, LONG bytesperrow);
 
+/* Lines and fills. Coordinates are graphics.library's WORDs. */
+void ogfx_rp_Move(struct RastPort *rp, LONG x, LONG y);
+void ogfx_rp_Draw(struct RastPort *rp, LONG x, LONG y);
+void ogfx_rp_PolyDraw(struct RastPort *rp, LONG count, const WORD *xy);
+void ogfx_rp_RectFill(struct RastPort *rp, LONG xmin, LONG ymin, LONG xmax, LONG ymax);
+void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl, LONG maxx, LONG maxy,
+                        ULONG bytecnt);
+
 #endif
