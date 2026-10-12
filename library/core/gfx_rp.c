@@ -34,13 +34,15 @@ static int cut(struct RastPort *rp, ULONG *x0, ULONG *y0, ULONG *x1, ULONG *y1)
 /* Measured on OS 3.2: an unlayered RastPort is not clipped. WritePixel
  * answers 0 wherever the pixel is (OS 3.2 then writes outside the bitmap;
  * we draw nothing there), and ReadPixel reads whatever memory the pixel's
- * address falls on, as OS 3.2 does. */
+ * address falls on, as OS 3.2 does. Under INVERSVID the pixel is the
+ * background: JAM2 draws BgPen (or inverts, with COMPLEMENT), and without
+ * JAM2 the pixel is left as it is. */
 LONG ogfx_rp_WritePixel(struct RastPort *rp, LONG x, LONG y)
 {
     struct gfx_planar bm;
     UBYTE mode = rp->DrawMode;
 
-    if (!inside(rp, x, y)) return 0;
+    if (!inside(rp, x, y) || (mode & (INVERSVID | JAM2)) == INVERSVID) return 0;
     planar_of(rp, &bm);
     if (mode & COMPLEMENT)
         gfx_planar_put(&bm, x, y, 0, rp->Mask, GFX_INVERT);
@@ -100,6 +102,13 @@ LONG ogfx_rp_ReadPixelArray8(struct RastPort *rp, ULONG xstart, ULONG ystart, UL
     if (!cut(rp, &xstart, &ystart, &x1, &y1)) return 0;
     planar_of(rp, &bm);
     gfx_planar_read8(&bm, xstart, ystart, x1, y1, array, bpr);
+    /* each row's padding to 16 is 0, as OS 3.2 leaves it with a clean
+     * temporary RastPort (it copies whatever the temporary row holds) */
+    {
+        ULONG y, x, w = x1 - xstart + 1;
+        for (y = 0; y <= y1 - ystart; y++)
+            for (x = w; x < bpr; x++) array[y * bpr + x] = 0;
+    }
     return (LONG)((x1 - xstart + 1) * (y1 - ystart + 1));
 }
 
