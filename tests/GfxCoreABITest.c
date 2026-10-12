@@ -28,6 +28,8 @@
  *                                through a mask, for the rule)
  *   GfxCoreABITest LPROBE       (where a smart refresh layer keeps its
  *                                covered pixels, for the rule)
+ *   GfxCoreABITest AREAPROBE    (what OS 3.2's area fills and EraseRect
+ *                                draw, for the rules)
  */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -510,14 +512,202 @@ static int lprobe(void)
     return 0;
 }
 
+/* AREAPROBE: what OS 3.2's AreaMove, AreaDraw, AreaEnd, AreaEllipse and
+ * EraseRect draw, as pen digits a row, for the rules the core follows.
+ * A 2-plane 128 x 48 bitmap; each shape is drawn on pen 0 (or pen 3 for
+ * COMPLEMENT and EraseRect) and its box printed with 2 pixels round it.
+ * One shape a line: name, the calls' results, cp and Flags after. */
+struct ashape { const char *name; WORD n; WORD pts[20]; UBYTE fg, bg, dm, mask, outline, pat; UBYTE pre; };
+static const struct ashape ashapes[] = {
+    /* pts: n x,y pairs; x -1 starts a new polygon (AreaMove) at the next
+     * pair; x -2 is an AreaEllipse of the next two pairs (xc,yc, a,b) */
+    { "rect",            4, { 10,5, 30,5, 30,15, 10,15 },                   1, 0, 0, 0xFF, 0, 0, 0 },
+    { "rect ccw",        4, { 10,5, 10,15, 30,15, 30,5 },                   1, 0, 0, 0xFF, 0, 0, 0 },
+    { "triangle",        3, { 10,5, 40,20, 5,25 },                          1, 0, 0, 0xFF, 0, 0, 0 },
+    { "thin diagonal",   3, { 10,5, 40,8, 11,6 },                           1, 0, 0, 0xFF, 0, 0, 0 },
+    { "arrow concave",   7, { 5,10, 25,10, 25,4, 40,15, 25,26, 25,20, 5,20 }, 1, 0, 0, 0xFF, 0, 0, 0 },
+    { "octagon",         8, { 15,3, 30,3, 40,10, 40,20, 30,27, 15,27, 5,20, 5,10 }, 1, 0, 0, 0xFF, 0, 0, 0 },
+    { "two rects",       9, { 10,5, 30,5, 30,15, 10,15, -1,0, 20,10, 40,10, 40,20, 20,20 }, 1, 0, 0, 0xFF, 0, 0, 0 },
+    { "bowtie",          4, { 10,5, 40,25, 40,5, 10,25 },                   1, 0, 0, 0xFF, 0, 0, 0 },
+    { "horizontal",      2, { 10,10, 40,10 },                               1, 0, 0, 0xFF, 0, 0, 0 },
+    { "vertical",        2, { 20,5, 20,25 },                                1, 0, 0, 0xFF, 0, 0, 0 },
+    { "point",           1, { 20,10 },                                      1, 0, 0, 0xFF, 0, 0, 0 },
+    { "quad steep",      4, { 5,5, 60,7, 58,30, 7,28 },                     1, 0, 0, 0xFF, 0, 0, 0 },
+    { "1px wide tri",    3, { 20,5, 21,25, 20,25 },                         1, 0, 0, 0xFF, 0, 0, 0 },
+    { "x odd start",     4, { 13,5, 47,9, 33,22, 3,17 },                    1, 0, 0, 0xFF, 0, 0, 0 },
+    { "outline rect",    4, { 10,5, 30,5, 30,15, 10,15 },                   1, 0, 0, 0xFF, 2, 0, 0 },
+    { "outline tri",     3, { 10,5, 40,20, 5,25 },                          1, 0, 0, 0xFF, 2, 0, 0 },
+    { "outline concave", 7, { 5,10, 25,10, 25,4, 40,15, 25,26, 25,20, 5,20 }, 1, 0, 0, 0xFF, 2, 0, 0 },
+    { "pattern jam2",    4, { 10,5, 40,5, 40,14, 10,14 },                   1, 2, 1, 0xFF, 0, 1, 0 },
+    { "pattern jam2 y+1",4, { 10,6, 40,6, 40,15, 10,15 },                   1, 2, 1, 0xFF, 0, 1, 0 },
+    { "pattern jam1 tri",3, { 10,5, 40,20, 5,25 },                          2, 1, 0, 0xFF, 0, 1, 0 },
+    { "pattern inv",     3, { 10,5, 40,20, 5,25 },                          1, 2, 5, 0xFF, 0, 1, 0 },
+    { "complement",      3, { 10,5, 40,20, 5,25 },                          1, 0, 2, 0xFF, 0, 0, 3 },
+    { "jam2 solid",      3, { 10,5, 40,20, 5,25 },                          1, 2, 1, 0xFF, 0, 0, 3 },
+    { "mask 2 pen 3",    3, { 10,5, 40,20, 5,25 },                          3, 0, 0, 0x02, 0, 0, 0 },
+    { "outline mask 1",  3, { 10,5, 40,20, 5,25 },                          3, 0, 0, 0x01, 2, 0, 0 },
+    { "ellipse",         3, { -2,0, 30,15, 20,8 },                          1, 0, 0, 0xFF, 0, 0, 0 },
+    { "ellipse small",   3, { -2,0, 30,15, 3,2 },                           1, 0, 0, 0xFF, 0, 0, 0 },
+    { "ellipse 1x1",     3, { -2,0, 30,15, 1,1 },                           1, 0, 0, 0xFF, 0, 0, 0 },
+    { "ellipse outline", 3, { -2,0, 30,15, 12,6 },                          1, 0, 0, 0xFF, 2, 0, 0 },
+    { "ellipse + tri",   7, { -2,0, 30,15, 12,6, -1,0, 10,5, 50,10, 20,25 }, 1, 0, 0, 0xFF, 0, 0, 0 },
+};
+static UWORD apat[2] = { 0xAAAA, 0xF0F0 };
+
+static void grid(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    LONG x, y;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > 127) x1 = 127;
+    if (y1 > 47) y1 = 47;
+    Printf("   x %ld..%ld\n", x0, x1);
+    for (y = y0; y <= y1; y++) {
+        char line[140];
+        int k = 0;
+        for (x = x0; x <= x1; x++) line[k++] = (char)('0' + ReadPixel(rp, x, y));
+        line[k] = 0;
+        Printf("%3ld %s\n", y, (LONG)line);
+    }
+}
+
+static int areaprobe(void)
+{
+    struct BitMap *bm = AllocBitMap(128, 48, 2, BMF_CLEAR, NULL);
+    PLANEPTR tr = AllocRaster(128, 48);
+    WORD *vb = AllocVec(5 * 24, MEMF_CLEAR);
+    struct RastPort rp;
+    struct AreaInfo ai;
+    struct TmpRas tmp;
+    ULONG s;
+    int i;
+
+    if (!bm || !tr || !vb) {
+        PutStr("no Chip RAM\n");
+        if (bm) FreeBitMap(bm);
+        if (tr) FreeRaster(tr, 128, 48);
+        if (vb) FreeVec(vb);
+        return 20;
+    }
+    Printf("AREAPROBE, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    InitRastPort(&rp); rp.BitMap = bm;
+    InitTmpRas(&tmp, tr, RASSIZE(128, 48));
+    rp.TmpRas = &tmp;
+    for (s = 0; s < sizeof ashapes / sizeof ashapes[0]; s++) {
+        const struct ashape *a = &ashapes[s];
+        LONG minx = 127, miny = 47, maxx = 0, maxy = 0, r, poly = 1;
+        InitArea(&ai, vb, 24);
+        rp.AreaInfo = &ai;
+        SetWriteMask(&rp, 0xFF); SetDrMd(&rp, JAM1); SetAfPt(&rp, NULL, 0);
+        rp.Flags &= ~AREAOUTLINE;
+        SetRast(&rp, a->pre);
+        SetAPen(&rp, a->fg); SetBPen(&rp, a->bg); SetDrMd(&rp, a->dm); SetWriteMask(&rp, a->mask);
+        if (a->outline) SetOutlinePen(&rp, a->outline);
+        if (a->pat) SetAfPt(&rp, apat, 1);
+        Printf("== %s:", (LONG)a->name);
+        for (i = 0; i < 2 * a->n; i += 2) {
+            LONG x = a->pts[i], y = a->pts[i + 1];
+            if (x == -1) { poly = 1; continue; }
+            if (x == -2) {
+                LONG xc = a->pts[i + 2], yc = a->pts[i + 3], ea = a->pts[i + 4], eb = a->pts[i + 5];
+                r = AreaEllipse(&rp, xc, yc, ea, eb);
+                Printf(" E%ld", r);
+                if (xc - ea < minx) minx = xc - ea;
+                if (yc - eb < miny) miny = yc - eb;
+                if (xc + ea > maxx) maxx = xc + ea;
+                if (yc + eb > maxy) maxy = yc + eb;
+                i += 4;
+                continue;
+            }
+            if (x < minx) minx = x;
+            if (y < miny) miny = y;
+            if (x > maxx) maxx = x;
+            if (y > maxy) maxy = y;
+            r = poly ? AreaMove(&rp, x, y) : AreaDraw(&rp, x, y);
+            Printf(" %s%ld", (LONG)(poly ? "M" : "D"), r);
+            poly = 0;
+        }
+        r = AreaEnd(&rp);
+        WaitBlit();
+        Printf(" End%ld cp %ld,%ld Flags $%lx Count %ld\n", r, (LONG)rp.cp_x, (LONG)rp.cp_y, (LONG)rp.Flags, (LONG)ai.Count);
+        grid(&rp, minx - 2, miny - 2, maxx + 2, maxy + 2);
+    }
+
+    /* AreaInfo full: room for 4 vectors, then a 5th and 6th AreaDraw */
+    InitArea(&ai, vb, 4);
+    rp.AreaInfo = &ai;
+    SetRast(&rp, 0); SetAPen(&rp, 1); SetDrMd(&rp, JAM1); SetWriteMask(&rp, 0xFF); SetAfPt(&rp, NULL, 0);
+    rp.Flags &= ~AREAOUTLINE;
+    Printf("== full: M%ld", AreaMove(&rp, 10, 5));
+    Printf(" D%ld", AreaDraw(&rp, 30, 5));
+    Printf(" D%ld", AreaDraw(&rp, 30, 15));
+    Printf(" D%ld", AreaDraw(&rp, 20, 20));
+    Printf(" D%ld", AreaDraw(&rp, 10, 15));
+    Printf(" D%ld", AreaDraw(&rp, 5, 10));
+    Printf(" End%ld Count %ld\n", AreaEnd(&rp), (LONG)ai.Count);
+    WaitBlit();
+    grid(&rp, 3, 3, 32, 22);
+    /* no TmpRas */
+    InitArea(&ai, vb, 24);
+    rp.TmpRas = NULL;
+    SetRast(&rp, 0);
+    Printf("== no TmpRas: M%ld", AreaMove(&rp, 10, 5));
+    Printf(" D%ld D%ld", AreaDraw(&rp, 30, 5), AreaDraw(&rp, 20, 15));
+    Printf(" End%ld\n", AreaEnd(&rp));
+    WaitBlit();
+    grid(&rp, 8, 3, 32, 17);
+    rp.TmpRas = &tmp;
+
+    /* EraseRect unlayered: on pen 3, BgPen 1, JAM1 and Mask $FF, then
+     * JAM2 and Mask $01 */
+    for (i = 0; i < 2; i++) {
+        SetWriteMask(&rp, 0xFF);
+        SetRast(&rp, 3);
+        SetAPen(&rp, 2); SetBPen(&rp, 1); SetDrMd(&rp, i ? JAM2 : JAM1); SetWriteMask(&rp, i ? 0x01 : 0xFF);
+        EraseRect(&rp, 5, 4, 20, 9);
+        WaitBlit();
+        Printf("== EraseRect unlayered, %s mask $%lx\n", (LONG)(i ? "JAM2" : "JAM1"), (LONG)(i ? 0x01 : 0xFF));
+        grid(&rp, 3, 2, 22, 11);
+    }
+    /* EraseRect in a simple and a smart layer, with the default backfill,
+     * layer at 10,4: the rect is layer-relative, and partly outside */
+    if ((LayersBase = OpenLibrary("layers.library", 39))) {
+        ULONG fl[2] = { LAYERSIMPLE, LAYERSMART };
+        for (i = 0; i < 2; i++) {
+            struct Layer_Info *info = NewLayerInfo();
+            struct Layer *l;
+            SetWriteMask(&rp, 0xFF);
+            SetRast(&rp, 3);
+            if (!info) break;
+            if ((l = CreateUpfrontLayer(info, bm, 10, 4, 49, 23, fl[i], NULL))) {
+                SetAPen(l->rp, 2); SetBPen(l->rp, 1); SetWriteMask(l->rp, 0xFF);
+                EraseRect(l->rp, 4, 2, 15, 7);
+                EraseRect(l->rp, 30, 15, 60, 40);
+                WaitBlit();
+                Printf("== EraseRect in a %s layer 10,4-49,23: 4,2-15,7 and 30,15-60,40\n", (LONG)(i ? "smart" : "simple"));
+                grid(&rp, 8, 2, 51, 25);
+                DeleteLayer(0, l);
+            }
+            DisposeLayerInfo(info);
+        }
+        CloseLibrary(LayersBase);
+        LayersBase = NULL;
+    }
+    FreeVec(vb);
+    FreeRaster(tr, 128, 48);
+    FreeBitMap(bm);
+    return 0;
+}
+
 int main(void)
 {
-    LONG args[4] = { 0, 0, 0, 0 };
-    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S", args, NULL);
+    LONG args[5] = { 0, 0, 0, 0, 0 };
+    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S", args, NULL);
     ULONG rounds = rd && args[0] ? *(ULONG *)args[0] : 400, r, k, total = 0, bad = 0;
 
     if (rd && args[1]) { int rc = probe(); FreeArgs(rd); return rc; }
     if (rd && args[3]) { int rc = lprobe(); FreeArgs(rd); return rc; }
+    if (rd && args[4]) { int rc = areaprobe(); FreeArgs(rd); return rc; }
     if (rd && args[2]) {
         layered = 1;
         if (!(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no layers.library\n"); FreeArgs(rd); return 20; }
