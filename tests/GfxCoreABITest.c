@@ -39,6 +39,7 @@
  *                                AreaEllipse sizes, outline modes, EraseRect)
  *   GfxCoreABITest AREAPROBE3   (flat and thin ellipses)
  *   GfxCoreABITest AREAPROBE4   (two-point polygons, pattern phase, outline pen position)
+ *   GfxCoreABITest AREAPROBE5   (a layered AreaEnd that differed, and variants)
  *   GfxCoreABITest TEXTPROBE    (what OS 3.2's Text draws and measures, for
  *                                the rules)
  */
@@ -1035,6 +1036,91 @@ static int areaprobe4(void)
     return 0;
 }
 
+/* AREAPROBE5: the layered AreaEnd that differed in LAYERS at 014f3a0 and
+ * 7a7bee2 (back layer 47,33-85,40 smart, layers in front at
+ * 69,31-130,41 and 43,87-121,97; a two-point polygon, a move to 25,-1
+ * and an ellipse at 0,11 10 x 10), and variants, on OS 3.2 and on the
+ * core, each on its own bitmap. Prints the back layer through its
+ * RastPort (covered parts included) and the screen bitmap around it. */
+struct aprobe5 { const char *name; int simple, mode, pat, ell, my; };
+static const struct aprobe5 aprobe5s[] = {
+    { "as in LAYERS, JAM1 solid", 0, JAM1, 0, 1, -1 },
+    { "as in LAYERS, JAM2|COMPLEMENT, pattern", 0, JAM2 | COMPLEMENT, 1, 1, -1 },
+    { "no ellipse", 0, JAM1, 0, 0, -1 },
+    { "move to 25,0", 0, JAM1, 0, 1, 0 },
+    { "as in LAYERS, fronts simple refresh", 1, JAM1, 0, 1, -1 },
+};
+static UWORD apat5[4] = { 0x22CE, 0x7357, 0x321A, 0xE101 };
+
+static void ap5_grid(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    LONG x, y;
+    for (y = y0; y <= y1; y++) {
+        char line[140];
+        int k = 0;
+        for (x = x0; x <= x1; x++) line[k++] = (char)('0' + ReadPixel(rp, x, y));
+        line[k] = 0;
+        Printf("%3ld %s\n", y, (LONG)line);
+    }
+    Flush(Output());
+}
+
+static int areaprobe5(void)
+{
+    ULONG s;
+    int side;
+    if (!(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no layers.library\n"); return 20; }
+    Printf("AREAPROBE5, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    for (s = 0; s < sizeof aprobe5s / sizeof aprobe5s[0]; s++) {
+        const struct aprobe5 *a = &aprobe5s[s];
+        Printf("== %s\n", (LONG)a->name);
+        for (side = 0; side < 2; side++) {
+            struct BitMap *bm = AllocBitMap(144, 110, 2, BMF_CLEAR, NULL);
+            PLANEPTR tr = AllocRaster(144, 110);
+            WORD *vb = AllocVec(5 * 24, MEMF_CLEAR);
+            struct Layer_Info *linfo = NewLayerInfo();
+            struct Layer *bk = NULL, *f1 = NULL, *f2 = NULL;
+            struct RastPort *rp, srp;
+            struct AreaInfo ai;
+            struct TmpRas tmp;
+            LONG r;
+            ULONG ff = a->simple ? LAYERSIMPLE : LAYERSMART;
+            if (bm && linfo) {
+                bk = CreateUpfrontLayer(linfo, bm, 47, 33, 85, 40, LAYERSMART, NULL);
+                f1 = CreateUpfrontLayer(linfo, bm, 69, 31, 130, 41, ff, NULL);
+                f2 = CreateUpfrontLayer(linfo, bm, 43, 87, 121, 97, ff, NULL);
+            }
+            if (!bm || !tr || !vb || !linfo || !bk || !f1 || !f2) { PutStr("no memory\n"); return 20; }
+            InitRastPort(&srp); srp.BitMap = bm;
+            /* the front layers' parts of the screen to pen 2, to see a stray write */
+            SetAPen(&srp, 2); RectFill(&srp, 69, 31, 130, 41); RectFill(&srp, 43, 87, 121, 97);
+            rp = bk->rp;
+            SetWriteMask(rp, 0xFF); SetAPen(rp, 1); SetBPen(rp, 0); SetDrMd(rp, a->mode);
+            if (a->pat) { SetAfPt(rp, apat5, 2); } else { SetAfPt(rp, NULL, 0); }
+            InitArea(&ai, vb, 24); rp->AreaInfo = &ai;
+            InitTmpRas(&tmp, tr, RASSIZE(144, 110)); rp->TmpRas = &tmp;
+            AreaMove(rp, 6, 15); AreaDraw(rp, 26, 14); AreaMove(rp, 25, a->my);
+            if (a->ell) AreaEllipse(rp, 0, 11, 10, 10);
+            if (side) {
+                LockLayerRom(bk);
+                if (ogfx_rp_takes_area(rp)) { r = ogfx_rp_AreaEnd(rp); WaitBlit(); }
+                else { PutStr("core refuses\n"); r = -99; }
+                UnlockLayerRom(bk);
+            } else { r = AreaEnd(rp); WaitBlit(); }
+            Printf("-- %s: AreaEnd %ld; the back layer, x -2..40:\n", (LONG)(side ? "ours" : "OS"), r);
+            ap5_grid(rp, -2, -2, 40, 9);
+            PutStr("   the screen, x 40..131:\n");
+            ap5_grid(&srp, 40, 30, 131, 42);
+            rp->AreaInfo = NULL; rp->TmpRas = NULL; SetAfPt(rp, NULL, 0);
+            DeleteLayer(0, f2); DeleteLayer(0, f1); DeleteLayer(0, bk);
+            DisposeLayerInfo(linfo);
+            FreeVec(vb); FreeRaster(tr, 144, 110); FreeBitMap(bm);
+        }
+    }
+    CloseLibrary(LayersBase); LayersBase = NULL;
+    return 0;
+}
+
 /* ---- text ----------------------------------------------------------------
  * The fonts Text is tried with: four made here (Chip RAM), glyphs A to E
  * and the default glyph, whose shapes say which glyph and row drew a
@@ -1253,8 +1339,8 @@ static int textprobe(void)
 
 int main(void)
 {
-    LONG args[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S,AREAPROBE2/S,AREAPROBE3/S,AREAPROBE4/S,TEXTPROBE/S", args, NULL);
+    LONG args[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S,AREAPROBE2/S,AREAPROBE3/S,AREAPROBE4/S,TEXTPROBE/S,AREAPROBE5/S", args, NULL);
     ULONG rounds = rd && args[0] ? *(ULONG *)args[0] : 400, r, k, total = 0, bad = 0;
 
     if (rd && args[1]) { int rc = probe(); FreeArgs(rd); return rc; }
@@ -1264,6 +1350,7 @@ int main(void)
     if (rd && args[6]) { int rc = areaprobe3(); FreeArgs(rd); return rc; }
     if (rd && args[7]) { int rc = areaprobe4(); FreeArgs(rd); return rc; }
     if (rd && args[8]) { int rc = textprobe(); FreeArgs(rd); return rc; }
+    if (rd && args[9]) { int rc = areaprobe5(); FreeArgs(rd); return rc; }
     if (rd && args[2]) {
         layered = 1;
         if (!(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no layers.library\n"); FreeArgs(rd); return 20; }
@@ -1439,9 +1526,12 @@ int main(void)
                     ASKED("font %ld style %ld spacing %ld n %ld: width %ld extent %ld..%ld", (LONG)(tfo - fonts), st, spc, n,
                           (LONG)tea.te_Width, (LONG)tea.te_Extent.MinX, (LONG)tea.te_Extent.MaxX);
                     if (la == lb && memcmp(&tea, &teb, sizeof tea)) lb = la + 0x10000;
-                    if (report(18, la, lb, 0, 0))
+                    if (report(18, la, lb, 0, 0)) {
+                        Printf("  OS: width %ld height %ld extent %ld,%ld..%ld,%ld\n", (LONG)tea.te_Width, (LONG)tea.te_Height,
+                               (LONG)tea.te_Extent.MinX, (LONG)tea.te_Extent.MinY, (LONG)tea.te_Extent.MaxX, (LONG)tea.te_Extent.MaxY);
                         Printf("  ours: width %ld height %ld extent %ld,%ld..%ld,%ld\n", (LONG)teb.te_Width, (LONG)teb.te_Height,
                                (LONG)teb.te_Extent.MinX, (LONG)teb.te_Extent.MinY, (LONG)teb.te_Extent.MaxX, (LONG)teb.te_Extent.MaxY);
+                    }
                     break;
                 }
                 if (rnd() % 4 == 0) {
