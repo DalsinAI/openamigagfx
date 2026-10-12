@@ -1162,18 +1162,28 @@ int ogfx_rp_ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0
 }
 
 /* ---- text -------------------------------------------------------------------
- * A font's character c is glyph c - tf_LoChar, or for a character outside
+ * Measured on OS 3.2 (GfxCoreABITest TEXTPROBE, graphics 47.10). A
+ * font's character c is glyph c - tf_LoChar, or for a character outside
  * tf_LoChar..tf_HiChar the glyph after tf_HiChar's. A glyph's image is
  * CharLoc's width bits from bit offset CharLoc's offset of each of the
  * font's tf_YSize rows of tf_CharData (tf_Modulo bytes apart). The image
  * lands CharKern's pixels (0 without CharKern) right of the pen, and the
  * pen moves on by CharSpace's width (tf_XSize without CharSpace), the
- * kerning and the RastPort's TxSpacing. The rows are drawn from the
- * baseline at cp_y up tf_Baseline rows. Model to be measured (TEXTPROBE):
- * algorithmic bold ORs the image again 1..tf_BoldSmear pixels right and
- * widens each character by tf_BoldSmear; italic moves row r right by
- * (tf_Baseline - r) / 2; underline fills the row below the baseline; the
- * whole is drawn as BltTemplate does, JAM2 filling the text's box. */
+ * kerning and the RastPort's TxSpacing, with or without
+ * FPF_PROPORTIONAL. The rows are drawn from the baseline at cp_y up
+ * tf_Baseline rows.
+ *
+ * The text's box runs from the pen, or the leftmost image pixel if that is
+ * further left, to the end of its width, or the rightmost image pixel if
+ * that is further right, over all its rows. AlgoStyle's bold ORs the
+ * images again tf_BoldSmear pixels right (not widening a character),
+ * and adds that to the box's right. Italic moves row r right by
+ * floor((tf_Baseline - r) / 2) and widens the box by tf_Baseline / 2
+ * on the right and (tf_YSize - tf_Baseline + 1) / 2 on the left.
+ * Underline fills the row below the baseline (when the font has one)
+ * across the box, leaving a pixel clear each side of the image's pixels
+ * there. The whole is drawn as a template through the DrawMode, JAM2
+ * filling the box. TextExtent gives the box; for no characters, 0..-1. */
 struct tx {
     struct TextFont *tf;
     const UBYTE *s;
@@ -1196,20 +1206,20 @@ static LONG tx_index(const struct TextFont *tf, UBYTE c)
     return (LONG)c - tf->tf_LoChar;
 }
 
-static LONG tx_kern(const struct TextFont *tf, LONG i)
+static LONG tx_kern(const struct TextFont *tf, LONG g)
 {
-    return tf->tf_CharKern ? ((const WORD *)tf->tf_CharKern)[i] : 0;
+    return tf->tf_CharKern ? ((const WORD *)tf->tf_CharKern)[g] : 0;
 }
 
-/* how far character i (glyph g) moves the pen */
+/* how far glyph g moves the pen */
 static LONG tx_adv(const struct tx *t, LONG g)
 {
     const struct TextFont *tf = t->tf;
     LONG sp = tf->tf_CharSpace ? ((const WORD *)tf->tf_CharSpace)[g] : (LONG)tf->tf_XSize;
-    return sp + tx_kern(tf, g) + t->spacing + t->smear;
+    return sp + tx_kern(tf, g) + t->spacing;
 }
 
-/* floor((tf_Baseline - r) / 2): how far italic moves row r right */
+/* how far italic moves row r right: floor((tf_Baseline - r) / 2) */
 static LONG tx_slant(const struct tx *t, LONG r)
 {
     LONG d = (LONG)t->tf->tf_Baseline - r;
@@ -1217,13 +1227,12 @@ static LONG tx_slant(const struct tx *t, LONG r)
     return d >= 0 ? d / 2 : -((1 - d) / 2);
 }
 
-/* The string's width (where the pen ends, from where it began) and the
- * columns its pixels may touch, from the pen, inclusive; *x0 > *x1 when
- * none. */
+/* The string's width (where the pen ends, from where it began) and its
+ * box's columns from the pen, inclusive (0..-1 for no characters). */
 static LONG tx_measure(const struct tx *t, LONG *x0, LONG *x1)
 {
     const struct TextFont *tf = t->tf;
-    LONG i, pos = 0, lo = 0x7FFFFFFF, hi = -0x7FFFFFFF;
+    LONG i, pos = 0, lo = 0, hi = -0x7FFFFFFF;
 
     for (i = 0; i < t->n; i++) {
         LONG g = tx_index(tf, t->s[i]), w = ((const UWORD *)tf->tf_CharLoc)[2 * g + 1], left = pos + tx_kern(tf, g);
@@ -1233,13 +1242,12 @@ static LONG tx_measure(const struct tx *t, LONG *x0, LONG *x1)
         }
         pos += tx_adv(t, g);
     }
-    if (t->style & FSF_UNDERLINED && t->n) {
-        if (0 < lo) lo = 0;
-        if (pos - 1 > hi) hi = pos - 1;
-    }
-    if (lo <= hi) {
-        hi += t->smear + tx_slant(t, 0);
-        lo += tx_slant(t, (LONG)tf->tf_YSize - 1);
+    if (!t->n) { *x0 = 0; *x1 = -1; return 0; }
+    if (pos - 1 > hi) hi = pos - 1;
+    hi += t->smear;
+    if (t->style & FSF_ITALIC) {
+        hi += tf->tf_Baseline / 2;
+        lo -= ((LONG)tf->tf_YSize - tf->tf_Baseline + 1) / 2;
     }
     *x0 = lo;
     *x1 = hi;
@@ -1255,7 +1263,7 @@ static UWORD tx_get(const UBYTE *row, ULONG mod, ULONG off, LONG n)
     return (UWORD)((v << (off & 7)) >> 8 & (0xFFFF0000UL >> n));
 }
 
-/* OR n bits (left aligned in v) into buf at bit d (0 <= d, d + n <= len) */
+/* OR v (16 bits) into buf from bit d */
 static void tx_or(UBYTE *buf, LONG d, UWORD v)
 {
     ULONG w = (ULONG)v << 8 >> (d & 7);
@@ -1265,40 +1273,52 @@ static void tx_or(UBYTE *buf, LONG d, UWORD v)
     p[2] |= (UBYTE)w;
 }
 
-#define TX_CHUNK 512            /* pixels of a row built at a time */
+static int tx_bit(const UBYTE *buf, LONG x)
+{
+    return buf[x >> 3] >> (7 - (x & 7)) & 1;
+}
 
-/* Row r of the template, bitmap columns cx..cx + TX_CHUNK - 1, the pen at
- * bitmap column px, into buf (TX_CHUNK / 8 + 4 bytes). */
-static void tx_row(const struct tx *t, LONG r, LONG px, LONG cx, UBYTE *buf)
+#define TX_CHUNK 512            /* pixels of a row built at a time */
+#define TX_BITS (TX_CHUNK + 16) /* with a byte each side */
+#define TX_BUF (TX_BITS / 8 + 3)
+
+/* Row r of the template for bitmap columns cx - 8 .. cx + TX_CHUNK + 7
+ * into buf (TX_BUF bytes; bit 0 is column cx - 8), the pen at bitmap
+ * column px and the box from bitmap column bx0 to bx1. */
+static void tx_row(const struct tx *t, LONG r, LONG px, LONG bx0, LONG bx1, LONG cx, UBYTE *buf)
 {
     const struct TextFont *tf = t->tf;
     const UBYTE *row = (const UBYTE *)tf->tf_CharData + (ULONG)r * tf->tf_Modulo;
-    LONG i, k, pos = px + tx_slant(t, r) - cx;
+    LONG i, k, x, pos = px + tx_slant(t, r) - (cx - 8);
 
-    for (i = 0; i < TX_CHUNK / 8 + 4; i++) buf[i] = 0;
+    for (i = 0; i < TX_BUF; i++) buf[i] = 0;
     for (i = 0; i < t->n; i++) {
         LONG g = tx_index(tf, t->s[i]);
         LONG off = ((const UWORD *)tf->tf_CharLoc)[2 * g], w = ((const UWORD *)tf->tf_CharLoc)[2 * g + 1];
         LONG left = pos + tx_kern(tf, g);
         pos += tx_adv(t, g);
-        for (k = 0; k <= t->smear; k++) {
-            LONG a = left + k, j;
+        for (k = 0; k <= t->smear; k += t->smear ? t->smear : 1) {
+            LONG j;
             for (j = 0; j < w; j += 16) {
-                LONG n = w - j > 16 ? 16 : w - j, d = a + j;
+                LONG n = w - j > 16 ? 16 : w - j, d = left + k + j;
                 UWORD v;
-                if (d >= TX_CHUNK || d + n <= 0) continue;
+                if (d >= TX_BITS || d + n <= 0) continue;
                 v = tx_get(row, tf->tf_Modulo, (ULONG)(off + j), n);
                 if (d < 0) { v = (UWORD)(v << -d); n += d; d = 0; }
-                if (d + n > TX_CHUNK) n = TX_CHUNK - d;
+                if (d + n > TX_BITS) n = TX_BITS - d;
                 tx_or(buf, d, (UWORD)(v & (0xFFFF0000UL >> n)));
             }
         }
     }
     if (t->style & FSF_UNDERLINED && r == (LONG)tf->tf_Baseline + 1) {
-        LONG a = px + tx_slant(t, r) - cx, b = a + (pos - (px + tx_slant(t, r) - cx)) - 1, x;
-        if (a < 0) a = 0;
-        if (b > TX_CHUNK - 1) b = TX_CHUNK - 1;
-        for (x = a; x <= b; x++) buf[x >> 3] |= (UBYTE)(0x80 >> (x & 7));
+        LONG a = bx0 - (cx - 8), b = bx1 - (cx - 8);
+        UBYTE u[TX_BUF];
+        for (i = 0; i < TX_BUF; i++) u[i] = 0;
+        if (a < 1) a = 1;
+        if (b > TX_BITS - 2) b = TX_BITS - 2;
+        for (x = a; x <= b; x++)
+            if (!tx_bit(buf, x - 1) && !tx_bit(buf, x + 1)) u[x >> 3] |= (UBYTE)(0x80 >> (x & 7));
+        for (i = 0; i < TX_BUF; i++) buf[i] |= u[i];
     }
 }
 
@@ -1317,7 +1337,6 @@ void ogfx_rp_TextExtent(struct RastPort *rp, CONST_STRPTR s, ULONG n, struct Tex
     tx_start(&t, rp, (const UBYTE *)s, (LONG)(UWORD)n);
     te->te_Width = (WORD)tx_measure(&t, &x0, &x1);
     te->te_Height = t.tf->tf_YSize;
-    if (x0 > x1) x0 = x1 = 0;
     te->te_Extent.MinX = (WORD)x0;
     te->te_Extent.MaxX = (WORD)x1;
     te->te_Extent.MinY = (WORD)-t.tf->tf_Baseline;
@@ -1335,27 +1354,28 @@ int ogfx_rp_Text(struct RastPort *rp, CONST_STRPTR s, ULONG n)
     struct tx t;
     struct walk w;
     struct place pl;
-    UBYTE buf[TX_CHUNK / 8 + 4];
+    UBYTE buf[TX_BUF];
     LONG x0, x1, len, top, r[4], y, cx, j;
 
     if (!ogfx_rp_takes_text(rp)) return 0;
     tx_start(&t, rp, (const UBYTE *)s, (LONG)(UWORD)n);
     len = tx_measure(&t, &x0, &x1);
-    if (t.n && x0 <= x1) {
+    if (x0 <= x1) {
         top = rp->cp_y - (LONG)t.tf->tf_Baseline;
         walk_start(&w, rp);
         while (walk_next(&w, &pl)) {
+            LONG px = rp->cp_x + pl.dx;
             if (!cut_to(&pl, rp->cp_x + x0, top, rp->cp_x + x1, top + t.tf->tf_YSize - 1, r)) continue;
             for (y = r[1]; y <= r[3]; y++)
                 for (cx = r[0] & ~15L; cx <= r[2]; cx += TX_CHUNK) {
-                    tx_row(&t, y - pl.dy - top, rp->cp_x + pl.dx, cx, buf);
+                    tx_row(&t, y - pl.dy - top, px, px + x0, px + x1, cx, buf);
                     for (j = 0; j < TX_CHUNK / 16 && cx + 16 * j <= r[2]; j++) {
-                        uint32_t pat = (uint32_t)buf[2 * j] << 8 | buf[2 * j + 1];
+                        uint32_t pat = (uint32_t)buf[1 + 2 * j] << 8 | buf[2 + 2 * j];
                         LONG a = cx + 16 * j, b = a + 15;
                         int mode = pat_mode(rp, &pat);
                         if (a < r[0]) a = r[0];
                         if (b > r[2]) b = r[2];
-                        if (a > b || (mode == GFX_JAM1 && !pat) || (mode == GFX_XOR && !pat)) continue;
+                        if (a > b || (mode != GFX_JAM2 && !pat)) continue;
                         gfx_planar_span(&pl.bm, a, b, y, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
                     }
                 }

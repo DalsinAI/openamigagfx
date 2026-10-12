@@ -962,6 +962,8 @@ static const struct aprobe4 aprobe4s[] = {
     { "outline, ellipse then lone move",  -1, 1, { 'E',30,30,8,4, 'M',50,30, 0 } },
     { "outline, two points",              -1, 1, { 'M',14,38, 'D',18,28, 0 } },
     { "no outline, lone move last",       -1, 0, { 'M',10,5, 'D',40,15, 'D',5,18, 'M',50,30, 0 } },
+    { "two points, move, ellipse",        -1, 0, { 'M',26,35, 'D',46,34, 'M',45,19, 'E',20,31,10,10, 0 } },
+    { "two points, move, ellipse, JAM2|COMPLEMENT", -3, 0, { 'M',26,35, 'D',46,34, 'M',45,19, 'E',20,31,10,10, 0 } },
 };
 static UWORD apat4[16] = { 0xFF00, 0x0FF0, 0x00FF, 0xF00F, 0xFF00, 0x0FF0, 0x00FF, 0xF00F,
                            0xFF00, 0x0FF0, 0x00FF, 0xF00F, 0xFF00, 0x0FF0, 0x00FF, 0xF00F };
@@ -1001,6 +1003,7 @@ static int areaprobe4(void)
         if (a->outline) SetOutlinePen(&rp, 2);
         if (a->sz >= 0) SetAfPt(&rp, apat4, a->sz);
         if (a->sz == -2) rp.AreaPtSz = 2;
+        if (a->sz == -3) SetDrMd(&rp, JAM2 | COMPLEMENT);
         Printf("== %s:", (LONG)a->name);
         for (i = 0; a->ops[i]; ) {
             LONG x = a->ops[i + 1], y = a->ops[i + 2], ea = 0, eb = 0;
@@ -1119,6 +1122,20 @@ static void show_font(int i)
     Printf("%s%s\n", (LONG)(f->tf_CharSpace ? " space" : ""), (LONG)(f->tf_CharKern ? " kern" : ""));
 }
 
+/* A made font's arrays and its message's reply port (where an extended
+ * font keeps its TextFontExtension), to see what graphics.library adds */
+static void dump_font(int i, const char *when)
+{
+    struct TextFont *f = fonts[i].tf;
+    int k;
+    Printf("font %ld %s: Style $%02lx Flags $%02lx XSize %ld ReplyPort $%08lx CharSpace $%08lx", (LONG)i, (LONG)when,
+           (LONG)f->tf_Style, (LONG)f->tf_Flags, (LONG)f->tf_XSize, (LONG)f->tf_Message.mn_ReplyPort, (LONG)f->tf_CharSpace);
+    if (f->tf_CharSpace) for (k = 0; k < 8; k++) Printf(" %ld", (LONG)((WORD *)f->tf_CharSpace)[k]);
+    Printf(" CharKern $%08lx", (LONG)f->tf_CharKern);
+    if (f->tf_CharKern) for (k = 0; k < 8; k++) Printf(" %ld", (LONG)((WORD *)f->tf_CharKern)[k]);
+    PutStr("\n");
+}
+
 /* TEXTPROBE: each font, style and string drawn JAM2 pen 1 on pen 2 over
  * pen 0 = '.', so '#' is a glyph pixel, '.' the box JAM2 fills and ' '
  * untouched; with what TextLength, TextExtent and the pen say. The core
@@ -1133,7 +1150,8 @@ static const struct tprobe tprobes[] = {
     { 0, 0, 0, JAM1, 0, "ABCDE" }, { 0, 0, 0, JAM1 | INVERSVID, 0, "ABCDE" }, { 0, 0, 0, JAM2 | INVERSVID, 0, "ABCDE" },
     { 0, 0, 0, COMPLEMENT, 0, "ABCDE" }, { 0, 0, 0, COMPLEMENT | JAM2, 0, "ABCDE" },
     { 1, 0, 0, JAM2, 0, "ABCDE" }, { 1, FSF_ITALIC, 0, JAM2, 0, "ABCDE" },
-    { 2, 0, 0, JAM2, 0, "ABCDE" }, { 2, 7, 0, JAM2, 0, "ABCDE" },
+    { 2, 0, 0, JAM2, 0, "ABCDE" }, { 2, 7, 0, JAM2, 0, "ABCDE" }, { 2, 0, 0, JAM2, 0, "AZ@C" }, { 2, 0, 0, JAM2, 0, "ZZZ" },
+    { 2, 0, 0, JAM2, -1, "ZAZE" },
     { 3, FSF_BOLD, 0, JAM2, 0, "ABCDE" }, { 3, FSF_BOLD, 1, JAM2, 0, "ABCDE" }, { 3, 5, 0, JAM2, 0, "ABCDE" }, { 3, 7, 1, JAM2, 0, "ABCDE" },
     { 4, 0, 0, JAM2, 0, "Wj_g" }, { 4, FSF_BOLD, 0, JAM2, 0, "Wj_g" }, { 4, FSF_ITALIC, 0, JAM2, 0, "Wj_g" },
     { 4, FSF_UNDERLINED, 0, JAM2, 0, "Wj_g" }, { 4, 7, 0, JAM2, 0, "Wj_g" }, { 4, 0, 0, JAM2, 0, "a\x7f\x80\xff" },
@@ -1176,6 +1194,7 @@ static int textprobe(void)
     Printf("TEXTPROBE, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
     if (DiskfontBase) Printf("with %s", (LONG)DiskfontBase->lib_IdString);
     for (i = 0; i < nfonts; i++) show_font(i);
+    for (i = 0; i < 4; i++) dump_font(i, "as made");
     InitRastPort(&rp); rp.BitMap = bm;
     InitRastPort(&rp2); rp2.BitMap = bm2;
     for (s = 0; s < sizeof tprobes / sizeof tprobes[0]; s++) {
@@ -1187,7 +1206,9 @@ static int textprobe(void)
         if (t->font >= nfonts) continue;
         f = fonts[t->font].tf;
         y = (LONG)f->tf_Baseline + 4;
-        SetFont(&rp, f); SetFont(&rp2, f);
+        SetFont(&rp, f);
+        if (t->font != last && t->font < 4) dump_font(t->font, "after SetFont");
+        SetFont(&rp2, f);
         if (t->direct) { rp.AlgoStyle = rp2.AlgoStyle = t->style; }
         else { got = SetSoftStyle(&rp, t->style, 0xFF); SetSoftStyle(&rp2, t->style, 0xFF); }
         ask = AskSoftStyle(&rp);
@@ -1197,6 +1218,7 @@ static int textprobe(void)
         SetAPen(&rp, 1); SetBPen(&rp, 0); SetDrMd(&rp, t->mode);
         SetAPen(&rp2, 1); SetBPen(&rp2, 0); SetDrMd(&rp2, t->mode);
         len = TextLength(&rp, (STRPTR)t->s, n);
+        if (t->font != last && t->font < 4) dump_font(t->font, "after TextLength");
         TextExtent(&rp, (STRPTR)t->s, n, &te);
         len2 = ogfx_rp_TextLength(&rp2, t->s, n);
         ogfx_rp_TextExtent(&rp2, t->s, n, &te2);
@@ -1223,6 +1245,7 @@ static int textprobe(void)
         if (!same) { PutStr("   ours:\n"); tgrid(&rp2, x - 14, y - (LONG)f->tf_Baseline - 2, x + len + 14, y - (LONG)f->tf_Baseline + (LONG)f->tf_YSize + 1); }
         else PutStr("   ours the same\n");
     }
+    for (i = 0; i < 4; i++) dump_font(i, "at the end");
     FreeBitMap(bm); FreeBitMap(bm2);
     close_fonts();
     return 0;
