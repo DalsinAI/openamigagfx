@@ -1,0 +1,25 @@
+name: m68k (OpenGfx core)
+
+# OpenGfx's core is plain C that runs on a real 68k: built by an m68k cross
+# GCC for the 68000, 68020 and 68040 and run under qemu-m68k on every change.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/check-m68k.yml
+      - library/core/**
+      - tests/m68k/**
+
+permissions:
+  contents: read
+
+jobs:
+  m68k:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: m68k cross GCC and qemu-m68k
+        run: sudo apt-get update && sudo apt-get install -y gcc-m68k-linux-gnu qemu-user
+      - name: OpenGfx core
+        run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_core.sh
