@@ -10,7 +10,10 @@
  * or chained, with line patterns), PolyDraw, RectFill and BltPattern (with
  * area patterns and masks), BltBitMap and BltBitMapRastPort (minterms,
  * plane masks, overlapping copies), ClipBlit and ScrollRaster (overlapping,
- * and in a layer whether OS 3.2 adds damage, which the core never does); after a line the RastPort's pen position,
+ * and in a layer whether OS 3.2 adds damage, which the core never does),
+ * AreaMove, AreaDraw, AreaEllipse and AreaEnd (polygons and ellipses, with
+ * AREAOUTLINE and area patterns), DrawEllipse and EraseRect; after a line,
+ * an area or an ellipse the RastPort's pen position,
  * pattern count and Flags are compared too. Prints the first DIFFs of each
  * call with what was asked and the first pixels that differ, and a count
  * per call. Exit 0 when
@@ -28,6 +31,12 @@
  *                                through a mask, for the rule)
  *   GfxCoreABITest LPROBE       (where a smart refresh layer keeps its
  *                                covered pixels, for the rule)
+ *   GfxCoreABITest AREAPROBE    (what OS 3.2's area fills draw, for the
+ *                                rules)
+ *   GfxCoreABITest AREAPROBE2   (the AreaInfo table, DrawEllipse and
+ *                                AreaEllipse sizes, outline modes, EraseRect)
+ *   GfxCoreABITest AREAPROBE3   (flat and thin ellipses)
+ *   GfxCoreABITest AREAPROBE4   (two-point polygons, pattern phase, outline pen position)
  */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -44,16 +53,17 @@
 #include <string.h>
 #include "../library/core/gfx_rp.h"
 
-#define NCALLS 14
+#define NCALLS 17
 static const char *const names[NCALLS] = {
     "WritePixel", "ReadPixel", "SetRast", "WritePixelArray8", "ReadPixelArray8", "WriteChunkyPixels",
-    "Draw", "PolyDraw", "RectFill", "BltPattern", "BltBitMap", "BltBitMapRastPort", "ClipBlit", "ScrollRaster"
+    "Draw", "PolyDraw", "RectFill", "BltPattern", "BltBitMap", "BltBitMapRastPort", "ClipBlit", "ScrollRaster",
+    "AreaEnd", "DrawEllipse", "EraseRect"
 };
-static ULONG runs[NCALLS], diffs[NCALLS], pad_runs, refused;
+static ULONG runs[NCALLS], diffs[NCALLS], pad_runs, refused, junk;
 static int nochip;
 /* Chip RAM a switch case kept (after both sides' calls), and rounds that
  * ended with less Chip RAM than they started with */
-static LONG chip_kept[14], chip_round_lost;
+static LONG chip_kept[NCALLS], chip_round_lost;
 /* graphics.library cut the back layer's ClipRects differently on the two
  * sides (the parts no longer pair up): set by same(), counted per round */
 static int recut, last_call;
@@ -66,6 +76,11 @@ static struct BitMap *bma, *bmb, *tmpbm, *sbm;   /* sbm: a source for the blits,
 static struct RastPort rpa, rpb, tmprp;
 static UBYTE *arr_a, *arr_b;
 #define ARR 16384
+/* area fills: a TmpRas the bitmap's size a side, and AreaInfo tables */
+static PLANEPTR tras_a, tras_b;
+static struct TmpRas tmpras_a, tmpras_b;
+static struct AreaInfo ainfo_a, ainfo_b;
+static WORD avec_a[5 * 24 / 2], avec_b[5 * 24 / 2];
 
 /* LAYERS: a Layer_Info a side, the back layer the calls draw in (back[]),
  * up to three in front, and the back layer's clip region if it has one */
@@ -268,8 +283,8 @@ static void show_pixels(LONG x0, LONG y0, LONG x1, LONG y1)
     LONG x, y, n = 0;
     WaitBlit();
     PutStr("  pixels:");
-    for (y = y0; y <= y1 && n < 8; y++)
-        for (x = x0; x <= x1 && n < 8; x++) {
+    for (y = y0; y <= y1 && n < 24; y++)
+        for (x = x0; x <= x1 && n < 24; x++) {
             LONG a = (LONG)ReadPixel(&rpa, x, y), b = ogfx_rp_ReadPixel(&rpb, x, y);
             if (a != b) { Printf(" %ld,%ld OS %ld ours %ld;", x, y, a, b); n++; }
         }
@@ -510,14 +525,519 @@ static int lprobe(void)
     return 0;
 }
 
+/* AREAPROBE: what OS 3.2's AreaMove, AreaDraw, AreaEnd, AreaEllipse and
+ * EraseRect draw, as pen digits a row, for the rules the core follows.
+ * A 2-plane 128 x 48 bitmap; each shape is drawn on pen 0 (or pen 3 for
+ * COMPLEMENT and EraseRect) and its box printed with 2 pixels round it.
+ * One shape a line: name, the calls' results, cp and Flags after. */
+struct ashape { const char *name; WORD n; WORD pts[20]; UBYTE fg, bg, dm, mask, outline, pat; UBYTE pre; };
+static const struct ashape ashapes[] = {
+    /* pts: n x,y pairs; x -1 starts a new polygon (AreaMove) at the next
+     * pair; x -2 is an AreaEllipse of the next two pairs (xc,yc, a,b) */
+    { "rect",            4, { 10,5, 30,5, 30,15, 10,15 },                   1, 0, 0, 0xFF, 0, 0, 0 },
+    { "rect ccw",        4, { 10,5, 10,15, 30,15, 30,5 },                   1, 0, 0, 0xFF, 0, 0, 0 },
+    { "triangle",        3, { 10,5, 40,20, 5,25 },                          1, 0, 0, 0xFF, 0, 0, 0 },
+    { "thin diagonal",   3, { 10,5, 40,8, 11,6 },                           1, 0, 0, 0xFF, 0, 0, 0 },
+    { "arrow concave",   7, { 5,10, 25,10, 25,4, 40,15, 25,26, 25,20, 5,20 }, 1, 0, 0, 0xFF, 0, 0, 0 },
+    { "octagon",         8, { 15,3, 30,3, 40,10, 40,20, 30,27, 15,27, 5,20, 5,10 }, 1, 0, 0, 0xFF, 0, 0, 0 },
+    { "two rects",       9, { 10,5, 30,5, 30,15, 10,15, -1,0, 20,10, 40,10, 40,20, 20,20 }, 1, 0, 0, 0xFF, 0, 0, 0 },
+    { "bowtie",          4, { 10,5, 40,25, 40,5, 10,25 },                   1, 0, 0, 0xFF, 0, 0, 0 },
+    { "horizontal",      2, { 10,10, 40,10 },                               1, 0, 0, 0xFF, 0, 0, 0 },
+    { "vertical",        2, { 20,5, 20,25 },                                1, 0, 0, 0xFF, 0, 0, 0 },
+    { "point",           1, { 20,10 },                                      1, 0, 0, 0xFF, 0, 0, 0 },
+    { "quad steep",      4, { 5,5, 60,7, 58,30, 7,28 },                     1, 0, 0, 0xFF, 0, 0, 0 },
+    { "1px wide tri",    3, { 20,5, 21,25, 20,25 },                         1, 0, 0, 0xFF, 0, 0, 0 },
+    { "x odd start",     4, { 13,5, 47,9, 33,22, 3,17 },                    1, 0, 0, 0xFF, 0, 0, 0 },
+    { "outline rect",    4, { 10,5, 30,5, 30,15, 10,15 },                   1, 0, 0, 0xFF, 2, 0, 0 },
+    { "outline tri",     3, { 10,5, 40,20, 5,25 },                          1, 0, 0, 0xFF, 2, 0, 0 },
+    { "outline concave", 7, { 5,10, 25,10, 25,4, 40,15, 25,26, 25,20, 5,20 }, 1, 0, 0, 0xFF, 2, 0, 0 },
+    { "pattern jam2",    4, { 10,5, 40,5, 40,14, 10,14 },                   1, 2, 1, 0xFF, 0, 1, 0 },
+    { "pattern jam2 y+1",4, { 10,6, 40,6, 40,15, 10,15 },                   1, 2, 1, 0xFF, 0, 1, 0 },
+    { "pattern jam1 tri",3, { 10,5, 40,20, 5,25 },                          2, 1, 0, 0xFF, 0, 1, 0 },
+    { "pattern inv",     3, { 10,5, 40,20, 5,25 },                          1, 2, 5, 0xFF, 0, 1, 0 },
+    { "complement",      3, { 10,5, 40,20, 5,25 },                          1, 0, 2, 0xFF, 0, 0, 3 },
+    { "jam2 solid",      3, { 10,5, 40,20, 5,25 },                          1, 2, 1, 0xFF, 0, 0, 3 },
+    { "mask 2 pen 3",    3, { 10,5, 40,20, 5,25 },                          3, 0, 0, 0x02, 0, 0, 0 },
+    { "outline mask 1",  3, { 10,5, 40,20, 5,25 },                          3, 0, 0, 0x01, 2, 0, 0 },
+    { "ellipse",         3, { -2,0, 30,15, 20,8 },                          1, 0, 0, 0xFF, 0, 0, 0 },
+    { "ellipse small",   3, { -2,0, 30,15, 3,2 },                           1, 0, 0, 0xFF, 0, 0, 0 },
+    { "ellipse 1x1",     3, { -2,0, 30,15, 1,1 },                           1, 0, 0, 0xFF, 0, 0, 0 },
+    { "ellipse outline", 3, { -2,0, 30,15, 12,6 },                          1, 0, 0, 0xFF, 2, 0, 0 },
+    { "ellipse + tri",   7, { -2,0, 30,15, 12,6, -1,0, 10,5, 50,10, 20,25 }, 1, 0, 0, 0xFF, 0, 0, 0 },
+};
+static UWORD apat[2] = { 0xAAAA, 0xF0F0 };
+
+static void grid(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    LONG x, y;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > 127) x1 = 127;
+    if (y1 > 47) y1 = 47;
+    Printf("   x %ld..%ld\n", x0, x1);
+    for (y = y0; y <= y1; y++) {
+        char line[140];
+        int k = 0;
+        for (x = x0; x <= x1; x++) line[k++] = (char)('0' + ReadPixel(rp, x, y));
+        line[k] = 0;
+        Printf("%3ld %s\n", y, (LONG)line);
+    }
+    Flush(Output());
+}
+
+static int areaprobe(void)
+{
+    struct BitMap *bm = AllocBitMap(128, 48, 2, BMF_CLEAR, NULL);
+    PLANEPTR tr = AllocRaster(128, 48);
+    WORD *vb = AllocVec(5 * 24, MEMF_CLEAR);
+    struct RastPort rp;
+    struct AreaInfo ai;
+    struct TmpRas tmp;
+    ULONG s;
+    int i;
+
+    if (!bm || !tr || !vb) {
+        PutStr("no Chip RAM\n");
+        if (bm) FreeBitMap(bm);
+        if (tr) FreeRaster(tr, 128, 48);
+        if (vb) FreeVec(vb);
+        return 20;
+    }
+    Printf("AREAPROBE, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    InitRastPort(&rp); rp.BitMap = bm;
+    InitTmpRas(&tmp, tr, RASSIZE(128, 48));
+    rp.TmpRas = &tmp;
+    for (s = 0; s < sizeof ashapes / sizeof ashapes[0]; s++) {
+        const struct ashape *a = &ashapes[s];
+        LONG minx = 127, miny = 47, maxx = 0, maxy = 0, r, poly = 1;
+        InitArea(&ai, vb, 24);
+        rp.AreaInfo = &ai;
+        SetWriteMask(&rp, 0xFF); SetDrMd(&rp, JAM1); SetAfPt(&rp, NULL, 0);
+        rp.Flags &= ~AREAOUTLINE;
+        SetRast(&rp, a->pre);
+        SetAPen(&rp, a->fg); SetBPen(&rp, a->bg); SetDrMd(&rp, a->dm); SetWriteMask(&rp, a->mask);
+        if (a->outline) SetOutlinePen(&rp, a->outline);
+        if (a->pat) SetAfPt(&rp, apat, 1);
+        Printf("== %s:", (LONG)a->name);
+        for (i = 0; i < 2 * a->n; i += 2) {
+            LONG x = a->pts[i], y = a->pts[i + 1];
+            if (x == -1) { poly = 1; continue; }
+            if (x == -2) {
+                LONG xc = a->pts[i + 2], yc = a->pts[i + 3], ea = a->pts[i + 4], eb = a->pts[i + 5];
+                r = AreaEllipse(&rp, xc, yc, ea, eb);
+                Printf(" E%ld", r);
+                if (xc - ea < minx) minx = xc - ea;
+                if (yc - eb < miny) miny = yc - eb;
+                if (xc + ea > maxx) maxx = xc + ea;
+                if (yc + eb > maxy) maxy = yc + eb;
+                i += 4;
+                continue;
+            }
+            if (x < minx) minx = x;
+            if (y < miny) miny = y;
+            if (x > maxx) maxx = x;
+            if (y > maxy) maxy = y;
+            r = poly ? AreaMove(&rp, x, y) : AreaDraw(&rp, x, y);
+            Printf(" %s%ld", (LONG)(poly ? "M" : "D"), r);
+            poly = 0;
+        }
+        r = AreaEnd(&rp);
+        WaitBlit();
+        Printf(" End%ld cp %ld,%ld Flags $%lx Count %ld\n", r, (LONG)rp.cp_x, (LONG)rp.cp_y, (LONG)rp.Flags, (LONG)ai.Count);
+        grid(&rp, minx - 2, miny - 2, maxx + 2, maxy + 2);
+    }
+
+    FreeVec(vb);
+    FreeRaster(tr, 128, 48);
+    FreeBitMap(bm);
+    return 0;
+}
+
+/* AREAPROBE2: the rest, for the rules. AreaInfo: the vector table and flag
+ * bytes AreaMove, AreaDraw and AreaEllipse leave, and what fits in how
+ * AreaMove, AreaDraw and AreaEllipse leave; DrawEllipse and AreaEllipse
+ * at many sizes (the flat ones last), each row's pixels relative to the
+ * centre; the outline in JAM2 with a line pattern, in COMPLEMENT and with
+ * an area pattern; EraseRect; last, what fits in how many vectors (a full
+ * table may be what crashed OS 3.2 before). Each part is flushed as it
+ * ends, so a crash keeps what came before it. */
+static void ell_rows(struct RastPort *rp, LONG b)
+{
+    LONG y;
+    for (y = 50 - b - 1; y <= 50 + b + 1; y++) {
+        Printf(" %ld:", y - 50);
+        ranges(rp, y, 0, 159, 80);
+    }
+    PutStr("\n");
+    Flush(Output());
+}
+
+static void fill_count(struct RastPort *rp)
+{
+    LONG x, y, n = 0, x0 = 999, x1 = -1, y0 = 999, y1 = -1;
+    for (y = 0; y < 100; y++)
+        for (x = 0; x < 160; x++)
+            if (ReadPixel(rp, x, y)) {
+                n++;
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+            }
+    Printf(" drew %ld", n);
+    if (n) Printf(" in %ld,%ld-%ld,%ld", x0, y0, x1, y1);
+    PutStr("\n");
+    Flush(Output());
+}
+
+static int areaprobe2(void)
+{
+    static const WORD esz[][2] = {
+        {1,1},{2,1},{1,2},{2,2},{3,1},{3,2},{2,3},{3,3},{4,1},{4,2},{4,3},{4,4},{5,2},{5,3},{5,5},
+        {6,2},{6,4},{7,3},{8,2},{9,4},{12,6},{6,12},{20,8},{8,20},{17,11},{25,25},{30,10},{40,3},{3,40},{60,45},
+        {1,0},{0,1},{0,0}
+    };
+    struct BitMap *bm = AllocBitMap(160, 100, 2, BMF_CLEAR, NULL);
+    PLANEPTR tr = AllocRaster(160, 100);
+    WORD *vb = AllocVec(5 * 32, MEMF_CLEAR);
+    struct RastPort rp;
+    struct AreaInfo ai;
+    struct TmpRas tmp;
+    ULONG s;
+    int i, n;
+
+    if (!bm || !tr || !vb) {
+        PutStr("no Chip RAM\n");
+        if (bm) FreeBitMap(bm);
+        if (tr) FreeRaster(tr, 160, 100);
+        if (vb) FreeVec(vb);
+        return 20;
+    }
+    Printf("AREAPROBE2, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    InitRastPort(&rp); rp.BitMap = bm;
+    InitTmpRas(&tmp, tr, RASSIZE(160, 100));
+    rp.TmpRas = &tmp;
+    SetAPen(&rp, 1);
+
+    /* The table: InitArea for 10 vectors on a buffer of $55, then each call */
+    {
+        static const char *const what[] = { "Move 1,2", "Draw 3,4", "Draw 5,6", "Move 7,8", "Move 9,10", "Draw 11,12", "Ellipse 13,14 15,16", "Draw 17,18" };
+        memset(vb, 0x55, 5 * 32);
+        InitArea(&ai, vb, 10);
+        rp.AreaInfo = &ai;
+        Printf("== table: VctrTbl +%ld FlagTbl +%ld MaxCount %ld Count %ld\n", (LONG)((UBYTE *)ai.VctrTbl - (UBYTE *)vb),
+               (LONG)((UBYTE *)ai.FlagTbl - (UBYTE *)vb), (LONG)ai.MaxCount, (LONG)ai.Count);
+        for (i = 0; i < 8; i++) {
+            LONG r, k;
+            switch (i) {
+            case 0: r = AreaMove(&rp, 1, 2); break;
+            case 1: r = AreaDraw(&rp, 3, 4); break;
+            case 2: r = AreaDraw(&rp, 5, 6); break;
+            case 3: r = AreaMove(&rp, 7, 8); break;
+            case 4: r = AreaMove(&rp, 9, 10); break;
+            case 5: r = AreaDraw(&rp, 11, 12); break;
+            case 6: r = AreaEllipse(&rp, 13, 14, 15, 16); break;
+            default: r = AreaDraw(&rp, 17, 18); break;
+            }
+            Printf("%s: %ld Count %ld First %ld,%ld VctrPtr +%ld FlagPtr +%ld\n  words", (LONG)what[i], r, (LONG)ai.Count,
+                   (LONG)ai.FirstX, (LONG)ai.FirstY, (LONG)((UBYTE *)ai.VctrPtr - (UBYTE *)ai.VctrTbl),
+                   (LONG)((UBYTE *)ai.FlagPtr - (UBYTE *)ai.FlagTbl));
+            for (k = 0; k < 20; k++) Printf(" %ld", (LONG)ai.VctrTbl[k]);
+            PutStr("\n  flags");
+            for (k = 0; k < 10; k++) Printf(" $%02lx", (LONG)(UBYTE)ai.FlagTbl[k]);
+            PutStr("\n");
+            Flush(Output());
+        }
+        InitArea(&ai, vb, 10);
+    }
+
+    InitArea(&ai, vb, 32);
+    rp.AreaInfo = &ai;
+
+    /* DrawEllipse, then AreaEllipse, at (80,50) */
+    for (s = 0; s < sizeof esz / sizeof esz[0]; s++) {
+        LONG a = esz[s][0], b = esz[s][1];
+        SetRast(&rp, 0);
+        DrawEllipse(&rp, 80, 50, a, b);
+        WaitBlit();
+        Printf("== DrawEllipse %ld,%ld cp %ld,%ld Flags $%lx\n", a, b, (LONG)rp.cp_x, (LONG)rp.cp_y, (LONG)rp.Flags);
+        ell_rows(&rp, b);
+        SetRast(&rp, 0);
+        Printf("== AreaEllipse %ld,%ld: %ld", a, b, AreaEllipse(&rp, 80, 50, a, b));
+        Printf(" End %ld\n", AreaEnd(&rp));
+        WaitBlit();
+        ell_rows(&rp, b);
+    }
+
+    /* The outline's modes: a triangle with AOlPen 2 */
+    for (s = 0; s < 5; s++) {
+        static const char *const nm[] = { "JAM2 LinePtrn $F0F0", "COMPLEMENT on pen 3", "JAM1 LinePtrn $F0F0", "INVERSVID|JAM2 LinePtrn $FF00", "area pattern JAM2" };
+        SetWriteMask(&rp, 0xFF);
+        SetRast(&rp, s == 1 ? 3 : 0);
+        SetAPen(&rp, 1); SetBPen(&rp, 3); SetDrMd(&rp, JAM1); SetAfPt(&rp, NULL, 0);
+        rp.LinePtrn = 0xFFFF; rp.linpatcnt = 15;
+        switch (s) {
+        case 0: SetDrMd(&rp, JAM2); SetDrPt(&rp, 0xF0F0); break;
+        case 1: SetDrMd(&rp, COMPLEMENT); break;
+        case 2: SetDrPt(&rp, 0xF0F0); break;
+        case 3: SetDrMd(&rp, INVERSVID | JAM2); SetDrPt(&rp, 0xFF00); break;
+        default: SetDrMd(&rp, JAM2); SetAfPt(&rp, apat, 1); break;
+        }
+        SetOutlinePen(&rp, 2);
+        AreaMove(&rp, 10, 5); AreaDraw(&rp, 40, 20); AreaDraw(&rp, 5, 25);
+        Printf("== outline %s: End %ld", (LONG)nm[s], AreaEnd(&rp));
+        WaitBlit();
+        Printf(" cp %ld,%ld Flags $%lx linpatcnt %ld\n", (LONG)rp.cp_x, (LONG)rp.cp_y, (LONG)rp.Flags, (LONG)rp.linpatcnt);
+        grid(&rp, 3, 3, 42, 27);
+        rp.Flags &= ~AREAOUTLINE;
+    }
+    SetDrMd(&rp, JAM1); SetAfPt(&rp, NULL, 0); rp.LinePtrn = 0xFFFF;
+
+    /* EraseRect unlayered: on pen 3, BgPen 1, JAM1 and Mask $FF, then
+     * JAM2 and Mask $01 */
+    for (i = 0; i < 2; i++) {
+        SetWriteMask(&rp, 0xFF);
+        SetRast(&rp, 3);
+        SetAPen(&rp, 2); SetBPen(&rp, 1); SetDrMd(&rp, i ? JAM2 : JAM1); SetWriteMask(&rp, i ? 0x01 : 0xFF);
+        EraseRect(&rp, 5, 4, 20, 9);
+        WaitBlit();
+        Printf("== EraseRect unlayered, %s mask $%lx\n", (LONG)(i ? "JAM2" : "JAM1"), (LONG)(i ? 0x01 : 0xFF));
+        grid(&rp, 3, 2, 22, 11);
+    }
+    /* EraseRect in a simple and a smart layer, with the default backfill,
+     * layer at 10,4: the rect is layer-relative, and partly outside */
+    if ((LayersBase = OpenLibrary("layers.library", 39))) {
+        ULONG fl[2] = { LAYERSIMPLE, LAYERSMART };
+        for (i = 0; i < 2; i++) {
+            struct Layer_Info *info = NewLayerInfo();
+            struct Layer *l;
+            SetWriteMask(&rp, 0xFF);
+            SetRast(&rp, 3);
+            if (!info) break;
+            if ((l = CreateUpfrontLayer(info, bm, 10, 4, 49, 23, fl[i], NULL))) {
+                SetAPen(l->rp, 2); SetBPen(l->rp, 1); SetWriteMask(l->rp, 0xFF);
+                EraseRect(l->rp, 4, 2, 15, 7);
+                EraseRect(l->rp, 30, 15, 60, 40);
+                WaitBlit();
+                Printf("== EraseRect in a %s layer 10,4-49,23: 4,2-15,7 and 30,15-60,40\n", (LONG)(i ? "smart" : "simple"));
+                grid(&rp, 8, 2, 51, 25);
+                DeleteLayer(0, l);
+            }
+            DisposeLayerInfo(info);
+        }
+        CloseLibrary(LayersBase);
+        LayersBase = NULL;
+    }
+    /* What fits: a shape in n vectors, for n round its size */
+    SetWriteMask(&rp, 0xFF);
+    SetDrMd(&rp, JAM1);
+    SetAPen(&rp, 1);
+    for (s = 0; s < 6; s++) {
+        static const char *const nm[] = { "rect 4 points", "rect closed 5 points", "two rects", "ellipse", "ellipse + rect", "move move rect" };
+        for (n = 1; n <= 11; n++) {
+            LONG r[12], k = 0, m;
+            SetRast(&rp, 0);
+            InitArea(&ai, vb, n);
+            rp.AreaInfo = &ai;
+            switch (s) {
+            case 0: case 1: case 2: case 4: case 5:
+                if (s == 4) r[k++] = AreaEllipse(&rp, 80, 50, 10, 5);
+                if (s == 5) r[k++] = AreaMove(&rp, 1, 1);
+                r[k++] = AreaMove(&rp, 10, 10); r[k++] = AreaDraw(&rp, 30, 10); r[k++] = AreaDraw(&rp, 30, 20); r[k++] = AreaDraw(&rp, 10, 20);
+                if (s == 1) r[k++] = AreaDraw(&rp, 10, 10);
+                if (s == 2) { r[k++] = AreaMove(&rp, 40, 30); r[k++] = AreaDraw(&rp, 60, 30); r[k++] = AreaDraw(&rp, 60, 40); r[k++] = AreaDraw(&rp, 40, 40); }
+                break;
+            default:
+                r[k++] = AreaEllipse(&rp, 80, 50, 10, 5);
+                break;
+            }
+            Printf("== fits %s in %ld:", (LONG)nm[s], (LONG)n);
+            for (m = 0; m < k; m++) Printf(" %ld", r[m]);
+            {
+                LONG before = ai.Count, end = AreaEnd(&rp);
+                Printf(" Count %ld, End %ld Count %ld", before, end, (LONG)ai.Count);
+            }
+            WaitBlit();
+            fill_count(&rp);
+        }
+    }
+    FreeVec(vb);
+    FreeRaster(tr, 160, 100);
+    FreeBitMap(bm);
+    return 0;
+}
+
+/* AREAPROBE3: DrawEllipse and AreaEllipse on flat and thin ellipses (a or
+ * b of 0 to 2) and every size up to 6 x 6, rows relative to the centre */
+static int areaprobe3(void)
+{
+    static const WORD big[] = { 8, 12, 16, 26, 34 };
+    struct BitMap *bm = AllocBitMap(160, 100, 1, BMF_CLEAR, NULL);
+    PLANEPTR tr = AllocRaster(160, 100);
+    WORD *vb = AllocVec(5 * 8, MEMF_CLEAR);
+    struct RastPort rp;
+    struct AreaInfo ai;
+    struct TmpRas tmp;
+    LONG a, b, i, k;
+
+    if (!bm || !tr || !vb) {
+        PutStr("no Chip RAM\n");
+        if (bm) FreeBitMap(bm);
+        if (tr) FreeRaster(tr, 160, 100);
+        if (vb) FreeVec(vb);
+        return 20;
+    }
+    Printf("AREAPROBE3, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    InitRastPort(&rp); rp.BitMap = bm;
+    InitTmpRas(&tmp, tr, RASSIZE(160, 100));
+    rp.TmpRas = &tmp;
+    InitArea(&ai, vb, 8);
+    rp.AreaInfo = &ai;
+    SetAPen(&rp, 1);
+    for (k = 0; k < 49 + 4 * 5 * 3; k++) {
+        if (k < 49) { a = k / 7; b = k % 7; }
+        else {
+            i = k - 49;
+            a = big[i % 5]; b = i / 5 % 3;
+            if (i >= 15) { a = i / 5 % 3; b = big[i % 5]; }
+            if (i >= 30) { a = big[i % 5]; b = 1 + i / 5 % 3; if (i >= 45) { b = big[i % 5]; a = 1 + i / 5 % 3; } }
+            if (b > 45 || a > 75) continue;
+        }
+        SetRast(&rp, 0);
+        DrawEllipse(&rp, 80, 50, a, b);
+        WaitBlit();
+        Printf("== DrawEllipse %ld,%ld\n", a, b);
+        ell_rows(&rp, b);
+        SetRast(&rp, 0);
+        Printf("== AreaEllipse %ld,%ld: %ld", a, b, AreaEllipse(&rp, 80, 50, a, b));
+        Printf(" End %ld\n", AreaEnd(&rp));
+        WaitBlit();
+        ell_rows(&rp, b);
+    }
+    FreeVec(vb);
+    FreeRaster(tr, 160, 100);
+    FreeBitMap(bm);
+    return 0;
+}
+
+/* AREAPROBE4: the cases the random test found: two-point polygons that are
+ * not level or upright, the area pattern's phase with four rows, and the
+ * pen position after an outline that ends on a lone AreaMove or has a move
+ * before an ellipse. ops: 'M' x,y, 'D' x,y, 'E' xc,yc,a,b, 0 ends */
+struct aprobe4 {
+    const char *name;
+    WORD sz, outline;
+    WORD ops[40];
+};
+static const struct aprobe4 aprobe4s[] = {
+    { "two points 14,38 18,28",           -1, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "two points 10,5 30,12",            -1, 0, { 'M',10,5, 'D',30,12, 0 } },
+    { "two points 10,5 12,20",            -1, 0, { 'M',10,5, 'D',12,20, 0 } },
+    { "two points 30,12 10,5",            -1, 0, { 'M',30,12, 'D',10,5, 0 } },
+    { "lone move then two points",        -1, 0, { 'M',60,24, 'M',14,38, 'D',18,28, 0 } },
+    { "two points then a triangle",       -1, 0, { 'M',10,5, 'D',30,12, 'M',40,5, 'D',60,10, 'D',45,20, 0 } },
+    { "three points on a line",           -1, 0, { 'M',10,5, 'D',20,10, 'D',30,15, 0 } },
+    { "four points there and back",       -1, 0, { 'M',10,5, 'D',30,12, 'D',50,5, 'D',30,12, 0 } },
+    { "pattern 4 rows rect y 1",           2, 0, { 'M',3,1, 'D',40,1, 'D',40,8, 'D',3,8, 0 } },
+    { "pattern 4 rows rect y 2",           2, 0, { 'M',3,2, 'D',40,2, 'D',40,9, 'D',3,9, 0 } },
+    { "pattern 4 rows rect y 3",           2, 0, { 'M',3,3, 'D',40,3, 'D',40,10, 'D',3,10, 0 } },
+    { "pattern 4 rows triangle y 5",       2, 0, { 'M',10,5, 'D',40,15, 'D',5,18, 0 } },
+    { "pattern 4 rows two points",         2, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 2 rows two points",         1, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 4 rows two polygons",       2, 0, { 'M',10,5, 'D',30,6, 'D',20,14, 'M',35,21, 'D',50,30, 'D',38,33, 0 } },
+    { "pattern 8 rows two points",         3, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 16 rows two points",        4, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 8 rows rect y 1",           3, 0, { 'M',3,1, 'D',40,1, 'D',40,8, 'D',3,8, 0 } },
+    { "no pattern, AreaPtSz 2, two points", -2, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 1 row two points",          0, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 4 rows ellipse",            2, 0, { 'E',30,20,12,6, 0 } },
+    { "outline, lone move last",          -1, 1, { 'M',10,5, 'D',40,15, 'D',5,18, 'M',50,30, 0 } },
+    { "outline, move then ellipse",       -1, 1, { 'M',10,5, 'D',40,15, 'D',5,18, 'M',50,30, 'E',30,30,8,4, 0 } },
+    { "outline, ellipse then lone move",  -1, 1, { 'E',30,30,8,4, 'M',50,30, 0 } },
+    { "outline, two points",              -1, 1, { 'M',14,38, 'D',18,28, 0 } },
+    { "no outline, lone move last",       -1, 0, { 'M',10,5, 'D',40,15, 'D',5,18, 'M',50,30, 0 } },
+};
+static UWORD apat4[16] = { 0xFF00, 0x0FF0, 0x00FF, 0xF00F, 0xFF00, 0x0FF0, 0x00FF, 0xF00F,
+                           0xFF00, 0x0FF0, 0x00FF, 0xF00F, 0xFF00, 0x0FF0, 0x00FF, 0xF00F };
+
+static int areaprobe4(void)
+{
+    struct BitMap *bm = AllocBitMap(128, 48, 2, BMF_CLEAR, NULL);
+    PLANEPTR tr = AllocRaster(128, 48);
+    WORD *vb = AllocVec(5 * 24, MEMF_CLEAR);
+    struct RastPort rp;
+    struct AreaInfo ai;
+    struct TmpRas tmp;
+    ULONG s;
+    int i;
+
+    if (!bm || !tr || !vb) {
+        PutStr("no Chip RAM\n");
+        if (bm) FreeBitMap(bm);
+        if (tr) FreeRaster(tr, 128, 48);
+        if (vb) FreeVec(vb);
+        return 20;
+    }
+    Printf("AREAPROBE4, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    InitRastPort(&rp); rp.BitMap = bm;
+    InitTmpRas(&tmp, tr, RASSIZE(128, 48));
+    rp.TmpRas = &tmp;
+    for (s = 0; s < sizeof aprobe4s / sizeof aprobe4s[0]; s++) {
+        const struct aprobe4 *a = &aprobe4s[s];
+        LONG minx = 127, miny = 47, maxx = 0, maxy = 0, r;
+        InitArea(&ai, vb, 24);
+        rp.AreaInfo = &ai;
+        SetWriteMask(&rp, 0xFF); SetDrMd(&rp, JAM1); SetAfPt(&rp, NULL, 0);
+        rp.Flags &= ~AREAOUTLINE;
+        SetRast(&rp, 0);
+        Move(&rp, 0, 0);
+        SetAPen(&rp, 1);
+        if (a->outline) SetOutlinePen(&rp, 2);
+        if (a->sz >= 0) SetAfPt(&rp, apat4, a->sz);
+        if (a->sz == -2) rp.AreaPtSz = 2;
+        Printf("== %s:", (LONG)a->name);
+        for (i = 0; a->ops[i]; ) {
+            LONG x = a->ops[i + 1], y = a->ops[i + 2], ea = 0, eb = 0;
+            if (a->ops[i] == 'E') {
+                ea = a->ops[i + 3]; eb = a->ops[i + 4];
+                r = AreaEllipse(&rp, x, y, ea, eb);
+                Printf(" E%ld", r);
+                i += 5;
+            } else {
+                r = a->ops[i] == 'M' ? AreaMove(&rp, x, y) : AreaDraw(&rp, x, y);
+                Printf(" %s%ld", (LONG)(a->ops[i] == 'M' ? "M" : "D"), r);
+                i += 3;
+            }
+            if (x - ea < minx) minx = x - ea;
+            if (y - eb < miny) miny = y - eb;
+            if (x + ea > maxx) maxx = x + ea;
+            if (y + eb > maxy) maxy = y + eb;
+        }
+        Printf(" table Count %ld flags", (LONG)ai.Count);
+        for (i = 0; i < ai.Count; i++) Printf(" $%02lx", (LONG)(UBYTE)ai.FlagTbl[i]);
+        r = AreaEnd(&rp);
+        WaitBlit();
+        Printf(" End%ld cp %ld,%ld cnt %ld Flags $%lx\n", r, (LONG)rp.cp_x, (LONG)rp.cp_y, (LONG)rp.linpatcnt, (LONG)rp.Flags);
+        grid(&rp, minx - 2, miny - 2, maxx + 2, maxy + 2);
+    }
+    FreeVec(vb);
+    FreeRaster(tr, 128, 48);
+    FreeBitMap(bm);
+    return 0;
+}
+
 int main(void)
 {
-    LONG args[4] = { 0, 0, 0, 0 };
-    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S", args, NULL);
+    LONG args[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S,AREAPROBE2/S,AREAPROBE3/S,AREAPROBE4/S", args, NULL);
     ULONG rounds = rd && args[0] ? *(ULONG *)args[0] : 400, r, k, total = 0, bad = 0;
 
     if (rd && args[1]) { int rc = probe(); FreeArgs(rd); return rc; }
     if (rd && args[3]) { int rc = lprobe(); FreeArgs(rd); return rc; }
+    if (rd && args[4]) { int rc = areaprobe(); FreeArgs(rd); return rc; }
+    if (rd && args[5]) { int rc = areaprobe2(); FreeArgs(rd); return rc; }
+    if (rd && args[6]) { int rc = areaprobe3(); FreeArgs(rd); return rc; }
+    if (rd && args[7]) { int rc = areaprobe4(); FreeArgs(rd); return rc; }
     if (rd && args[2]) {
         layered = 1;
         if (!(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no layers.library\n"); FreeArgs(rd); return 20; }
@@ -544,9 +1064,13 @@ int main(void)
             ULONG p, i, n = (ULONG)sbm->BytesPerRow * sbm->Rows;
             for (p = 0; p < sbm->Depth; p++) for (i = 0; i < n; i++) ((UBYTE *)sbm->Planes[p])[i] = (UBYTE)rnd();
         }
-        if (bma && bmb && tmpbm && sbm && layered) { fill_random(); lay_ok = make_layers(); }
-        if (!bma || !bmb || !tmpbm || !sbm || !lay_ok) {
+        tras_a = bma ? AllocRaster(w, h) : NULL;
+        tras_b = bmb ? AllocRaster(w, h) : NULL;
+        if (bma && bmb && tmpbm && sbm && tras_a && tras_b && layered) { fill_random(); lay_ok = make_layers(); }
+        if (!bma || !bmb || !tmpbm || !sbm || !tras_a || !tras_b || !lay_ok) {
             if (layered) free_layers();
+            if (tras_a) FreeRaster(tras_a, w, h);
+            if (tras_b) FreeRaster(tras_b, w, h);
             if (sbm) FreeBitMap(sbm);
             if (bma) FreeBitMap(bma);
             if (bmb) FreeBitMap(bmb);
@@ -579,9 +1103,120 @@ int main(void)
                 sync_b();
             }
             LONG chip0 = (LONG)AvailMem(MEMF_CHIP);
-            ULONG sel = rnd() % 14;
+            ULONG sel = rnd() % NCALLS;
             pens();
             switch (sel) {
+            case 14: {
+                /* AreaMove, AreaDraw, AreaEllipse and AreaEnd: one or two
+                 * polygons and maybe an ellipse, sometimes with AREAOUTLINE
+                 * and an area pattern. Unlayered, inside the bitmap (OS 3.2
+                 * does not clip); in a layer, anywhere near it */
+                LONG np = 1 + (LONG)(rnd() % 2), j, v, ell = rnd() % 3 == 0, rva = 0, rvb = 0, nv = 0, sz = (LONG)(rnd() % 3), outl = 0, starts = 0;
+                LONG lo = layered ? -8 : 0;
+                WORD pts[2 * 16];
+                int st;
+                InitTmpRas(&tmpras_a, tras_a, RASSIZE(w, h)); InitTmpRas(&tmpras_b, tras_b, RASSIZE(w, h));
+                InitArea(&ainfo_a, avec_a, 24); InitArea(&ainfo_b, avec_b, 24);
+                rpa.TmpRas = &tmpras_a; rpb.TmpRas = &tmpras_b;
+                rpa.AreaInfo = &ainfo_a; rpb.AreaInfo = &ainfo_b;
+                for (j = 0; j < 16; j++) areapat[j] = rnd() % 4 ? (UWORD)rnd() : 0xFFFF;
+                if (rnd() % 3 == 0) { SetAfPt(&rpa, areapat, sz); SetAfPt(&rpb, areapat, sz); }
+                else { SetAfPt(&rpa, NULL, 0); SetAfPt(&rpb, NULL, 0); }
+                if (rnd() % 3 == 0) {
+                    UBYTE ol = (UBYTE)rnd();
+                    rpa.AOlPen = rpb.AOlPen = ol;
+                    rpa.Flags |= AREAOUTLINE; rpb.Flags |= AREAOUTLINE;
+                    outl = 1;
+                }
+                for (j = 0; j < np; j++) {
+                    LONG n = 1 + (LONG)(rnd() % 6), cx = (LONG)(rnd() % W), cy = (LONG)(rnd() % H), rx = 1 + (LONG)(rnd() % 40), ry = 1 + (LONG)(rnd() % 30);
+                    for (v = 0; v < n && nv < 16; v++, nv++) {
+                        LONG px = cx + (LONG)(rnd() % (ULONG)(2 * rx + 1)) - rx, py = cy + (LONG)(rnd() % (ULONG)(2 * ry + 1)) - ry;
+                        if (px < lo) px = lo;
+                        if (py < lo) py = lo;
+                        if (px >= (LONG)W) px = W - 1;
+                        if (py >= (LONG)H) py = H - 1;
+                        pts[2 * nv] = (WORD)px; pts[2 * nv + 1] = (WORD)py;
+                        if (!v) starts |= 1L << nv;
+                        rva |= v ? AreaDraw(&rpa, px, py) : AreaMove(&rpa, px, py);
+                        rvb |= v ? ogfx_rp_AreaDraw(&rpb, px, py) : ogfx_rp_AreaMove(&rpb, px, py);
+                    }
+                }
+                if (ell) {
+                    LONG ea = (LONG)(rnd() % 30), eb = (LONG)(rnd() % 20), ex = (LONG)(rnd() % W), ey = (LONG)(rnd() % H);
+                    if (!layered) {
+                        if (ea > ex) ea = ex;
+                        if (ea > (LONG)W - 1 - ex) ea = (LONG)W - 1 - ex;
+                        if (eb > ey) eb = ey;
+                        if (eb > (LONG)H - 1 - ey) eb = (LONG)H - 1 - ey;
+                    }
+                    rva |= AreaEllipse(&rpa, ex, ey, ea, eb);
+                    rvb |= ogfx_rp_AreaEllipse(&rpb, ex, ey, ea, eb);
+                    ASKED("%ld points, %ld polygons, ellipse %ld,%ld %ld x %ld", nv, np, ex, ey, ea, eb, 0);
+                } else ASKED("%ld points, %ld polygons", nv, np, 0, 0, 0, 0, 0);
+                if (!ogfx_rp_takes_area(&rpb)) {
+                    AreaEnd(&rpa); AreaEnd(&rpb);
+                    rpa.TmpRas = rpb.TmpRas = NULL;
+                    rpa.AreaInfo = rpb.AreaInfo = NULL;
+                    rpa.Flags &= ~AREAOUTLINE; rpb.Flags &= ~AREAOUTLINE;
+                    refused++;
+                    break;
+                }
+                ra = AreaEnd(&rpa);
+                rb = ogfx_rp_AreaEnd(&rpb);
+                /* a table with no draw: OS 3.2 answers whatever d0 held */
+                if (ra != 0 && ra != -1) { ra = rb; junk++; }
+                ra |= (rva != 0) << 8;
+                rb |= (rvb != 0) << 8;
+                rpa.TmpRas = rpb.TmpRas = NULL;
+                rpa.AreaInfo = rpb.AreaInfo = NULL;
+                rpa.Flags &= ~AREAOUTLINE; rpb.Flags &= ~AREAOUTLINE;
+                plane = same(&at);
+                st = line_state();
+                if (report(14, ra, ra == rb && st ? rb + 1 : rb, plane, at)) {
+                    Printf("  fg %ld bg %ld aol %ld mode %ld writemask %02lx outline %ld pattern", (LONG)(UBYTE)rpa.FgPen,
+                           (LONG)(UBYTE)rpa.BgPen, (LONG)(UBYTE)rpa.AOlPen, (LONG)rpa.DrawMode, (LONG)rpa.Mask, (LONG)outl);
+                    if (rpa.AreaPtrn) for (j = 0; j < 1L << rpa.AreaPtSz; j++) Printf(" $%04lx", (LONG)rpa.AreaPtrn[j]);
+                    else PutStr(" none");
+                    PutStr("\n");
+                    show_state();
+                    PutStr("  points (| a new polygon):");
+                    for (j = 0; j < nv; j++) Printf("%s %ld,%ld", (LONG)(j && starts & 1L << j ? " |" : ""), (LONG)pts[2 * j], (LONG)pts[2 * j + 1]);
+                    PutStr("\n");
+                    if (!layered) show_pixels(0, 0, (LONG)W - 1, (LONG)H - 1);
+                }
+                break;
+            }
+            case 15: case 16: {
+                /* DrawEllipse (unlayered, inside the bitmap) and EraseRect;
+                 * where the core refuses, B gets graphics.library's call and
+                 * it is not counted */
+                LONG ea = (LONG)(rnd() % 40), eb = (LONG)(rnd() % 30);
+                int mine;
+                if (sel == 15) {
+                    if (rnd() % 2) { SetDrMd(&rpa, rpa.DrawMode & JAM2); SetDrMd(&rpb, rpb.DrawMode & JAM2); }
+                    if (!layered) {
+                        if (ea > x) ea = x;
+                        if (ea > (LONG)W - 1 - x) ea = (LONG)W - 1 - x;
+                        if (eb > y) eb = y;
+                        if (eb > (LONG)H - 1 - y) eb = (LONG)H - 1 - y;
+                    }
+                    DrawEllipse(&rpa, x, y, ea, eb);
+                    if (!(mine = ogfx_rp_DrawEllipse(&rpb, x, y, ea, eb))) DrawEllipse(&rpb, x, y, ea, eb);
+                    ASKED("%ld,%ld %ld x %ld fg %ld mode %ld writemask %02lx", x, y, ea, eb, (LONG)(UBYTE)rpa.FgPen, (LONG)rpa.DrawMode, (LONG)rpa.Mask);
+                } else {
+                    EraseRect(&rpa, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                    if (!(mine = ogfx_rp_EraseRect(&rpb, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1))) EraseRect(&rpb, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                    ASKED("%ld,%ld-%ld,%ld bg %ld mode %ld writemask %02lx", (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1, (LONG)(UBYTE)rpa.BgPen, (LONG)rpa.DrawMode, (LONG)rpa.Mask);
+                }
+                if (!mine) { refused++; break; }
+                plane = same(&at);
+                if (report((int)sel, 0, line_state(), plane, at)) {
+                    show_state();
+                    if (!layered) show_pixels(0, 0, (LONG)W - 1, (LONG)H - 1);
+                }
+                break;
+            }
             case 12: case 13: {
                 /* ClipBlit within the RastPort or from an unlayered one on the
                  * round's source; ScrollRaster. Unlayered, inside the bitmap
@@ -833,6 +1468,7 @@ int main(void)
         WaitBlit();
         if (layered) free_layers();
         FreeBitMap(bma); FreeBitMap(bmb); FreeBitMap(tmpbm); FreeBitMap(sbm);
+        FreeRaster(tras_a, w, h); FreeRaster(tras_b, w, h);
         round_chip -= (LONG)AvailMem(MEMF_CHIP);
         if (round_chip > 0) {
             if (chip_rounds_lost < 5) Printf("round %ld kept %ld bytes of Chip RAM\n", (LONG)r, round_chip);
@@ -844,11 +1480,12 @@ int main(void)
         total += runs[k]; bad += diffs[k];
     }
     Printf("%lu checks, %lu differ\n", total, bad);
-    if (refused) Printf("%lu ClipBlit and ScrollRaster calls left to graphics.library (a simple refresh layer, a clip region, a rectangle not inside the layer or a ScrollRaster shift of its size)\n", refused);
+    if (refused) Printf("%lu calls left to graphics.library (ClipBlit and ScrollRaster: a simple refresh layer, a clip region, a rectangle not inside the layer or a ScrollRaster shift of its size; DrawEllipse in COMPLEMENT, INVERSVID or a line pattern; EraseRect in a layer; AreaEnd outlines in a layer reaching outside it)\n", refused);
     if (recuts) Printf("%lu rounds ended early: graphics.library cut the two sides' ClipRects into different rectangles\n", recuts);
     if (chip_rounds_lost) Printf("%lu rounds kept %ld bytes of Chip RAM in all\n", chip_rounds_lost, chip_round_lost);
-    for (k = 0; k < 14; k++)
+    for (k = 0; k < NCALLS; k++)
         if (chip_kept[k]) Printf("call kind %ld kept %ld bytes of Chip RAM until its round ended\n", (LONG)k, chip_kept[k]);
+    if (junk) Printf("%lu AreaEnd calls on a table with no draw: OS 3.2 answered junk (not compared)\n", junk);
     if (pad_runs) Printf("%lu ReadPixelArray8 calls wrote the row padding differently (not counted)\n", pad_runs);
     FreeVec(arr_a); FreeVec(arr_b); FreeVec(areapat); FreeVec(bltmask);
     if (LayersBase) CloseLibrary(LayersBase);
