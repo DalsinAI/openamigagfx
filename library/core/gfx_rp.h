@@ -6,14 +6,21 @@
  * Each reads the RastPort's pens, DrawMode and Mask and answers as
  * graphics.library does (measured on OS 3.2 by tests/GfxCoreABITest.c).
  * OS 3.2 does not clip an unlayered RastPort; these never write outside
- * the bitmap. A layered RastPort is the library's
- * to cut into its layer's rectangles first; these take only unlayered ones.
+ * the bitmap. On a layered RastPort they draw into each of its layer's
+ * ClipRects (the screen where the layer is on top, a smart refresh
+ * layer's own bitmaps where it is covered); the caller holds the layer
+ * locked (LockLayerRom) and asks ogfx_rp_takes first.
  * Planar bitmaps only for now; chunky (RTG) comes with the bitmap model. */
 #ifndef OPENGFX_RP_H
 #define OPENGFX_RP_H
 
 #include <exec/types.h>
 #include <graphics/rastport.h>
+
+/* Whether these draw on rp: unlayered, or in a layer that is not a super
+ * bitmap layer, and then not BltPattern through a mask (masked: 1). The
+ * rest is graphics.library's. */
+int ogfx_rp_takes(struct RastPort *rp, int masked);
 
 LONG ogfx_rp_WritePixel(struct RastPort *rp, LONG x, LONG y);
 LONG ogfx_rp_ReadPixel(struct RastPort *rp, LONG x, LONG y);
