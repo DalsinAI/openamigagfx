@@ -483,15 +483,17 @@ void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl
 }
 
 /* ---- ellipses ---------------------------------------------------------------------
- * Measured on OS 3.2 (GfxCoreABITest AREAPROBE2, 33 sizes): DrawEllipse
- * draws a quarter, mirrored into the other three, as two runs that may
- * overlap. With F(x, y) = b²x² + a²y² - a²b², run A starts at (0, b) and
- * steps x by one, and y down by one too when that leaves |F| smaller; it
- * ends where b²(2x + 1) > a²(2y - 1). Run B starts at (a, 0) and steps y
- * by one, and x back by one when that leaves |F| smaller; it ends where
- * a²y > b²x. On a wide ellipse (a >= b) run A draws the point it ends on
- * and run B does not; on a tall one the other way round. (0, b) and
- * (a, 0) are always drawn. AreaEllipse fills each row out to the
+ * Measured on OS 3.2 (GfxCoreABITest AREAPROBE2 and AREAPROBE3, 56
+ * sizes): DrawEllipse draws a quarter, mirrored into the other three, as
+ * two runs that may overlap. With F(x, y) = b²x² + a²y² - a²b², run A
+ * starts at (0, b) and steps x by one, and y down by one too when that
+ * leaves |F| smaller; it ends where y > 0 and b²(2x + 1) > a²(2y - 1),
+ * drawing that point only on a wide ellipse (a >= b), or else where x
+ * reaches a, drawing it. Run B starts at (a, 0) and steps y by one, and x
+ * back by one when that leaves |F| smaller; it ends where x > 0 and
+ * a²(2y - 1) > b²(2x + 1), not drawing that point, or else where y
+ * reaches b, drawing it. The slope test comes first. (0, b) and (a, 0)
+ * are always drawn. AreaEllipse fills each row out to the
  * outermost of those points. */
 typedef long long ell_t;
 
@@ -529,9 +531,11 @@ static int ell_next(struct ell *e, LONG *px, LONG *py)
             *px = 0; *py = e->b;
             return 1;
         case 1:
-            if (e->b2 * (2 * x + 1) > e->a2 * (2 * y - 1) || x >= e->a) {
+            if (y > 0 && e->b2 * (2 * x + 1) > e->a2 * (2 * y - 1)) {
                 e->phase = 2;
                 if (e->tall) continue;
+            } else if (x >= e->a) {
+                e->phase = 2;
             } else {
                 e->x = x + 1;
                 if (y > 0 && ell_f(e, x + 1, y - 1) < ell_f(e, x + 1, y)) e->y = y - 1;
@@ -545,9 +549,11 @@ static int ell_next(struct ell *e, LONG *px, LONG *py)
             *px = e->a; *py = 0;
             return 1;
         case 3:
-            if (e->a2 * y > e->b2 * x || y >= e->b) {
+            if (x > 0 && e->a2 * (2 * y - 1) > e->b2 * (2 * x + 1)) {
                 e->phase = 4;
-                if (!e->tall) continue;
+                continue;
+            } else if (y >= e->b) {
+                e->phase = 4;
             } else {
                 e->y = y + 1;
                 if (x > 0 && ell_f(e, x - 1, y + 1) < ell_f(e, x, y + 1)) e->x = x - 1;
@@ -827,6 +833,24 @@ static void am_shapes(struct amask *a, struct AreaInfo *ai, int pass)
     }
 }
 
+int ogfx_rp_takes_area(struct RastPort *rp)
+{
+    struct AreaInfo *ai = rp->AreaInfo;
+    struct Layer *l = rp->Layer;
+    LONG i;
+
+    if (rp->Flags & 0x20) return 0;     /* NOCROSSFILL */
+    if (!l || !(rp->Flags & AREAOUTLINE)) return 1;
+    for (i = 0; i < ai->Count; i++) {
+        LONG x = ai->VctrTbl[2 * i] - l->Scroll_X, y = ai->VctrTbl[2 * i + 1] - l->Scroll_Y;
+        UBYTE f = (UBYTE)ai->FlagTbl[i];
+        if ((f == AV_MOVE || f == AV_DRAW) &&
+            (x < 0 || y < 0 || x > l->bounds.MaxX - l->bounds.MinX || y > l->bounds.MaxY - l->bounds.MinY))
+            return 0;
+    }
+    return 1;
+}
+
 LONG ogfx_rp_AreaEnd(struct RastPort *rp)
 {
     struct AreaInfo *ai = rp->AreaInfo;
@@ -884,7 +908,10 @@ out:
         for (i = 0; i < ai->Count; i++) {
             LONG x = ai->VctrTbl[2 * i], y = ai->VctrTbl[2 * i + 1];
             UBYTE f = (UBYTE)ai->FlagTbl[i];
-            if (f == AV_MOVE) ogfx_rp_Move(rp, x, y);
+            /* a move with no draw after it is left alone (measured) */
+            if (f == AV_MOVE) {
+                if (i + 1 < ai->Count && (UBYTE)ai->FlagTbl[i + 1] == AV_DRAW) ogfx_rp_Move(rp, x, y);
+            }
             else if (f == AV_DRAW) ogfx_rp_Draw(rp, x, y);
             else if (f == AV_ELL && i + 1 < ai->Count) {
                 LONG x1 = ai->VctrTbl[2 * i + 2], y1 = ai->VctrTbl[2 * i + 3];

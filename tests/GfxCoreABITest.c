@@ -58,7 +58,7 @@ static const char *const names[NCALLS] = {
     "Draw", "PolyDraw", "RectFill", "BltPattern", "BltBitMap", "BltBitMapRastPort", "ClipBlit", "ScrollRaster",
     "AreaEnd", "DrawEllipse", "EraseRect"
 };
-static ULONG runs[NCALLS], diffs[NCALLS], pad_runs, refused;
+static ULONG runs[NCALLS], diffs[NCALLS], pad_runs, refused, junk;
 static int nochip;
 /* Chip RAM a switch case kept (after both sides' calls), and rounds that
  * ended with less Chip RAM than they started with */
@@ -1044,8 +1044,20 @@ int main(void)
                     rvb |= ogfx_rp_AreaEllipse(&rpb, ex, ey, ea, eb);
                     ASKED("%ld points, %ld polygons, ellipse %ld,%ld %ld x %ld", nv, np, ex, ey, ea, eb, 0);
                 } else ASKED("%ld points, %ld polygons", nv, np, 0, 0, 0, 0, 0);
-                ra = AreaEnd(&rpa) | (rva != 0) << 8;
-                rb = ogfx_rp_AreaEnd(&rpb) | (rvb != 0) << 8;
+                if (!ogfx_rp_takes_area(&rpb)) {
+                    AreaEnd(&rpa); AreaEnd(&rpb);
+                    rpa.TmpRas = rpb.TmpRas = NULL;
+                    rpa.AreaInfo = rpb.AreaInfo = NULL;
+                    rpa.Flags &= ~AREAOUTLINE; rpb.Flags &= ~AREAOUTLINE;
+                    refused++;
+                    break;
+                }
+                ra = AreaEnd(&rpa);
+                rb = ogfx_rp_AreaEnd(&rpb);
+                /* a table with no draw: OS 3.2 answers whatever d0 held */
+                if (ra != 0 && ra != -1) { ra = rb; junk++; }
+                ra |= (rva != 0) << 8;
+                rb |= (rvb != 0) << 8;
                 rpa.TmpRas = rpb.TmpRas = NULL;
                 rpa.AreaInfo = rpb.AreaInfo = NULL;
                 rpa.Flags &= ~AREAOUTLINE; rpb.Flags &= ~AREAOUTLINE;
@@ -1356,11 +1368,12 @@ int main(void)
         total += runs[k]; bad += diffs[k];
     }
     Printf("%lu checks, %lu differ\n", total, bad);
-    if (refused) Printf("%lu calls left to graphics.library (ClipBlit and ScrollRaster: a simple refresh layer, a clip region, a rectangle not inside the layer or a ScrollRaster shift of its size; DrawEllipse in COMPLEMENT, INVERSVID or a line pattern; EraseRect in a layer)\n", refused);
+    if (refused) Printf("%lu calls left to graphics.library (ClipBlit and ScrollRaster: a simple refresh layer, a clip region, a rectangle not inside the layer or a ScrollRaster shift of its size; DrawEllipse in COMPLEMENT, INVERSVID or a line pattern; EraseRect in a layer; AreaEnd outlines in a layer reaching outside it)\n", refused);
     if (recuts) Printf("%lu rounds ended early: graphics.library cut the two sides' ClipRects into different rectangles\n", recuts);
     if (chip_rounds_lost) Printf("%lu rounds kept %ld bytes of Chip RAM in all\n", chip_rounds_lost, chip_round_lost);
     for (k = 0; k < NCALLS; k++)
         if (chip_kept[k]) Printf("call kind %ld kept %ld bytes of Chip RAM until its round ended\n", (LONG)k, chip_kept[k]);
+    if (junk) Printf("%lu AreaEnd calls on a table with no draw: OS 3.2 answered junk (not compared)\n", junk);
     if (pad_runs) Printf("%lu ReadPixelArray8 calls wrote the row padding differently (not counted)\n", pad_runs);
     FreeVec(arr_a); FreeVec(arr_b); FreeVec(areapat); FreeVec(bltmask);
     if (LayersBase) CloseLibrary(LayersBase);
