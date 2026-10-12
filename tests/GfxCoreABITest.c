@@ -28,8 +28,10 @@
  *                                through a mask, for the rule)
  *   GfxCoreABITest LPROBE       (where a smart refresh layer keeps its
  *                                covered pixels, for the rule)
- *   GfxCoreABITest AREAPROBE    (what OS 3.2's area fills and EraseRect
- *                                draw, for the rules)
+ *   GfxCoreABITest AREAPROBE    (what OS 3.2's area fills draw, for the
+ *                                rules)
+ *   GfxCoreABITest AREAPROBE2   (the AreaInfo table, DrawEllipse and
+ *                                AreaEllipse sizes, outline modes, EraseRect)
  */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -569,6 +571,7 @@ static void grid(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
         line[k] = 0;
         Printf("%3ld %s\n", y, (LONG)line);
     }
+    Flush(Output());
 }
 
 static int areaprobe(void)
@@ -633,30 +636,151 @@ static int areaprobe(void)
         grid(&rp, minx - 2, miny - 2, maxx + 2, maxy + 2);
     }
 
-    /* AreaInfo full: room for 4 vectors, then a 5th and 6th AreaDraw */
-    InitArea(&ai, vb, 4);
-    rp.AreaInfo = &ai;
-    SetRast(&rp, 0); SetAPen(&rp, 1); SetDrMd(&rp, JAM1); SetWriteMask(&rp, 0xFF); SetAfPt(&rp, NULL, 0);
-    rp.Flags &= ~AREAOUTLINE;
-    Printf("== full: M%ld", AreaMove(&rp, 10, 5));
-    Printf(" D%ld", AreaDraw(&rp, 30, 5));
-    Printf(" D%ld", AreaDraw(&rp, 30, 15));
-    Printf(" D%ld", AreaDraw(&rp, 20, 20));
-    Printf(" D%ld", AreaDraw(&rp, 10, 15));
-    Printf(" D%ld", AreaDraw(&rp, 5, 10));
-    Printf(" End%ld Count %ld\n", AreaEnd(&rp), (LONG)ai.Count);
-    WaitBlit();
-    grid(&rp, 3, 3, 32, 22);
-    /* no TmpRas */
-    InitArea(&ai, vb, 24);
-    rp.TmpRas = NULL;
-    SetRast(&rp, 0);
-    Printf("== no TmpRas: M%ld", AreaMove(&rp, 10, 5));
-    Printf(" D%ld D%ld", AreaDraw(&rp, 30, 5), AreaDraw(&rp, 20, 15));
-    Printf(" End%ld\n", AreaEnd(&rp));
-    WaitBlit();
-    grid(&rp, 8, 3, 32, 17);
+    FreeVec(vb);
+    FreeRaster(tr, 128, 48);
+    FreeBitMap(bm);
+    return 0;
+}
+
+/* AREAPROBE2: the rest, for the rules. AreaInfo: the vector table and flag
+ * bytes AreaMove, AreaDraw and AreaEllipse leave, and what fits in how
+ * AreaMove, AreaDraw and AreaEllipse leave; DrawEllipse and AreaEllipse
+ * at many sizes (the flat ones last), each row's pixels relative to the
+ * centre; the outline in JAM2 with a line pattern, in COMPLEMENT and with
+ * an area pattern; EraseRect; last, what fits in how many vectors (a full
+ * table may be what crashed OS 3.2 before). Each part is flushed as it
+ * ends, so a crash keeps what came before it. */
+static void ell_rows(struct RastPort *rp, LONG b)
+{
+    LONG y;
+    for (y = 50 - b - 1; y <= 50 + b + 1; y++) {
+        Printf(" %ld:", y - 50);
+        ranges(rp, y, 0, 159, 80);
+    }
+    PutStr("\n");
+    Flush(Output());
+}
+
+static void fill_count(struct RastPort *rp)
+{
+    LONG x, y, n = 0, x0 = 999, x1 = -1, y0 = 999, y1 = -1;
+    for (y = 0; y < 100; y++)
+        for (x = 0; x < 160; x++)
+            if (ReadPixel(rp, x, y)) {
+                n++;
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+            }
+    Printf(" drew %ld", n);
+    if (n) Printf(" in %ld,%ld-%ld,%ld", x0, y0, x1, y1);
+    PutStr("\n");
+    Flush(Output());
+}
+
+static int areaprobe2(void)
+{
+    static const WORD esz[][2] = {
+        {1,1},{2,1},{1,2},{2,2},{3,1},{3,2},{2,3},{3,3},{4,1},{4,2},{4,3},{4,4},{5,2},{5,3},{5,5},
+        {6,2},{6,4},{7,3},{8,2},{9,4},{12,6},{6,12},{20,8},{8,20},{17,11},{25,25},{30,10},{40,3},{3,40},{60,45},
+        {1,0},{0,1},{0,0}
+    };
+    struct BitMap *bm = AllocBitMap(160, 100, 2, BMF_CLEAR, NULL);
+    PLANEPTR tr = AllocRaster(160, 100);
+    WORD *vb = AllocVec(5 * 32, MEMF_CLEAR);
+    struct RastPort rp;
+    struct AreaInfo ai;
+    struct TmpRas tmp;
+    ULONG s;
+    int i, n;
+
+    if (!bm || !tr || !vb) {
+        PutStr("no Chip RAM\n");
+        if (bm) FreeBitMap(bm);
+        if (tr) FreeRaster(tr, 160, 100);
+        if (vb) FreeVec(vb);
+        return 20;
+    }
+    Printf("AREAPROBE2, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    InitRastPort(&rp); rp.BitMap = bm;
+    InitTmpRas(&tmp, tr, RASSIZE(160, 100));
     rp.TmpRas = &tmp;
+    SetAPen(&rp, 1);
+
+    /* The table: InitArea for 10 vectors on a buffer of $55, then each call */
+    {
+        static const char *const what[] = { "Move 1,2", "Draw 3,4", "Draw 5,6", "Move 7,8", "Move 9,10", "Draw 11,12", "Ellipse 13,14 15,16", "Draw 17,18" };
+        memset(vb, 0x55, 5 * 32);
+        InitArea(&ai, vb, 10);
+        rp.AreaInfo = &ai;
+        Printf("== table: VctrTbl +%ld FlagTbl +%ld MaxCount %ld Count %ld\n", (LONG)((UBYTE *)ai.VctrTbl - (UBYTE *)vb),
+               (LONG)((UBYTE *)ai.FlagTbl - (UBYTE *)vb), (LONG)ai.MaxCount, (LONG)ai.Count);
+        for (i = 0; i < 8; i++) {
+            LONG r, k;
+            switch (i) {
+            case 0: r = AreaMove(&rp, 1, 2); break;
+            case 1: r = AreaDraw(&rp, 3, 4); break;
+            case 2: r = AreaDraw(&rp, 5, 6); break;
+            case 3: r = AreaMove(&rp, 7, 8); break;
+            case 4: r = AreaMove(&rp, 9, 10); break;
+            case 5: r = AreaDraw(&rp, 11, 12); break;
+            case 6: r = AreaEllipse(&rp, 13, 14, 15, 16); break;
+            default: r = AreaDraw(&rp, 17, 18); break;
+            }
+            Printf("%s: %ld Count %ld First %ld,%ld VctrPtr +%ld FlagPtr +%ld\n  words", (LONG)what[i], r, (LONG)ai.Count,
+                   (LONG)ai.FirstX, (LONG)ai.FirstY, (LONG)((UBYTE *)ai.VctrPtr - (UBYTE *)ai.VctrTbl),
+                   (LONG)((UBYTE *)ai.FlagPtr - (UBYTE *)ai.FlagTbl));
+            for (k = 0; k < 20; k++) Printf(" %ld", (LONG)ai.VctrTbl[k]);
+            PutStr("\n  flags");
+            for (k = 0; k < 10; k++) Printf(" $%02lx", (LONG)(UBYTE)ai.FlagTbl[k]);
+            PutStr("\n");
+            Flush(Output());
+        }
+        InitArea(&ai, vb, 10);
+    }
+
+    InitArea(&ai, vb, 32);
+    rp.AreaInfo = &ai;
+
+    /* DrawEllipse, then AreaEllipse, at (80,50) */
+    for (s = 0; s < sizeof esz / sizeof esz[0]; s++) {
+        LONG a = esz[s][0], b = esz[s][1];
+        SetRast(&rp, 0);
+        DrawEllipse(&rp, 80, 50, a, b);
+        WaitBlit();
+        Printf("== DrawEllipse %ld,%ld cp %ld,%ld Flags $%lx\n", a, b, (LONG)rp.cp_x, (LONG)rp.cp_y, (LONG)rp.Flags);
+        ell_rows(&rp, b);
+        SetRast(&rp, 0);
+        Printf("== AreaEllipse %ld,%ld: %ld", a, b, AreaEllipse(&rp, 80, 50, a, b));
+        Printf(" End %ld\n", AreaEnd(&rp));
+        WaitBlit();
+        ell_rows(&rp, b);
+    }
+
+    /* The outline's modes: a triangle with AOlPen 2 */
+    for (s = 0; s < 5; s++) {
+        static const char *const nm[] = { "JAM2 LinePtrn $F0F0", "COMPLEMENT on pen 3", "JAM1 LinePtrn $F0F0", "INVERSVID|JAM2 LinePtrn $FF00", "area pattern JAM2" };
+        SetWriteMask(&rp, 0xFF);
+        SetRast(&rp, s == 1 ? 3 : 0);
+        SetAPen(&rp, 1); SetBPen(&rp, 3); SetDrMd(&rp, JAM1); SetAfPt(&rp, NULL, 0);
+        rp.LinePtrn = 0xFFFF; rp.linpatcnt = 15;
+        switch (s) {
+        case 0: SetDrMd(&rp, JAM2); SetDrPt(&rp, 0xF0F0); break;
+        case 1: SetDrMd(&rp, COMPLEMENT); break;
+        case 2: SetDrPt(&rp, 0xF0F0); break;
+        case 3: SetDrMd(&rp, INVERSVID | JAM2); SetDrPt(&rp, 0xFF00); break;
+        default: SetDrMd(&rp, JAM2); SetAfPt(&rp, apat, 1); break;
+        }
+        SetOutlinePen(&rp, 2);
+        AreaMove(&rp, 10, 5); AreaDraw(&rp, 40, 20); AreaDraw(&rp, 5, 25);
+        Printf("== outline %s: End %ld", (LONG)nm[s], AreaEnd(&rp));
+        WaitBlit();
+        Printf(" cp %ld,%ld Flags $%lx linpatcnt %ld\n", (LONG)rp.cp_x, (LONG)rp.cp_y, (LONG)rp.Flags, (LONG)rp.linpatcnt);
+        grid(&rp, 3, 3, 42, 27);
+        rp.Flags &= ~AREAOUTLINE;
+    }
+    SetDrMd(&rp, JAM1); SetAfPt(&rp, NULL, 0); rp.LinePtrn = 0xFFFF;
 
     /* EraseRect unlayered: on pen 3, BgPen 1, JAM1 and Mask $FF, then
      * JAM2 and Mask $01 */
@@ -693,21 +817,49 @@ static int areaprobe(void)
         CloseLibrary(LayersBase);
         LayersBase = NULL;
     }
+    /* What fits: a shape in n vectors, for n round its size */
+    for (s = 0; s < 6; s++) {
+        static const char *const nm[] = { "rect 4 points", "rect closed 5 points", "two rects", "ellipse", "ellipse + rect", "move move rect" };
+        for (n = 1; n <= 11; n++) {
+            LONG r[12], k = 0, m;
+            SetRast(&rp, 0);
+            InitArea(&ai, vb, n);
+            rp.AreaInfo = &ai;
+            switch (s) {
+            case 0: case 1: case 2: case 4: case 5:
+                if (s == 4) r[k++] = AreaEllipse(&rp, 80, 50, 10, 5);
+                if (s == 5) r[k++] = AreaMove(&rp, 1, 1);
+                r[k++] = AreaMove(&rp, 10, 10); r[k++] = AreaDraw(&rp, 30, 10); r[k++] = AreaDraw(&rp, 30, 20); r[k++] = AreaDraw(&rp, 10, 20);
+                if (s == 1) r[k++] = AreaDraw(&rp, 10, 10);
+                if (s == 2) { r[k++] = AreaMove(&rp, 40, 30); r[k++] = AreaDraw(&rp, 60, 30); r[k++] = AreaDraw(&rp, 60, 40); r[k++] = AreaDraw(&rp, 40, 40); }
+                break;
+            default:
+                r[k++] = AreaEllipse(&rp, 80, 50, 10, 5);
+                break;
+            }
+            Printf("== fits %s in %ld:", (LONG)nm[s], (LONG)n);
+            for (m = 0; m < k; m++) Printf(" %ld", r[m]);
+            Printf(" Count %ld, End %ld Count %ld", (LONG)ai.Count, AreaEnd(&rp), (LONG)ai.Count);
+            WaitBlit();
+            fill_count(&rp);
+        }
+    }
     FreeVec(vb);
-    FreeRaster(tr, 128, 48);
+    FreeRaster(tr, 160, 100);
     FreeBitMap(bm);
     return 0;
 }
 
 int main(void)
 {
-    LONG args[5] = { 0, 0, 0, 0, 0 };
-    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S", args, NULL);
+    LONG args[6] = { 0, 0, 0, 0, 0, 0 };
+    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S,AREAPROBE2/S", args, NULL);
     ULONG rounds = rd && args[0] ? *(ULONG *)args[0] : 400, r, k, total = 0, bad = 0;
 
     if (rd && args[1]) { int rc = probe(); FreeArgs(rd); return rc; }
     if (rd && args[3]) { int rc = lprobe(); FreeArgs(rd); return rc; }
     if (rd && args[4]) { int rc = areaprobe(); FreeArgs(rd); return rc; }
+    if (rd && args[5]) { int rc = areaprobe2(); FreeArgs(rd); return rc; }
     if (rd && args[2]) {
         layered = 1;
         if (!(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no layers.library\n"); FreeArgs(rd); return 20; }
