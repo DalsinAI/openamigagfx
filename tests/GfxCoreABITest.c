@@ -15,6 +15,8 @@
  * nothing differs, 5 when something does, 20 when memory runs out.
  *
  *   GfxCoreABITest [ROUNDS=n]   (default 400)
+ *   GfxCoreABITest PROBE        (which pixels OS 3.2's BltPattern draws
+ *                                through a mask, for the rule)
  */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -127,11 +129,69 @@ static void pens(void)
     SetAPen(&rpb, fg); SetBPen(&rpb, bg); SetDrMd(&rpb, dm); SetWriteMask(&rpb, mask);
 }
 
+/* The pixels of row y set from x0 to x1, relative to xl, as ranges */
+static void ranges(struct RastPort *rp, LONG y, LONG x0, LONG x1, LONG xl)
+{
+    LONG x, start = -1;
+    for (x = x0; x <= x1 + 1; x++) {
+        int on = x <= x1 && ReadPixel(rp, x, y);
+        if (on && start < 0) start = x;
+        if (!on && start >= 0) {
+            if (start == x - 1) Printf(" %ld", start - xl);
+            else Printf(" %ld-%ld", start - xl, x - 1 - xl);
+            start = -1;
+        }
+    }
+}
+
+/* BltPattern through a mask on a clear 1-plane bitmap, JAM1 pen 1, solid:
+ * A, every mask byte $FF, rows 0 and 1 printed; B, row 0's bytes 0 and
+ * row 1's $FF (does row 0 read on into row 1?); C, only the mask bits
+ * below the width set (row 0). Pixels relative to xl. */
+static int probe(void)
+{
+    static const UBYTE shifts[] = { 0, 1, 5, 8, 15 };
+    static const UBYTE widths[] = { 1, 9, 16, 17, 33 };
+    struct BitMap *bm = AllocBitMap(320, 4, 1, BMF_CLEAR, NULL);
+    UBYTE *m = AllocVec(256, MEMF_CHIP | MEMF_CLEAR);
+    struct RastPort rp;
+    ULONG a, b, c, t, i;
+
+    if (!bm || !m) { PutStr("no Chip RAM\n"); if (bm) FreeBitMap(bm); if (m) FreeVec(m); return 20; }
+    InitRastPort(&rp); rp.BitMap = bm;
+    SetAPen(&rp, 1); SetDrMd(&rp, JAM1); SetWriteMask(&rp, 1);
+    PutStr("BltPattern PROBE: shift width bytes-a-row: A row0 | A row1 | B row0 | C row0\n");
+    for (a = 0; a < sizeof shifts; a++)
+        for (b = 0; b < sizeof widths; b++)
+            for (c = 0; c < 3; c++) {
+                LONG xl = 32 + shifts[a], w = widths[b], maxx = xl + w - 1;
+                ULONG bpr = 2 * ((w + 15) / 16) + 2 * c;
+                Printf("s %ld w %ld bpr %ld:", (LONG)shifts[a], w, (LONG)bpr);
+                for (t = 0; t < 3; t++) {
+                    for (i = 0; i < 256; i++)
+                        m[i] = t == 0 ? 0xFF : t == 1 ? (i < bpr ? 0 : 0xFF)
+                             : (i < bpr && (LONG)(i * 8) < w ? (UBYTE)(0xFF << ((LONG)(i * 8 + 8) > w ? 8 - (w - (LONG)i * 8) : 0)) : 0);
+                    SetRast(&rp, 0);
+                    BltPattern(&rp, m, xl, 1, maxx, 2, bpr);
+                    WaitBlit();
+                    ranges(&rp, 1, 0, 319, xl);
+                    PutStr(" |");
+                    if (t == 0) { ranges(&rp, 2, 0, 319, xl); PutStr(" |"); }
+                }
+                PutStr("\n");
+            }
+    FreeVec(m);
+    FreeBitMap(bm);
+    return 0;
+}
+
 int main(void)
 {
-    LONG args[1] = { 0 };
-    struct RDArgs *rd = ReadArgs("ROUNDS/N", args, NULL);
+    LONG args[2] = { 0, 0 };
+    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S", args, NULL);
     ULONG rounds = rd && args[0] ? *(ULONG *)args[0] : 400, r, k, total = 0, bad = 0;
+
+    if (rd && args[1]) { int rc = probe(); FreeArgs(rd); return rc; }
 
     arr_a = AllocVec(ARR, MEMF_ANY);
     arr_b = AllocVec(ARR, MEMF_ANY);

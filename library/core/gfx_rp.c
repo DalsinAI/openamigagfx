@@ -154,6 +154,7 @@ void ogfx_rp_Move(struct RastPort *rp, LONG x, LONG y)
  * when FRST_DOT is clear (it is the last one of the line before), so a
  * COMPLEMENT line drawn on from another does not invert their corner
  * twice. */
+#define JOINT 2  /* first: a PolyDraw corner in COMPLEMENT without JAM2 */
 static void line(struct RastPort *rp, LONG x, LONG y, int first)
 {
     struct gfx_planar bm;
@@ -168,6 +169,7 @@ static void line(struct RastPort *rp, LONG x, LONG y, int first)
     planar_of(rp, &bm);
     for (i = 0; i <= len; i++) {
         uint32_t on = ptrn >> ((cnt - i) & 15) & 1;
+        if (!i && first == JOINT) on = !(rp->LinePtrn >> (cnt & 15) & 1);
         if ((i || first) && inside(rp, px, py)) {
             if (mode == GFX_XOR) { if (on) gfx_planar_put(&bm, px, py, 0, rp->Mask, GFX_INVERT); }
             else if (on) gfx_planar_put(&bm, px, py, rp->FgPen, rp->Mask, GFX_SET);
@@ -192,12 +194,14 @@ void ogfx_rp_Draw(struct RastPort *rp, LONG x, LONG y)
 }
 
 /* Measured on OS 3.2: PolyDraw's first line keeps to FRST_DOT as Draw
- * does. Every later line draws its first pixel too, except in COMPLEMENT
- * without JAM2: so a COMPLEMENT polyline's corners are inverted once, and
- * with JAM2 (every pixel inverted) twice. */
+ * does, and every later line draws its first pixel too, so with
+ * COMPLEMENT and JAM2 (every pixel inverted) a corner is inverted twice.
+ * In COMPLEMENT without JAM2 a corner ends up inverted exactly once
+ * whatever LinePtrn holds there (never, under INVERSVID): the later
+ * line's first pixel inverts it again only where the pattern bit is 0. */
 void ogfx_rp_PolyDraw(struct RastPort *rp, LONG count, const WORD *xy)
 {
-    int again = (rp->DrawMode & (COMPLEMENT | JAM2)) != COMPLEMENT;
+    int again = (rp->DrawMode & (COMPLEMENT | JAM2)) != COMPLEMENT ? 1 : JOINT;
     LONG i;
 
     for (i = 0; i < count; i++, xy += 2) line(rp, xy[0], xy[1], i ? again : (rp->Flags & FRST_DOT) != 0);
@@ -219,11 +223,8 @@ void ogfx_rp_RectFill(struct RastPort *rp, LONG xmin, LONG ymin, LONG xmax, LONG
 
 /* The rectangle through the area pattern and, when there is one, a
  * one-plane mask of bytecnt bytes a row whose bit for (x - xl, y - yl)
- * says whether pixel (x, y) is drawn at all. Measured on OS 3.2: with a
- * mask, each row is drawn on to the end of the 16-pixel word that holds
- * maxx, wherever the mask's bits (read on past bytecnt if need be) are
- * set; a mask as wide as the rectangle with its padding clear draws only
- * the rectangle. */
+ * says whether pixel (x, y) is drawn at all. OS 3.2 draws past maxx when
+ * the mask's padding bits are set; GfxCoreABITest's PROBE measures how far. */
 void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl, LONG maxx, LONG maxy,
                         ULONG bytecnt)
 {
@@ -241,8 +242,7 @@ void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl
         }
         {
             const UBYTE *m = mask + (y - y0) * bytecnt;
-            ULONG x = x0, run, xe = x1 | 15, w = (ULONG)rp->BitMap->BytesPerRow * 8;
-            if (xe >= w) xe = w - 1;
+            ULONG x = x0, run, xe = x1;
             while (x <= xe) {
                 ULONG i = x - x0;
                 if (!(m[i >> 3] & (0x80 >> (i & 7)))) { x++; continue; }
