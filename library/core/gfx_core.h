@@ -45,6 +45,15 @@ enum { GFX_SET = 0, GFX_INVERT = 1 };
 void gfx_planar_put(const struct gfx_planar *bm, int32_t x, int32_t y, uint32_t pen, uint32_t mask, int mode);
 uint32_t gfx_planar_get(const struct gfx_planar *bm, int32_t x, int32_t y);
 
+/* A row of pixels x0..x1 through a 16-pixel pattern (RectFill,
+ * BltPattern, area fills): bit 15 - (x & 15) of pat says what pixel x
+ * gets. GFX_JAM1: a 1 draws fg, a 0 leaves the pixel; GFX_JAM2: a 0
+ * draws bg; GFX_XOR: a 1 inverts the pixel's planes in mask, a 0 leaves
+ * it. A solid fill is pat 0xFFFF. Whole bytes at a time. */
+enum { GFX_JAM1 = 0, GFX_JAM2 = 1, GFX_XOR = 2 };
+void gfx_planar_span(const struct gfx_planar *bm, int32_t x0, int32_t x1, int32_t y, uint32_t pat,
+                     uint32_t fg, uint32_t bg, uint32_t mask, int mode);
+
 /* Every pixel of the bitmap to pen (SetRast), planes in mask. */
 void gfx_planar_fill_all(const struct gfx_planar *bm, uint32_t pen, uint32_t mask);
 
@@ -63,6 +72,8 @@ void gfx_planar_read8(const struct gfx_planar *bm, int32_t x0, int32_t y0, int32
 void gfx_chunky8_put(const struct gfx_chunky8 *bm, int32_t x, int32_t y, uint32_t pen, uint32_t mask, int mode);
 uint32_t gfx_chunky8_get(const struct gfx_chunky8 *bm, int32_t x, int32_t y);
 void gfx_chunky8_fill_all(const struct gfx_chunky8 *bm, uint32_t pen, uint32_t mask);
+void gfx_chunky8_span(const struct gfx_chunky8 *bm, int32_t x0, int32_t x1, int32_t y, uint32_t pat,
+                      uint32_t fg, uint32_t bg, uint32_t mask, int mode);
 void gfx_chunky8_write8(const struct gfx_chunky8 *bm, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
                         const uint8_t *src, uint32_t src_bpr, uint32_t mask);
 void gfx_chunky8_read8(const struct gfx_chunky8 *bm, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
