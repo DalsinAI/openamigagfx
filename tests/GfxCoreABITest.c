@@ -20,6 +20,7 @@
 #include <exec/memory.h>
 #include <graphics/gfx.h>
 #include <graphics/rastport.h>
+#include <graphics/gfxmacros.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/graphics.h>
