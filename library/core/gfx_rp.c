@@ -1183,7 +1183,8 @@ int ogfx_rp_ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0
  * Underline fills the row below the baseline (when the font has one)
  * across the box, leaving a pixel clear each side of the image's pixels
  * there. The whole is drawn as a template through the DrawMode, JAM2
- * filling the box. TextExtent gives the box; for no characters, 0..-1. */
+ * filling the box. TextExtent gives the box; for no characters, height 0
+ * and 0,0..-1,-1. */
 struct tx {
     struct TextFont *tf;
     const UBYTE *s;
@@ -1336,9 +1337,15 @@ void ogfx_rp_TextExtent(struct RastPort *rp, CONST_STRPTR s, ULONG n, struct Tex
     LONG x0, x1;
     tx_start(&t, rp, (const UBYTE *)s, (LONG)(UWORD)n);
     te->te_Width = (WORD)tx_measure(&t, &x0, &x1);
-    te->te_Height = t.tf->tf_YSize;
     te->te_Extent.MinX = (WORD)x0;
     te->te_Extent.MaxX = (WORD)x1;
+    if (!t.n) {
+        te->te_Height = 0;
+        te->te_Extent.MinY = 0;
+        te->te_Extent.MaxY = -1;
+        return;
+    }
+    te->te_Height = t.tf->tf_YSize;
     te->te_Extent.MinY = (WORD)-t.tf->tf_Baseline;
     te->te_Extent.MaxY = (WORD)(t.tf->tf_YSize - 1 - t.tf->tf_Baseline);
 }
