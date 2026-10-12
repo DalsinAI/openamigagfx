@@ -40,6 +40,22 @@ void ogfx_rp_RectFill(struct RastPort *rp, LONG xmin, LONG ymin, LONG xmax, LONG
 void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl, LONG maxx, LONG maxy,
                         ULONG bytecnt);
 
+/* Area fills and ellipses. AreaMove, AreaDraw and AreaEllipse keep the
+ * AreaInfo table as OS 3.2 does and answer 0, or -1 when it is full;
+ * AreaEnd fills it as OS 3.2 does (through the area pattern, with
+ * AREAOUTLINE's outline) using the TmpRas for its mask, empties it, and
+ * answers 0, or -1 when the table had no room to close the last polygon
+ * or the TmpRas is missing or too small for the area's box. DrawEllipse
+ * returns 0, drawing nothing, for a call graphics.library must make (a
+ * DrawMode with COMPLEMENT or INVERSVID, or a line pattern, not measured
+ * yet); EraseRect likewise in a layer (its backfill hook). */
+LONG ogfx_rp_AreaMove(struct RastPort *rp, LONG x, LONG y);
+LONG ogfx_rp_AreaDraw(struct RastPort *rp, LONG x, LONG y);
+LONG ogfx_rp_AreaEllipse(struct RastPort *rp, LONG xc, LONG yc, LONG a, LONG b);
+LONG ogfx_rp_AreaEnd(struct RastPort *rp);
+int ogfx_rp_DrawEllipse(struct RastPort *rp, LONG xc, LONG yc, LONG a, LONG b);
+int ogfx_rp_EraseRect(struct RastPort *rp, LONG xmin, LONG ymin, LONG xmax, LONG ymax);
+
 /* Blits. Coordinates and sizes are graphics.library's WORDs; minterm's
  * high four bits act (the A channel is all ones). BltBitMap copies between
  * standard planar bitmaps and answers with the planes it drew;
