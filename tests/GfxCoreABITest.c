@@ -1191,7 +1191,9 @@ static void close_fonts(void)
 {
     int i;
     for (i = 0; i < nfonts; i++) {
-        if (fonts[i].made) FreeVec(fonts[i].tf);
+        /* SetFont extends a font: its TextFontExtension, and arrays for one
+         * without CharSpace, go with StripFont */
+        if (fonts[i].made) { StripFont(fonts[i].tf); FreeVec(fonts[i].tf); }
         else CloseFont(fonts[i].tf);
     }
     nfonts = 0;
@@ -1216,9 +1218,9 @@ static void dump_font(int i, const char *when)
     int k;
     Printf("font %ld %s: Style $%02lx Flags $%02lx XSize %ld ReplyPort $%08lx CharSpace $%08lx", (LONG)i, (LONG)when,
            (LONG)f->tf_Style, (LONG)f->tf_Flags, (LONG)f->tf_XSize, (LONG)f->tf_Message.mn_ReplyPort, (LONG)f->tf_CharSpace);
-    if (f->tf_CharSpace) for (k = 0; k < 8; k++) Printf(" %ld", (LONG)((WORD *)f->tf_CharSpace)[k]);
+    if (f->tf_CharSpace) for (k = 0; k < 6; k++) Printf(" %ld", (LONG)((WORD *)f->tf_CharSpace)[k]);
     Printf(" CharKern $%08lx", (LONG)f->tf_CharKern);
-    if (f->tf_CharKern) for (k = 0; k < 8; k++) Printf(" %ld", (LONG)((WORD *)f->tf_CharKern)[k]);
+    if (f->tf_CharKern) for (k = 0; k < 6; k++) Printf(" %ld", (LONG)((WORD *)f->tf_CharKern)[k]);
     PutStr("\n");
 }
 

@@ -89,7 +89,8 @@ int ogfx_rp_ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0
  * a string in the RastPort's font, AlgoStyle and TxSpacing. Text returns
  * 0, drawing nothing, for a call graphics.library must make: no font, a
  * colour font, a font drawn right to left, or a RastPort ogfx_rp_takes
- * refuses. */
+ * refuses. TextLength and TextExtent are measured for the fonts Text
+ * takes; ask ogfx_rp_takes_text first. */
 struct TextExtent;
 int ogfx_rp_takes_text(struct RastPort *rp);
 int ogfx_rp_Text(struct RastPort *rp, CONST_STRPTR s, ULONG n);
