@@ -36,6 +36,7 @@
  *   GfxCoreABITest AREAPROBE2   (the AreaInfo table, DrawEllipse and
  *                                AreaEllipse sizes, outline modes, EraseRect)
  *   GfxCoreABITest AREAPROBE3   (flat and thin ellipses)
+ *   GfxCoreABITest AREAPROBE4   (two-point polygons, pattern phase, outline pen position)
  */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -282,8 +283,8 @@ static void show_pixels(LONG x0, LONG y0, LONG x1, LONG y1)
     LONG x, y, n = 0;
     WaitBlit();
     PutStr("  pixels:");
-    for (y = y0; y <= y1 && n < 8; y++)
-        for (x = x0; x <= x1 && n < 8; x++) {
+    for (y = y0; y <= y1 && n < 24; y++)
+        for (x = x0; x <= x1 && n < 24; x++) {
             LONG a = (LONG)ReadPixel(&rpa, x, y), b = ogfx_rp_ReadPixel(&rpb, x, y);
             if (a != b) { Printf(" %ld,%ld OS %ld ours %ld;", x, y, a, b); n++; }
         }
@@ -919,10 +920,108 @@ static int areaprobe3(void)
     return 0;
 }
 
+/* AREAPROBE4: the cases the random test found: two-point polygons that are
+ * not level or upright, the area pattern's phase with four rows, and the
+ * pen position after an outline that ends on a lone AreaMove or has a move
+ * before an ellipse. ops: 'M' x,y, 'D' x,y, 'E' xc,yc,a,b, 0 ends */
+struct aprobe4 {
+    const char *name;
+    WORD sz, outline;
+    WORD ops[40];
+};
+static const struct aprobe4 aprobe4s[] = {
+    { "two points 14,38 18,28",           -1, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "two points 10,5 30,12",            -1, 0, { 'M',10,5, 'D',30,12, 0 } },
+    { "two points 10,5 12,20",            -1, 0, { 'M',10,5, 'D',12,20, 0 } },
+    { "two points 30,12 10,5",            -1, 0, { 'M',30,12, 'D',10,5, 0 } },
+    { "lone move then two points",        -1, 0, { 'M',60,24, 'M',14,38, 'D',18,28, 0 } },
+    { "two points then a triangle",       -1, 0, { 'M',10,5, 'D',30,12, 'M',40,5, 'D',60,10, 'D',45,20, 0 } },
+    { "three points on a line",           -1, 0, { 'M',10,5, 'D',20,10, 'D',30,15, 0 } },
+    { "four points there and back",       -1, 0, { 'M',10,5, 'D',30,12, 'D',50,5, 'D',30,12, 0 } },
+    { "pattern 4 rows rect y 1",           2, 0, { 'M',3,1, 'D',40,1, 'D',40,8, 'D',3,8, 0 } },
+    { "pattern 4 rows rect y 2",           2, 0, { 'M',3,2, 'D',40,2, 'D',40,9, 'D',3,9, 0 } },
+    { "pattern 4 rows rect y 3",           2, 0, { 'M',3,3, 'D',40,3, 'D',40,10, 'D',3,10, 0 } },
+    { "pattern 4 rows triangle y 5",       2, 0, { 'M',10,5, 'D',40,15, 'D',5,18, 0 } },
+    { "pattern 4 rows two points",         2, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 2 rows two points",         1, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 4 rows two polygons",       2, 0, { 'M',10,5, 'D',30,6, 'D',20,14, 'M',35,21, 'D',50,30, 'D',38,33, 0 } },
+    { "outline, lone move last",          -1, 1, { 'M',10,5, 'D',40,15, 'D',5,18, 'M',50,30, 0 } },
+    { "outline, move then ellipse",       -1, 1, { 'M',10,5, 'D',40,15, 'D',5,18, 'M',50,30, 'E',30,30,8,4, 0 } },
+    { "outline, ellipse then lone move",  -1, 1, { 'E',30,30,8,4, 'M',50,30, 0 } },
+    { "outline, two points",              -1, 1, { 'M',14,38, 'D',18,28, 0 } },
+    { "no outline, lone move last",       -1, 0, { 'M',10,5, 'D',40,15, 'D',5,18, 'M',50,30, 0 } },
+};
+static UWORD apat4[4] = { 0xFF00, 0x0FF0, 0x00FF, 0xF00F };
+
+static int areaprobe4(void)
+{
+    struct BitMap *bm = AllocBitMap(128, 48, 2, BMF_CLEAR, NULL);
+    PLANEPTR tr = AllocRaster(128, 48);
+    WORD *vb = AllocVec(5 * 24, MEMF_CLEAR);
+    struct RastPort rp;
+    struct AreaInfo ai;
+    struct TmpRas tmp;
+    ULONG s;
+    int i;
+
+    if (!bm || !tr || !vb) {
+        PutStr("no Chip RAM\n");
+        if (bm) FreeBitMap(bm);
+        if (tr) FreeRaster(tr, 128, 48);
+        if (vb) FreeVec(vb);
+        return 20;
+    }
+    Printf("AREAPROBE4, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    InitRastPort(&rp); rp.BitMap = bm;
+    InitTmpRas(&tmp, tr, RASSIZE(128, 48));
+    rp.TmpRas = &tmp;
+    for (s = 0; s < sizeof aprobe4s / sizeof aprobe4s[0]; s++) {
+        const struct aprobe4 *a = &aprobe4s[s];
+        LONG minx = 127, miny = 47, maxx = 0, maxy = 0, r;
+        InitArea(&ai, vb, 24);
+        rp.AreaInfo = &ai;
+        SetWriteMask(&rp, 0xFF); SetDrMd(&rp, JAM1); SetAfPt(&rp, NULL, 0);
+        rp.Flags &= ~AREAOUTLINE;
+        SetRast(&rp, 0);
+        Move(&rp, 0, 0);
+        SetAPen(&rp, 1);
+        if (a->outline) SetOutlinePen(&rp, 2);
+        if (a->sz >= 0) SetAfPt(&rp, apat4, a->sz);
+        Printf("== %s:", (LONG)a->name);
+        for (i = 0; a->ops[i]; ) {
+            LONG x = a->ops[i + 1], y = a->ops[i + 2], ea = 0, eb = 0;
+            if (a->ops[i] == 'E') {
+                ea = a->ops[i + 3]; eb = a->ops[i + 4];
+                r = AreaEllipse(&rp, x, y, ea, eb);
+                Printf(" E%ld", r);
+                i += 5;
+            } else {
+                r = a->ops[i] == 'M' ? AreaMove(&rp, x, y) : AreaDraw(&rp, x, y);
+                Printf(" %s%ld", (LONG)(a->ops[i] == 'M' ? "M" : "D"), r);
+                i += 3;
+            }
+            if (x - ea < minx) minx = x - ea;
+            if (y - eb < miny) miny = y - eb;
+            if (x + ea > maxx) maxx = x + ea;
+            if (y + eb > maxy) maxy = y + eb;
+        }
+        Printf(" table Count %ld flags", (LONG)ai.Count);
+        for (i = 0; i < ai.Count; i++) Printf(" $%02lx", (LONG)(UBYTE)ai.FlagTbl[i]);
+        r = AreaEnd(&rp);
+        WaitBlit();
+        Printf(" End%ld cp %ld,%ld cnt %ld Flags $%lx\n", r, (LONG)rp.cp_x, (LONG)rp.cp_y, (LONG)rp.linpatcnt, (LONG)rp.Flags);
+        grid(&rp, minx - 2, miny - 2, maxx + 2, maxy + 2);
+    }
+    FreeVec(vb);
+    FreeRaster(tr, 128, 48);
+    FreeBitMap(bm);
+    return 0;
+}
+
 int main(void)
 {
-    LONG args[7] = { 0, 0, 0, 0, 0, 0, 0 };
-    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S,AREAPROBE2/S,AREAPROBE3/S", args, NULL);
+    LONG args[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S,AREAPROBE2/S,AREAPROBE3/S,AREAPROBE4/S", args, NULL);
     ULONG rounds = rd && args[0] ? *(ULONG *)args[0] : 400, r, k, total = 0, bad = 0;
 
     if (rd && args[1]) { int rc = probe(); FreeArgs(rd); return rc; }
@@ -930,6 +1029,7 @@ int main(void)
     if (rd && args[4]) { int rc = areaprobe(); FreeArgs(rd); return rc; }
     if (rd && args[5]) { int rc = areaprobe2(); FreeArgs(rd); return rc; }
     if (rd && args[6]) { int rc = areaprobe3(); FreeArgs(rd); return rc; }
+    if (rd && args[7]) { int rc = areaprobe4(); FreeArgs(rd); return rc; }
     if (rd && args[2]) {
         layered = 1;
         if (!(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no layers.library\n"); FreeArgs(rd); return 20; }
@@ -1003,7 +1103,7 @@ int main(void)
                  * polygons and maybe an ellipse, sometimes with AREAOUTLINE
                  * and an area pattern. Unlayered, inside the bitmap (OS 3.2
                  * does not clip); in a layer, anywhere near it */
-                LONG np = 1 + (LONG)(rnd() % 2), j, v, ell = rnd() % 3 == 0, rva = 0, rvb = 0, nv = 0, sz = (LONG)(rnd() % 3);
+                LONG np = 1 + (LONG)(rnd() % 2), j, v, ell = rnd() % 3 == 0, rva = 0, rvb = 0, nv = 0, sz = (LONG)(rnd() % 3), outl = 0, starts = 0;
                 LONG lo = layered ? -8 : 0;
                 WORD pts[2 * 16];
                 int st;
@@ -1018,6 +1118,7 @@ int main(void)
                     UBYTE ol = (UBYTE)rnd();
                     rpa.AOlPen = rpb.AOlPen = ol;
                     rpa.Flags |= AREAOUTLINE; rpb.Flags |= AREAOUTLINE;
+                    outl = 1;
                 }
                 for (j = 0; j < np; j++) {
                     LONG n = 1 + (LONG)(rnd() % 6), cx = (LONG)(rnd() % W), cy = (LONG)(rnd() % H), rx = 1 + (LONG)(rnd() % 40), ry = 1 + (LONG)(rnd() % 30);
@@ -1028,6 +1129,7 @@ int main(void)
                         if (px >= (LONG)W) px = W - 1;
                         if (py >= (LONG)H) py = H - 1;
                         pts[2 * nv] = (WORD)px; pts[2 * nv + 1] = (WORD)py;
+                        if (!v) starts |= 1L << nv;
                         rva |= v ? AreaDraw(&rpa, px, py) : AreaMove(&rpa, px, py);
                         rvb |= v ? ogfx_rp_AreaDraw(&rpb, px, py) : ogfx_rp_AreaMove(&rpb, px, py);
                     }
@@ -1064,12 +1166,14 @@ int main(void)
                 plane = same(&at);
                 st = line_state();
                 if (report(14, ra, ra == rb && st ? rb + 1 : rb, plane, at)) {
-                    Printf("  fg %ld bg %ld aol %ld mode %ld writemask %02lx pattern %s\n", (LONG)(UBYTE)rpa.FgPen,
-                           (LONG)(UBYTE)rpa.BgPen, (LONG)(UBYTE)rpa.AOlPen, (LONG)rpa.DrawMode, (LONG)rpa.Mask,
-                           (LONG)(rpa.AreaPtrn ? "set" : "none"));
+                    Printf("  fg %ld bg %ld aol %ld mode %ld writemask %02lx outline %ld pattern", (LONG)(UBYTE)rpa.FgPen,
+                           (LONG)(UBYTE)rpa.BgPen, (LONG)(UBYTE)rpa.AOlPen, (LONG)rpa.DrawMode, (LONG)rpa.Mask, (LONG)outl);
+                    if (rpa.AreaPtrn) for (j = 0; j < 1L << rpa.AreaPtSz; j++) Printf(" $%04lx", (LONG)rpa.AreaPtrn[j]);
+                    else PutStr(" none");
+                    PutStr("\n");
                     show_state();
-                    PutStr("  points:");
-                    for (j = 0; j < nv; j++) Printf(" %ld,%ld", (LONG)pts[2 * j], (LONG)pts[2 * j + 1]);
+                    PutStr("  points (| a new polygon):");
+                    for (j = 0; j < nv; j++) Printf("%s %ld,%ld", (LONG)(j && starts & 1L << j ? " |" : ""), (LONG)pts[2 * j], (LONG)pts[2 * j + 1]);
                     PutStr("\n");
                     if (!layered) show_pixels(0, 0, (LONG)W - 1, (LONG)H - 1);
                 }

@@ -908,9 +908,10 @@ out:
         for (i = 0; i < ai->Count; i++) {
             LONG x = ai->VctrTbl[2 * i], y = ai->VctrTbl[2 * i + 1];
             UBYTE f = (UBYTE)ai->FlagTbl[i];
-            /* a move with no draw after it is left alone (measured) */
+            /* a move is made unless an ellipse follows it (measured:
+             * one left last moves the pen there) */
             if (f == AV_MOVE) {
-                if (i + 1 < ai->Count && (UBYTE)ai->FlagTbl[i + 1] == AV_DRAW) ogfx_rp_Move(rp, x, y);
+                if (i + 1 >= ai->Count || (UBYTE)ai->FlagTbl[i + 1] != AV_ELL) ogfx_rp_Move(rp, x, y);
             }
             else if (f == AV_DRAW) ogfx_rp_Draw(rp, x, y);
             else if (f == AV_ELL && i + 1 < ai->Count) {
