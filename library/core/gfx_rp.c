@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx's RastPort calls (gfx_rp.h). Copyright (c) 2026 Dalsin Limited. MIT. */
 #include <graphics/gfx.h>
+#include <graphics/clip.h>
+#include <graphics/layers.h>
 #include "gfx_rp.h"
 #include "gfx_core.h"
 
-static void planar_of(struct RastPort *rp, struct gfx_planar *bm)
+static void planar_from(struct BitMap *b, struct gfx_planar *bm)
 {
-    struct BitMap *b = rp->BitMap;
     int p;
 
     for (p = 0; p < 8; p++)
@@ -16,9 +17,123 @@ static void planar_of(struct RastPort *rp, struct gfx_planar *bm)
     bm->depth = b->Depth > 8 ? 8 : b->Depth;
 }
 
-static int inside(struct RastPort *rp, LONG x, LONG y)
+static void planar_of(struct RastPort *rp, struct gfx_planar *bm)
 {
-    return x >= 0 && y >= 0 && x < (LONG)rp->BitMap->BytesPerRow * 8 && y < (LONG)rp->BitMap->Rows;
+    planar_from(rp->BitMap, bm);
+}
+
+/* ---- where a drawing lands --------------------------------------------------
+ * A place is a bitmap, the offset from the RastPort's coordinates to the
+ * bitmap's, and the rectangle of the bitmap the drawing may touch. An
+ * unlayered RastPort has one: its bitmap, whole. A layered one has one a
+ * ClipRect of its layer (the caller holds the layer locked): the screen's
+ * bitmap inside the ClipRect where the layer is on top, and where it is
+ * covered, a smart refresh layer's own bitmap for that ClipRect, which
+ * keeps the screen's alignment within 16 pixels (its x 0 is the screen's
+ * x at ClipRect's MinX & ~15). A simple refresh layer's covered parts are
+ * not drawn. A super bitmap layer is graphics.library's (ogfx_rp_takes). */
+struct place {
+    struct gfx_planar bm;
+    LONG dx, dy;                /* the bitmap's x = the RastPort's x + dx */
+    LONG x0, y0, x1, y1;        /* the bitmap's rectangle, inclusive */
+};
+struct walk {
+    struct RastPort *rp;
+    struct ClipRect *cr;
+    int done;
+};
+
+static void walk_start(struct walk *w, struct RastPort *rp)
+{
+    w->rp = rp;
+    w->cr = rp->Layer ? rp->Layer->ClipRect : NULL;
+    w->done = 0;
+}
+
+static int walk_next(struct walk *w, struct place *pl)
+{
+    struct Layer *l = w->rp->Layer;
+    struct BitMap *b;
+
+    if (!l) {
+        if (w->done) return 0;
+        w->done = 1;
+        b = w->rp->BitMap;
+        planar_from(b, &pl->bm);
+        pl->dx = pl->dy = 0;
+        pl->x0 = pl->y0 = 0;
+        pl->x1 = (LONG)b->BytesPerRow * 8 - 1;
+        pl->y1 = (LONG)b->Rows - 1;
+        return 1;
+    }
+    while (w->cr) {
+        struct ClipRect *cr = w->cr;
+        LONG ox = l->bounds.MinX - l->Scroll_X, oy = l->bounds.MinY - l->Scroll_Y, bx, by;
+        w->cr = cr->Next;
+        if (!cr->lobs) { b = w->rp->BitMap; bx = by = 0; }
+        else if (cr->BitMap && !(l->Flags & LAYERSUPER)) { b = cr->BitMap; bx = cr->bounds.MinX & ~15L; by = cr->bounds.MinY; }
+        else continue;
+        planar_from(b, &pl->bm);
+        pl->dx = ox - bx;
+        pl->dy = oy - by;
+        pl->x0 = cr->bounds.MinX - bx;
+        pl->y0 = cr->bounds.MinY - by;
+        pl->x1 = cr->bounds.MaxX - bx;
+        pl->y1 = cr->bounds.MaxY - by;
+        if (pl->x0 < 0) pl->x0 = 0;
+        if (pl->y0 < 0) pl->y0 = 0;
+        if (pl->x1 > (LONG)b->BytesPerRow * 8 - 1) pl->x1 = (LONG)b->BytesPerRow * 8 - 1;
+        if (pl->y1 > (LONG)b->Rows - 1) pl->y1 = (LONG)b->Rows - 1;
+        if (pl->x0 <= pl->x1 && pl->y0 <= pl->y1) return 1;
+    }
+    return 0;
+}
+
+static int in_place(const struct place *pl, LONG x, LONG y)
+{
+    x += pl->dx;
+    y += pl->dy;
+    return x >= pl->x0 && x <= pl->x1 && y >= pl->y0 && y <= pl->y1;
+}
+
+/* The place pixel (x, y) lands in, trying the last one first; NULL when
+ * it lands nowhere. */
+static struct place *place_at(struct RastPort *rp, struct place *pl, int *have, LONG x, LONG y)
+{
+    struct walk w;
+
+    if (*have && in_place(pl, x, y)) return pl;
+    walk_start(&w, rp);
+    while (walk_next(&w, pl))
+        if (in_place(pl, x, y)) return *have = 1, pl;
+    *have = 0;
+    return NULL;
+}
+
+/* The rectangle (RastPort coordinates) cut to a place, in the bitmap's
+ * coordinates; 0 when nothing is left. */
+static int cut_to(const struct place *pl, LONG x0, LONG y0, LONG x1, LONG y1, LONG *r)
+{
+    r[0] = x0 + pl->dx; r[1] = y0 + pl->dy; r[2] = x1 + pl->dx; r[3] = y1 + pl->dy;
+    if (r[0] < pl->x0) r[0] = pl->x0;
+    if (r[1] < pl->y0) r[1] = pl->y0;
+    if (r[2] > pl->x1) r[2] = pl->x1;
+    if (r[3] > pl->y1) r[3] = pl->y1;
+    return r[0] <= r[2] && r[1] <= r[3];
+}
+
+/* Inside the layer's own rectangle (RastPort coordinates). */
+static int in_layer(struct Layer *l, LONG x, LONG y)
+{
+    x += l->bounds.MinX - l->Scroll_X;
+    y += l->bounds.MinY - l->Scroll_Y;
+    return x >= l->bounds.MinX && x <= l->bounds.MaxX && y >= l->bounds.MinY && y <= l->bounds.MaxY;
+}
+
+int ogfx_rp_takes(struct RastPort *rp, int masked)
+{
+    struct Layer *l = rp->Layer;
+    return !l || (!masked && !(l->Flags & LAYERSUPER));
 }
 
 /* The rectangle, cut to the bitmap; 0 when nothing is left. */
@@ -39,21 +154,34 @@ static int cut(struct RastPort *rp, ULONG *x0, ULONG *y0, ULONG *x1, ULONG *y1)
  * JAM2 the pixel is left as it is. */
 LONG ogfx_rp_WritePixel(struct RastPort *rp, LONG x, LONG y)
 {
-    struct gfx_planar bm;
+    struct place pl;
+    int have = 0;
     UBYTE mode = rp->DrawMode;
 
-    if (!inside(rp, x, y) || (mode & (INVERSVID | JAM2)) == INVERSVID) return 0;
-    planar_of(rp, &bm);
+    /* in a layer: -1 outside the layer's rectangle (the autodoc's "outside
+     * the RastPort"); a covered pixel of a simple refresh layer is 0 */
+    if (rp->Layer && !in_layer(rp->Layer, x, y)) return -1;
+    if (!place_at(rp, &pl, &have, x, y) || (mode & (INVERSVID | JAM2)) == INVERSVID) return 0;
+    x += pl.dx;
+    y += pl.dy;
     if (mode & COMPLEMENT)
-        gfx_planar_put(&bm, x, y, 0, rp->Mask, GFX_INVERT);
+        gfx_planar_put(&pl.bm, x, y, 0, rp->Mask, GFX_INVERT);
     else
-        gfx_planar_put(&bm, x, y, mode & INVERSVID ? rp->BgPen : rp->FgPen, rp->Mask, GFX_SET);
+        gfx_planar_put(&pl.bm, x, y, mode & INVERSVID ? rp->BgPen : rp->FgPen, rp->Mask, GFX_SET);
     return 0;
 }
 
 LONG ogfx_rp_ReadPixel(struct RastPort *rp, LONG x, LONG y)
 {
     struct BitMap *b = rp->BitMap;
+
+    if (rp->Layer) {
+        /* in a layer: the pixel where it is kept, or -1 where nothing keeps it */
+        struct place pl;
+        int have = 0;
+        if (!place_at(rp, &pl, &have, x, y)) return -1;
+        return (LONG)gfx_planar_get(&pl.bm, x + pl.dx, y + pl.dy);
+    }
     LONG off = y * (LONG)b->BytesPerRow + (x >> 3);
     UBYTE bit = (UBYTE)(0x80 >> (x & 7));
     ULONG pen = 0;
@@ -70,14 +198,43 @@ LONG ogfx_rp_ReadPixel(struct RastPort *rp, LONG x, LONG y)
 void ogfx_rp_SetRast(struct RastPort *rp, ULONG pen)
 {
     struct gfx_planar bm;
+    struct walk w;
+    struct place pl;
+    LONG y;
 
-    planar_of(rp, &bm);
-    gfx_planar_fill_all(&bm, pen, rp->Mask);
+    if (!rp->Layer) {
+        planar_of(rp, &bm);
+        gfx_planar_fill_all(&bm, pen, rp->Mask);
+        return;
+    }
+    /* in a layer: every place the layer keeps */
+    walk_start(&w, rp);
+    while (walk_next(&w, &pl))
+        for (y = pl.y0; y <= pl.y1; y++)
+            gfx_planar_span(&pl.bm, pl.x0, pl.x1, y, 0xFFFF, pen, 0, rp->Mask, GFX_JAM1);
 }
 
 /* WritePixelArray8's and ReadPixelArray8's array rows are the width
  * rounded up to 16 bytes. */
 #define ROW16(x0, x1) ((((x1) - (x0) + 1) + 15) & ~15UL)
+
+/* An array (RastPort coordinates x0, y0 at array[0]) into every place of
+ * a layered RastPort, or out of it (write 0). */
+static void layer_array(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1, UBYTE *array, ULONG bpr, int write)
+{
+    struct walk w;
+    struct place pl;
+    LONG r[4];
+
+    walk_start(&w, rp);
+    while (walk_next(&w, &pl)) {
+        UBYTE *a;
+        if (!cut_to(&pl, x0, y0, x1, y1, r)) continue;
+        a = array + (ULONG)(r[1] - pl.dy - y0) * bpr + (ULONG)(r[0] - pl.dx - x0);
+        if (write) gfx_planar_write8(&pl.bm, r[0], r[1], r[2], r[3], a, bpr, rp->Mask);
+        else gfx_planar_read8(&pl.bm, r[0], r[1], r[2], r[3], a, bpr);
+    }
+}
 
 LONG ogfx_rp_WritePixelArray8(struct RastPort *rp, ULONG xstart, ULONG ystart, ULONG xstop, ULONG ystop,
                               UBYTE *array, struct RastPort *temprp)
@@ -86,6 +243,11 @@ LONG ogfx_rp_WritePixelArray8(struct RastPort *rp, ULONG xstart, ULONG ystart, U
     struct gfx_planar bm;
 
     (void)temprp;
+    if (rp->Layer) {
+        if (xstart > xstop || ystart > ystop) return 0;
+        layer_array(rp, (LONG)xstart, (LONG)ystart, (LONG)xstop, (LONG)ystop, array, bpr, 1);
+        return (LONG)((xstop - xstart + 1) * (ystop - ystart + 1));
+    }
     if (!cut(rp, &xstart, &ystart, &x1, &y1)) return 0;
     planar_of(rp, &bm);
     gfx_planar_write8(&bm, xstart, ystart, x1, y1, array, bpr, rp->Mask);
@@ -99,9 +261,15 @@ LONG ogfx_rp_ReadPixelArray8(struct RastPort *rp, ULONG xstart, ULONG ystart, UL
     struct gfx_planar bm;
 
     (void)temprp;
-    if (!cut(rp, &xstart, &ystart, &x1, &y1)) return 0;
-    planar_of(rp, &bm);
-    gfx_planar_read8(&bm, xstart, ystart, x1, y1, array, bpr);
+    if (rp->Layer) {
+        if (xstart > xstop || ystart > ystop) return 0;
+        x1 = xstop; y1 = ystop;
+        layer_array(rp, (LONG)xstart, (LONG)ystart, (LONG)xstop, (LONG)ystop, array, bpr, 0);
+    } else {
+        if (!cut(rp, &xstart, &ystart, &x1, &y1)) return 0;
+        planar_of(rp, &bm);
+        gfx_planar_read8(&bm, xstart, ystart, x1, y1, array, bpr);
+    }
     /* each row's padding to 16 is 0, as OS 3.2 leaves it with a clean
      * temporary RastPort (it copies whatever the temporary row holds) */
     {
@@ -118,6 +286,11 @@ void ogfx_rp_WriteChunkyPixels(struct RastPort *rp, ULONG xstart, ULONG ystart, 
     ULONG x1 = xstop, y1 = ystop;
     struct gfx_planar bm;
 
+    if (rp->Layer) {
+        if (xstart <= xstop && ystart <= ystop)
+            layer_array(rp, (LONG)xstart, (LONG)ystart, (LONG)xstop, (LONG)ystop, array, (ULONG)bytesperrow, 1);
+        return;
+    }
     if (!cut(rp, &xstart, &ystart, &x1, &y1)) return;
     planar_of(rp, &bm);
     gfx_planar_write8(&bm, xstart, ystart, x1, y1, array, (uint32_t)bytesperrow, rp->Mask);
@@ -157,7 +330,8 @@ void ogfx_rp_Move(struct RastPort *rp, LONG x, LONG y)
 #define JOINT 2  /* first: a PolyDraw corner in COMPLEMENT without JAM2 */
 static void line(struct RastPort *rp, LONG x, LONG y, int first)
 {
-    struct gfx_planar bm;
+    struct place pl;
+    int have = 0;
     WORD x0 = rp->cp_x, y0 = rp->cp_y, x1 = (WORD)x, y1 = (WORD)y;
     LONG dx = x1 > x0 ? x1 - x0 : x0 - x1, dy = y1 > y0 ? y1 - y0 : y0 - y1;
     LONG sx = x1 >= x0 ? 1 : -1, sy = y1 >= y0 ? 1 : -1;
@@ -166,14 +340,14 @@ static void line(struct RastPort *rp, LONG x, LONG y, int first)
     uint32_t ptrn = rp->LinePtrn;
     int cnt = rp->linpatcnt, mode = pat_mode(rp, &ptrn);
 
-    planar_of(rp, &bm);
     for (i = 0; i <= len; i++) {
         uint32_t on = ptrn >> ((cnt - i) & 15) & 1;
         if (!i && first == JOINT) on = !(rp->LinePtrn >> (cnt & 15) & 1);
-        if ((i || first) && inside(rp, px, py)) {
-            if (mode == GFX_XOR) { if (on) gfx_planar_put(&bm, px, py, 0, rp->Mask, GFX_INVERT); }
-            else if (on) gfx_planar_put(&bm, px, py, rp->FgPen, rp->Mask, GFX_SET);
-            else if (mode == GFX_JAM2) gfx_planar_put(&bm, px, py, rp->BgPen, rp->Mask, GFX_SET);
+        if ((i || first) && place_at(rp, &pl, &have, px, py)) {
+            LONG bx = px + pl.dx, by = py + pl.dy;
+            if (mode == GFX_XOR) { if (on) gfx_planar_put(&pl.bm, bx, by, 0, rp->Mask, GFX_INVERT); }
+            else if (on) gfx_planar_put(&pl.bm, bx, by, rp->FgPen, rp->Mask, GFX_SET);
+            else if (mode == GFX_JAM2) gfx_planar_put(&pl.bm, bx, by, rp->BgPen, rp->Mask, GFX_SET);
         }
         if (err >= 0) {
             if (dx > dy) py += sy; else px += sx;
@@ -271,6 +445,24 @@ void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl
     struct gfx_planar bm;
     ULONG x0 = (ULONG)(WORD)xl, y0 = (ULONG)(WORD)yl, x1 = (ULONG)(WORD)maxx, y1 = (ULONG)(WORD)maxy, y;
 
+    if (rp->Layer) {
+        /* in a layer (no mask: ogfx_rp_takes): the rectangle in each place;
+         * the area pattern's row is the RastPort's y, its bit the bitmap's x */
+        struct walk w;
+        struct place pl;
+        LONG r[4], yy;
+        if (mask || (WORD)xl > (WORD)maxx || (WORD)yl > (WORD)maxy) return;
+        walk_start(&w, rp);
+        while (walk_next(&w, &pl)) {
+            if (!cut_to(&pl, (WORD)xl, (WORD)yl, (WORD)maxx, (WORD)maxy, r)) continue;
+            for (yy = r[1]; yy <= r[3]; yy++) {
+                uint32_t pat = area_row(rp, yy - pl.dy);
+                int mode = pat_mode(rp, &pat);
+                gfx_planar_span(&pl.bm, r[0], r[2], yy, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
+            }
+        }
+        return;
+    }
     if ((WORD)xl < 0 || (WORD)yl < 0 || !cut(rp, &x0, &y0, &x1, &y1)) return;
     planar_of(rp, &bm);
     if (mask) {

@@ -14,7 +14,14 @@
  * per call. Exit 0 when
  * nothing differs, 5 when something does, 20 when memory runs out.
  *
+ * LAYERS draws in a layer instead: each side gets its own Layer_Info on
+ * its bitmap, the same back layer (smart or simple refresh, sometimes
+ * with a clip region) and one to three layers in front of it, and the
+ * calls go to the back layer's RastPort; the covered parts a smart
+ * refresh layer keeps are compared too. Nothing here touches a screen.
+ *
  *   GfxCoreABITest [ROUNDS=n]   (default 400)
+ *   GfxCoreABITest LAYERS       (the same in layers)
  *   GfxCoreABITest PROBE        (which pixels OS 3.2's BltPattern draws
  *                                through a mask, for the rule)
  */
@@ -23,9 +30,13 @@
 #include <graphics/gfx.h>
 #include <graphics/rastport.h>
 #include <graphics/gfxmacros.h>
+#include <graphics/clip.h>
+#include <graphics/layers.h>
+#include <graphics/regions.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/graphics.h>
+#include <proto/layers.h>
 #include <string.h>
 #include "../library/core/gfx_rp.h"
 
@@ -44,6 +55,19 @@ static struct RastPort rpa, rpb, tmprp;
 static UBYTE *arr_a, *arr_b;
 #define ARR 16384
 
+/* LAYERS: a Layer_Info a side, the back layer the calls draw in (back[]),
+ * up to three in front, and the back layer's clip region if it has one */
+struct Library *LayersBase;
+static int layered;
+static struct Layer_Info *li[2];
+static struct Layer *back[2], *front[2][3];
+static struct Region *region[2];
+static int nfront, shown_setup, locked;
+static WORD geom[4][4];          /* back, then fronts: MinX, MinY, MaxX, MaxY */
+static ULONG geom_flags[4];
+static WORD reg_rect[3][4];
+static int nreg;
+
 static void fill_random(void)
 {
     ULONG p, i, n = (ULONG)bma->BytesPerRow * bma->Rows;
@@ -52,18 +76,59 @@ static void fill_random(void)
             ((UBYTE *)bma->Planes[p])[i] = ((UBYTE *)bmb->Planes[p])[i] = (UBYTE)rnd();
 }
 
-/* 0 when both bitmaps hold the same bytes, else the first differing plane+1 */
-static int same(ULONG *at)
+/* 0 when two bitmaps hold the same bytes, else the first differing plane+1 */
+static int same_bm(struct BitMap *a, struct BitMap *b, ULONG *at)
 {
-    ULONG p, i, n = (ULONG)bma->BytesPerRow * bma->Rows;
-    WaitBlit();
-    for (p = 0; p < bma->Depth; p++)
+    ULONG p, i, n = (ULONG)a->BytesPerRow * a->Rows;
+    for (p = 0; p < a->Depth; p++)
         for (i = 0; i < n; i++)
-            if (((UBYTE *)bma->Planes[p])[i] != ((UBYTE *)bmb->Planes[p])[i]) {
+            if (((UBYTE *)a->Planes[p])[i] != ((UBYTE *)b->Planes[p])[i]) {
                 *at = i;
                 return (int)p + 1;
             }
     return 0;
+}
+
+/* 0 when both sides hold the same bytes: the bitmaps and, in layers, the
+ * back layer's covered parts (then 16 * the ClipRect's number + plane+1) */
+static int same(ULONG *at)
+{
+    struct ClipRect *ca, *cb;
+    int p, n;
+    WaitBlit();
+    if ((p = same_bm(bma, bmb, at))) return p;
+    if (!layered) return 0;
+    for (ca = back[0]->ClipRect, cb = back[1]->ClipRect, n = 1; ca && cb; ca = ca->Next, cb = cb->Next, n++)
+        if (ca->BitMap && cb->BitMap && ca->lobs && (p = same_bm(ca->BitMap, cb->BitMap, at))) return 16 * n + p;
+    return 0;
+}
+
+/* B takes A's bytes, bitmaps and covered parts */
+static void sync_b(void)
+{
+    struct ClipRect *ca, *cb;
+    ULONG p, n = (ULONG)bma->BytesPerRow * bma->Rows;
+    WaitBlit();
+    for (p = 0; p < bma->Depth; p++) CopyMem(bma->Planes[p], bmb->Planes[p], n);
+    if (!layered) return;
+    for (ca = back[0]->ClipRect, cb = back[1]->ClipRect; ca && cb; ca = ca->Next, cb = cb->Next)
+        if (ca->BitMap && cb->BitMap && ca->lobs)
+            for (p = 0; p < ca->BitMap->Depth; p++)
+                CopyMem(ca->BitMap->Planes[p], cb->BitMap->Planes[p], (ULONG)ca->BitMap->BytesPerRow * ca->BitMap->Rows);
+}
+
+static void show_setup(void)
+{
+    int i;
+    if (!layered || shown_setup) return;
+    shown_setup = 1;
+    Printf("  layers: back %ld,%ld-%ld,%ld %s", (LONG)geom[0][0], (LONG)geom[0][1], (LONG)geom[0][2], (LONG)geom[0][3],
+           (LONG)(geom_flags[0] & LAYERSMART ? "smart" : "simple"));
+    for (i = 1; i <= nfront; i++)
+        Printf("; front %ld,%ld-%ld,%ld", (LONG)geom[i][0], (LONG)geom[i][1], (LONG)geom[i][2], (LONG)geom[i][3]);
+    for (i = 0; i < nreg; i++)
+        Printf("; clip %ld,%ld-%ld,%ld", (LONG)reg_rect[i][0], (LONG)reg_rect[i][1], (LONG)reg_rect[i][2], (LONG)reg_rect[i][3]);
+    PutStr("\n");
 }
 
 /* What was asked, for a DIFF line: a format and its arguments */
@@ -80,9 +145,11 @@ static int report(int call, LONG ra, LONG rb, int plane, ULONG at)
     Printf("DIFF %s ", (LONG)names[call]);
     VPrintf((STRPTR)what, wa);
     Printf(": OS %ld, ours %ld; ", ra, rb);
-    if (plane) Printf("plane %ld byte %lu differs", (LONG)(plane - 1), at);
+    if (plane > 16) Printf("covered part %ld plane %ld byte %lu differs", (LONG)(plane / 16), (LONG)(plane % 16 - 1), at);
+    else if (plane) Printf("plane %ld byte %lu differs", (LONG)(plane - 1), at);
     else PutStr("same bytes");
     Printf(" (depth %ld, %ld bytes a row)\n", (LONG)bma->Depth, (LONG)bma->BytesPerRow);
+    show_setup();
     return 1;
 }
 
@@ -185,13 +252,85 @@ static int probe(void)
     return 0;
 }
 
+/* LAYERS: the same layers on both bitmaps (filled with the same random
+ * bytes first, so the covered parts a smart layer keeps start alike). The
+ * calls draw in back[] through rpa and rpb; B's back layer stays locked
+ * for the round, as OpenGfx holds it while the core draws. */
+static void rnd_rect(WORD *r, LONG w, LONG h, LONG minw, LONG minh)
+{
+    LONG x0 = (LONG)(rnd() % (ULONG)(w - minw)), y0 = (LONG)(rnd() % (ULONG)(h - minh));
+    r[0] = (WORD)x0; r[1] = (WORD)y0;
+    r[2] = (WORD)(x0 + minw - 1 + (LONG)(rnd() % (ULONG)(w - x0 - minw + 1)));
+    r[3] = (WORD)(y0 + minh - 1 + (LONG)(rnd() % (ULONG)(h - y0 - minh + 1)));
+}
+
+static void free_layers(void)
+{
+    int s, i;
+    for (s = 0; s < 2; s++) {
+        if (s == 1 && locked) { UnlockLayerRom(back[1]); locked = 0; }
+        for (i = nfront - 1; i >= 0; i--) if (front[s][i]) DeleteLayer(0, front[s][i]);
+        if (back[s]) {
+            if (region[s]) InstallClipRegion(back[s], NULL);
+            DeleteLayer(0, back[s]);
+        }
+        if (region[s]) DisposeRegion(region[s]);
+        if (li[s]) DisposeLayerInfo(li[s]);
+        back[s] = NULL; region[s] = NULL; li[s] = NULL;
+        for (i = 0; i < 3; i++) front[s][i] = NULL;
+    }
+}
+
+static int make_layers(void)
+{
+    LONG w = (LONG)bma->BytesPerRow * 8, h = bma->Rows;
+    int s, i;
+
+    nfront = 1 + (int)(rnd() % 3);
+    rnd_rect(geom[0], w, h, 16, 8);
+    geom_flags[0] = rnd() % 2 ? LAYERSMART : LAYERSIMPLE;
+    for (i = 1; i <= nfront; i++) { rnd_rect(geom[i], w, h, 8, 4); geom_flags[i] = rnd() % 2 ? LAYERSMART : LAYERSIMPLE; }
+    nreg = rnd() % 3 ? 0 : 1 + (int)(rnd() % 3);
+    for (i = 0; i < nreg; i++) rnd_rect(reg_rect[i], geom[0][2] - geom[0][0] + 9, geom[0][3] - geom[0][1] + 5, 1, 1);
+    shown_setup = 0;
+    for (s = 0; s < 2; s++) {
+        struct BitMap *bm = s ? bmb : bma;
+        if (!(li[s] = NewLayerInfo())) return 0;
+        if (!(back[s] = CreateUpfrontLayer(li[s], bm, geom[0][0], geom[0][1], geom[0][2], geom[0][3], geom_flags[0], NULL)))
+            return 0;
+        for (i = 0; i < nfront; i++)
+            if (!(front[s][i] = CreateUpfrontLayer(li[s], bm, geom[i + 1][0], geom[i + 1][1], geom[i + 1][2], geom[i + 1][3],
+                                                   geom_flags[i + 1], NULL)))
+                return 0;
+        if (nreg) {
+            struct Rectangle r;
+            if (!(region[s] = NewRegion())) return 0;
+            for (i = 0; i < nreg; i++) {
+                r.MinX = reg_rect[i][0]; r.MinY = reg_rect[i][1]; r.MaxX = reg_rect[i][2]; r.MaxY = reg_rect[i][3];
+                if (!OrRectRegion(region[s], &r)) return 0;
+            }
+            InstallClipRegion(back[s], region[s]);
+        }
+    }
+    InitRastPort(&rpa); rpa.Layer = back[0]; rpa.BitMap = bma;
+    InitRastPort(&rpb); rpb.Layer = back[1]; rpb.BitMap = bmb;
+    LockLayerRom(back[1]);
+    locked = 1;
+    if (!ogfx_rp_takes(&rpb, 0)) { PutStr("ogfx_rp_takes refuses the layer\n"); return 0; }
+    return 1;
+}
+
 int main(void)
 {
-    LONG args[2] = { 0, 0 };
-    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S", args, NULL);
+    LONG args[3] = { 0, 0, 0 };
+    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S", args, NULL);
     ULONG rounds = rd && args[0] ? *(ULONG *)args[0] : 400, r, k, total = 0, bad = 0;
 
     if (rd && args[1]) { int rc = probe(); FreeArgs(rd); return rc; }
+    if (rd && args[2]) {
+        layered = 1;
+        if (!(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no layers.library\n"); FreeArgs(rd); return 20; }
+    }
 
     arr_a = AllocVec(ARR, MEMF_ANY);
     arr_b = AllocVec(ARR, MEMF_ANY);
@@ -199,13 +338,18 @@ int main(void)
     bltmask = AllocVec(BLTMASK, MEMF_CHIP);
     if (!arr_a || !arr_b || !areapat || !bltmask) { PutStr("no memory\n"); return 20; }
     Printf("OpenGfx core against %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    if (layered) Printf("in layers, against %s", (LONG)LayersBase->lib_IdString);
 
     for (r = 0; r < rounds && !(SetSignal(0, 0) & SIGBREAKF_CTRL_C); r++) {
         ULONG w = 16 + rnd() % 320, h = 1 + rnd() % 64, d = 1 + rnd() % 8;
+        int lay_ok = 1;
+        if (layered) { w = 64 + rnd() % 256; h = 16 + rnd() % 100; d = 1 + rnd() % 4; }
         bma = AllocBitMap(w, h, d, BMF_CLEAR, NULL);
         bmb = AllocBitMap(w, h, d, BMF_CLEAR, NULL);
-        tmpbm = AllocBitMap(((w + 15) & ~15) + 16, 1, d, BMF_CLEAR, NULL);
-        if (!bma || !bmb || !tmpbm) {
+        tmpbm = AllocBitMap(((w + 15) & ~15) + 32, 1, d, BMF_CLEAR, NULL);
+        if (bma && bmb && tmpbm && layered) { fill_random(); lay_ok = make_layers(); }
+        if (!bma || !bmb || !tmpbm || !lay_ok) {
+            if (layered) free_layers();
             if (bma) FreeBitMap(bma);
             if (bmb) FreeBitMap(bmb);
             if (tmpbm) FreeBitMap(tmpbm);
@@ -213,13 +357,18 @@ int main(void)
             nochip = 1;
             break;
         }
-        InitRastPort(&rpa); rpa.BitMap = bma;
-        InitRastPort(&rpb); rpb.BitMap = bmb;
+        if (!layered) {
+            InitRastPort(&rpa); rpa.BitMap = bma;
+            InitRastPort(&rpb); rpb.BitMap = bmb;
+            fill_random();
+        }
         InitRastPort(&tmprp); tmprp.BitMap = tmpbm;
         tmprp.Layer = NULL;
-        fill_random();
         for (k = 0; k < 10; k++) {
-            ULONG W = (ULONG)bma->BytesPerRow * 8, H = bma->Rows, at = 0, i;
+            /* in layers, the RastPort's coordinates: the back layer and 8
+             * pixels past its right and bottom edges */
+            ULONG W = layered ? (ULONG)(geom[0][2] - geom[0][0] + 9) : (ULONG)bma->BytesPerRow * 8,
+                  H = layered ? (ULONG)(geom[0][3] - geom[0][1] + 9) : bma->Rows, at = 0, i;
             /* inside the bitmap: OS 3.2 does not clip an unlayered RastPort, so a
              * pixel outside would be written to memory that is not the bitmap's */
             LONG x = (LONG)(rnd() % W), y = (LONG)(rnd() % H), ra, rb, old, pa, pb;
@@ -339,7 +488,7 @@ int main(void)
                  * one-row or a 2^n-row area pattern */
                 LONG sz = rnd() % 3 ? 0 : (LONG)(rnd() % 5), j, call = rnd() % 2 ? 8 : 9;
                 ULONG mbpr = ((x1 - x0 + 16) & ~15UL) / 8;
-                int usemask = call == 9 && rnd() % 3 && mbpr * (y1 - y0 + 1) + 4 <= BLTMASK;  /* OS reads up to 2 bytes past a row */
+                int usemask = !layered && call == 9 && rnd() % 3 && mbpr * (y1 - y0 + 1) + 4 <= BLTMASK;  /* OS reads up to 2 bytes past a row */
                 for (j = 0; j < 16; j++) areapat[j] = rnd() % 4 ? (UWORD)rnd() : 0xFFFF;
                 if (rnd() % 3) { SetAfPt(&rpa, areapat, sz); SetAfPt(&rpb, areapat, sz); }
                 else { SetAfPt(&rpa, NULL, 0); SetAfPt(&rpb, NULL, 0); }
@@ -375,12 +524,10 @@ int main(void)
             }
             /* keep the two in step after a DIFF, so later calls are judged alone */
             rpb.cp_x = rpa.cp_x; rpb.cp_y = rpa.cp_y; rpb.linpatcnt = rpa.linpatcnt; rpb.Flags = rpa.Flags;
-            if (same(&at)) {
-                ULONG p, n = (ULONG)bma->BytesPerRow * bma->Rows;
-                for (p = 0; p < bma->Depth; p++) CopyMem(bma->Planes[p], bmb->Planes[p], n);
-            }
+            if (same(&at)) sync_b();
         }
         WaitBlit();
+        if (layered) free_layers();
         FreeBitMap(bma); FreeBitMap(bmb); FreeBitMap(tmpbm);
     }
     for (k = 0; k < NCALLS; k++) {
@@ -390,6 +537,7 @@ int main(void)
     Printf("%lu checks, %lu differ\n", total, bad);
     if (pad_runs) Printf("%lu ReadPixelArray8 calls wrote the row padding differently (not counted)\n", pad_runs);
     FreeVec(arr_a); FreeVec(arr_b); FreeVec(areapat); FreeVec(bltmask);
+    if (LayersBase) CloseLibrary(LayersBase);
     if (rd) FreeArgs(rd);
     return bad ? 5 : nochip ? 10 : 0;
 }
