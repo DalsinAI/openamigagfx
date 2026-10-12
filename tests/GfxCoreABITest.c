@@ -51,6 +51,10 @@ static const char *const names[NCALLS] = {
 };
 static ULONG runs[NCALLS], diffs[NCALLS], pad_runs, refused;
 static int nochip;
+/* Chip RAM a switch case kept (after both sides' calls), and rounds that
+ * ended with less Chip RAM than they started with */
+static LONG chip_kept[14], chip_round_lost;
+static ULONG chip_rounds_lost;
 static ULONG seed = 0x0A6A;
 static ULONG rnd(void) { seed = seed * 1103515245UL + 12345UL; return seed >> 8; }
 
@@ -93,6 +97,28 @@ static int same_bm(struct BitMap *a, struct BitMap *b, ULONG *at)
     return 0;
 }
 
+/* 0 when two covered parts hold the same pixels within the part's bounds:
+ * its bitmap starts at the 16-pixel boundary left of MinX, and the bits
+ * outside the bounds are never shown (OS 3.2's ClipBlit writes some) */
+static int same_part(struct ClipRect *ca, struct ClipRect *cb, ULONG *at)
+{
+    struct BitMap *a = ca->BitMap, *b = cb->BitMap;
+    LONG x0 = ca->bounds.MinX & 15, x1 = x0 + ca->bounds.MaxX - ca->bounds.MinX, h = ca->bounds.MaxY - ca->bounds.MinY + 1, x, y;
+    ULONG p;
+    if (h > (LONG)a->Rows) h = (LONG)a->Rows;
+    if (x1 >= (LONG)a->BytesPerRow * 8) x1 = (LONG)a->BytesPerRow * 8 - 1;
+    for (p = 0; p < a->Depth; p++)
+        for (y = 0; y < h; y++)
+            for (x = x0; x <= x1; x++) {
+                ULONG i = (ULONG)y * a->BytesPerRow + (ULONG)(x >> 3);
+                if ((((UBYTE *)a->Planes[p])[i] ^ ((UBYTE *)b->Planes[p])[i]) & (0x80 >> (x & 7))) {
+                    *at = i;
+                    return (int)p + 1;
+                }
+            }
+    return 0;
+}
+
 /* 0 when both sides hold the same bytes: the bitmaps and, in layers, the
  * back layer's covered parts (then 16 * the ClipRect's number + plane+1) */
 static int same(ULONG *at)
@@ -103,7 +129,7 @@ static int same(ULONG *at)
     if ((p = same_bm(bma, bmb, at))) return p;
     if (!layered) return 0;
     for (ca = back[0]->ClipRect, cb = back[1]->ClipRect, n = 1; ca && cb; ca = ca->Next, cb = cb->Next, n++)
-        if (ca->BitMap && cb->BitMap && ca->obscured && (p = same_bm(ca->BitMap, cb->BitMap, at))) return 16 * n + p;
+        if (ca->BitMap && cb->BitMap && ca->obscured && (p = same_part(ca, cb, at))) return 16 * n + p;
     return 0;
 }
 
@@ -464,6 +490,7 @@ int main(void)
     if (layered) Printf("in layers, against %s", (LONG)LayersBase->lib_IdString);
 
     for (r = 0; r < rounds && !(SetSignal(0, 0) & SIGBREAKF_CTRL_C); r++) {
+        LONG round_chip = (LONG)AvailMem(MEMF_CHIP);
         ULONG w = 16 + rnd() % 320, h = 1 + rnd() % 64, d = 1 + rnd() % 8;
         int lay_ok = 1;
         if (layered) { w = 64 + rnd() % 256; h = 16 + rnd() % 100; d = 1 + rnd() % 4; }
@@ -509,8 +536,10 @@ int main(void)
                 if (plane > 16) show_part(plane / 16, plane % 16 - 1, at);
                 sync_b();
             }
+            LONG chip0 = (LONG)AvailMem(MEMF_CHIP);
+            ULONG sel = rnd() % 14;
             pens();
-            switch (rnd() % 14) {
+            switch (sel) {
             case 12: case 13: {
                 /* ClipBlit within the RastPort or from an unlayered one on the
                  * round's source; ScrollRaster. Unlayered, inside the bitmap
@@ -744,6 +773,7 @@ int main(void)
                 report(5, 0, 0, plane, at);
             }
             }
+            chip_kept[sel] += chip0 - (LONG)AvailMem(MEMF_CHIP);
             /* keep the two in step after a DIFF, so later calls are judged alone */
             rpb.cp_x = rpa.cp_x; rpb.cp_y = rpa.cp_y; rpb.linpatcnt = rpa.linpatcnt; rpb.Flags = rpa.Flags;
             if (same(&at)) sync_b();
@@ -751,13 +781,21 @@ int main(void)
         WaitBlit();
         if (layered) free_layers();
         FreeBitMap(bma); FreeBitMap(bmb); FreeBitMap(tmpbm); FreeBitMap(sbm);
+        round_chip -= (LONG)AvailMem(MEMF_CHIP);
+        if (round_chip > 0) {
+            if (chip_rounds_lost < 5) Printf("round %ld kept %ld bytes of Chip RAM\n", (LONG)r, round_chip);
+            chip_rounds_lost++; chip_round_lost += round_chip;
+        }
     }
     for (k = 0; k < NCALLS; k++) {
         Printf("%-18s %6lu runs, %lu differ\n", (LONG)names[k], runs[k], diffs[k]);
         total += runs[k]; bad += diffs[k];
     }
     Printf("%lu checks, %lu differ\n", total, bad);
-    if (refused) Printf("%lu ClipBlit and ScrollRaster calls left to graphics.library (a simple refresh layer partly covered)\n", refused);
+    if (refused) Printf("%lu ClipBlit and ScrollRaster calls left to graphics.library (a simple refresh layer)\n", refused);
+    if (chip_rounds_lost) Printf("%lu rounds kept %ld bytes of Chip RAM in all\n", chip_rounds_lost, chip_round_lost);
+    for (k = 0; k < 14; k++)
+        if (chip_kept[k]) Printf("call kind %ld kept %ld bytes of Chip RAM until its round ended\n", (LONG)k, chip_kept[k]);
     if (pad_runs) Printf("%lu ReadPixelArray8 calls wrote the row padding differently (not counted)\n", pad_runs);
     FreeVec(arr_a); FreeVec(arr_b); FreeVec(areapat); FreeVec(bltmask);
     if (LayersBase) CloseLibrary(LayersBase);
