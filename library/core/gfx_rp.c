@@ -36,6 +36,7 @@ struct place {
     struct gfx_planar bm;
     LONG dx, dy;                /* the bitmap's x = the RastPort's x + dx */
     LONG x0, y0, x1, y1;        /* the bitmap's rectangle, inclusive */
+    int covered;                /* a smart refresh layer's own bitmap */
 };
 struct walk {
     struct RastPort *rp;
@@ -61,6 +62,7 @@ static int walk_next(struct walk *w, struct place *pl)
         b = w->rp->BitMap;
         planar_from(b, &pl->bm);
         pl->dx = pl->dy = 0;
+        pl->covered = 0;
         pl->x0 = pl->y0 = 0;
         pl->x1 = (LONG)b->BytesPerRow * 8 - 1;
         pl->y1 = (LONG)b->Rows - 1;
@@ -74,6 +76,7 @@ static int walk_next(struct walk *w, struct place *pl)
         else if (cr->BitMap && !(l->Flags & LAYERSUPER)) { b = cr->BitMap; bx = cr->bounds.MinX & ~15L; by = cr->bounds.MinY; }
         else continue;
         planar_from(b, &pl->bm);
+        pl->covered = b != w->rp->BitMap;
         pl->dx = ox - bx;
         pl->dy = oy - by;
         pl->x0 = cr->bounds.MinX - bx;
@@ -200,10 +203,12 @@ void ogfx_rp_SetRast(struct RastPort *rp, ULONG pen)
         gfx_planar_fill_all(&bm, pen, rp->Mask);
         return;
     }
-    /* in a layer: every place the layer keeps */
+    /* in a layer: every place the layer keeps; a covered part's bitmap
+     * whole, its padding to 16 pixels too (measured on OS 3.2) */
     walk_start(&w, rp);
     while (walk_next(&w, &pl))
-        for (y = pl.y0; y <= pl.y1; y++)
+        if (pl.covered) gfx_planar_fill_all(&pl.bm, pen, rp->Mask);
+        else for (y = pl.y0; y <= pl.y1; y++)
             gfx_planar_span(&pl.bm, pl.x0, pl.x1, y, 0xFFFF, pen, 0, rp->Mask, GFX_JAM1);
 }
 

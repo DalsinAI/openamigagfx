@@ -133,6 +133,26 @@ static void show_setup(void)
     PutStr("\n");
 }
 
+/* A covered part that differs: its rectangle and bitmap, where the byte
+ * is, both sides' bytes, and whether another part shares the bitmap */
+static void show_part(int n, int plane, ULONG at)
+{
+    struct ClipRect *ca = back[0]->ClipRect, *cb = back[1]->ClipRect, *c;
+    struct BitMap *b;
+    int i, m;
+    for (i = 1; i < n && ca && cb; i++) { ca = ca->Next; cb = cb->Next; }
+    if (!ca || !cb) return;
+    b = ca->BitMap;
+    Printf("  part %ld %ld,%ld-%ld,%ld, bitmap %ld bytes a row %ld rows; row %ld x %ld-%ld: OS %02lx ours %02lx", (LONG)n,
+           (LONG)ca->bounds.MinX, (LONG)ca->bounds.MinY, (LONG)ca->bounds.MaxX, (LONG)ca->bounds.MaxY,
+           (LONG)b->BytesPerRow, (LONG)b->Rows, (LONG)(at / b->BytesPerRow), (LONG)(at % b->BytesPerRow * 8),
+           (LONG)(at % b->BytesPerRow * 8 + 7), (LONG)((UBYTE *)b->Planes[plane])[at],
+           (LONG)((UBYTE *)cb->BitMap->Planes[plane])[at]);
+    for (c = back[0]->ClipRect, m = 1; c; c = c->Next, m++)
+        if (m != n && c->BitMap == b) Printf("; shares its bitmap with part %ld", (LONG)m);
+    PutStr("\n");
+}
+
 /* What was asked, for a DIFF line: a format and its arguments */
 static const char *what;
 static LONG wa[10];
@@ -152,6 +172,7 @@ static int report(int call, LONG ra, LONG rb, int plane, ULONG at)
     else PutStr("same bytes");
     Printf(" (depth %ld, %ld bytes a row)\n", (LONG)bma->Depth, (LONG)bma->BytesPerRow);
     show_setup();
+    if (plane > 16) show_part(plane / 16, plane % 16 - 1, at);
     return 1;
 }
 
@@ -458,6 +479,12 @@ int main(void)
             LONG x = (LONG)(rnd() % W), y = (LONG)(rnd() % H), ra, rb, old, pa, pb;
             ULONG x0 = rnd() % W, y0 = rnd() % H, x1 = x0 + rnd() % (W - x0), y1 = y0 + rnd() % (H - y0);
             int plane;
+            if (layered && (plane = same(&at))) {
+                Printf("PRE: before call %ld of this round the sides already differ (%ld)\n", (LONG)k, (LONG)plane);
+                show_setup();
+                if (plane > 16) show_part(plane / 16, plane % 16 - 1, at);
+                sync_b();
+            }
             pens();
             switch (rnd() % 10) {
             case 0:
