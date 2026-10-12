@@ -31,23 +31,38 @@ static int cut(struct RastPort *rp, ULONG *x0, ULONG *y0, ULONG *x1, ULONG *y1)
     return 1;
 }
 
+/* Measured on OS 3.2: an unlayered RastPort is not clipped. WritePixel
+ * answers 0 wherever the pixel is (OS 3.2 then writes outside the bitmap;
+ * we draw nothing there), and ReadPixel reads whatever memory the pixel's
+ * address falls on, as OS 3.2 does. */
 LONG ogfx_rp_WritePixel(struct RastPort *rp, LONG x, LONG y)
 {
     struct gfx_planar bm;
+    UBYTE mode = rp->DrawMode;
 
-    if (!inside(rp, x, y)) return -1;
+    if (!inside(rp, x, y)) return 0;
     planar_of(rp, &bm);
-    gfx_planar_put(&bm, x, y, rp->FgPen, rp->Mask, rp->DrawMode & COMPLEMENT ? GFX_INVERT : GFX_SET);
+    if (mode & COMPLEMENT)
+        gfx_planar_put(&bm, x, y, 0, rp->Mask, GFX_INVERT);
+    else
+        gfx_planar_put(&bm, x, y, mode & INVERSVID ? rp->BgPen : rp->FgPen, rp->Mask, GFX_SET);
     return 0;
 }
 
 LONG ogfx_rp_ReadPixel(struct RastPort *rp, LONG x, LONG y)
 {
-    struct gfx_planar bm;
+    struct BitMap *b = rp->BitMap;
+    LONG off = y * (LONG)b->BytesPerRow + (x >> 3);
+    UBYTE bit = (UBYTE)(0x80 >> (x & 7));
+    ULONG pen = 0;
+    int p;
 
-    if (!inside(rp, x, y)) return -1;
-    planar_of(rp, &bm);
-    return (LONG)gfx_planar_get(&bm, x, y);
+    for (p = 0; p < b->Depth && p < 8; p++) {
+        UBYTE *pl = (UBYTE *)b->Planes[p];
+        if (pl == (UBYTE *)-1) pen |= 1UL << p;
+        else if (pl && (pl[off] & bit)) pen |= 1UL << p;
+    }
+    return (LONG)pen;
 }
 
 void ogfx_rp_SetRast(struct RastPort *rp, ULONG pen)

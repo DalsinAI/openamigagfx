@@ -3,9 +3,10 @@
  * RastPort with no layer, through the core (gfx_core.h). Copyright (c) 2026
  * Dalsin Limited. MIT.
  *
- * Each reads the RastPort's pens, DrawMode and Mask, checks the call against
- * its bitmap's bounds and answers as graphics.library does (measured on
- * OS 3.2 by tests/GfxCoreABITest.c). A layered RastPort is the library's
+ * Each reads the RastPort's pens, DrawMode and Mask and answers as
+ * graphics.library does (measured on OS 3.2 by tests/GfxCoreABITest.c).
+ * OS 3.2 does not clip an unlayered RastPort; these never write outside
+ * the bitmap. A layered RastPort is the library's
  * to cut into its layer's rectangles first; these take only unlayered ones.
  * Planar bitmaps only for now; chunky (RTG) comes with the bitmap model. */
 #ifndef OPENGFX_RP_H

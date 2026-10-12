@@ -26,7 +26,8 @@
 static const char *const names[NCALLS] = {
     "WritePixel", "ReadPixel", "SetRast", "WritePixelArray8", "ReadPixelArray8", "WriteChunkyPixels"
 };
-static ULONG runs[NCALLS], diffs[NCALLS];
+static ULONG runs[NCALLS], diffs[NCALLS], pad_runs;
+static int nochip;
 static ULONG seed = 0x0A6A;
 static ULONG rnd(void) { seed = seed * 1103515245UL + 12345UL; return seed >> 8; }
 
@@ -59,7 +60,7 @@ static int same(ULONG *at)
 
 /* What was asked, for a DIFF line: a format and its arguments */
 static const char *what;
-static LONG wa[8];
+static LONG wa[10];
 
 static void report(int call, LONG ra, LONG rb, int plane, ULONG at)
 {
@@ -101,7 +102,14 @@ int main(void)
         bma = AllocBitMap(w, h, d, BMF_CLEAR, NULL);
         bmb = AllocBitMap(w, h, d, BMF_CLEAR, NULL);
         tmpbm = AllocBitMap(((w + 15) & ~15) + 16, 1, d, BMF_CLEAR, NULL);
-        if (!bma || !bmb || !tmpbm) { PutStr("no Chip RAM\n"); return 20; }
+        if (!bma || !bmb || !tmpbm) {
+            if (bma) FreeBitMap(bma);
+            if (bmb) FreeBitMap(bmb);
+            if (tmpbm) FreeBitMap(tmpbm);
+            Printf("no Chip RAM for a %ld x %ld x %ld bitmap: stopping after %ld rounds\n", (LONG)w, (LONG)h, (LONG)d, (LONG)r);
+            nochip = 1;
+            break;
+        }
         InitRastPort(&rpa); rpa.BitMap = bma;
         InitRastPort(&rpb); rpb.BitMap = bmb;
         InitRastPort(&tmprp); tmprp.BitMap = tmpbm;
@@ -109,15 +117,21 @@ int main(void)
         fill_random();
         for (k = 0; k < 10; k++) {
             ULONG W = (ULONG)bma->BytesPerRow * 8, H = bma->Rows, at = 0, i;
-            LONG x = (LONG)(rnd() % (W + 8)) - 4, y = (LONG)(rnd() % (H + 4)) - 2, ra, rb;
+            /* inside the bitmap: OS 3.2 does not clip an unlayered RastPort, so a
+             * pixel outside would be written to memory that is not the bitmap's */
+            LONG x = (LONG)(rnd() % W), y = (LONG)(rnd() % H), ra, rb, old, pa, pb;
             ULONG x0 = rnd() % W, y0 = rnd() % H, x1 = x0 + rnd() % (W - x0), y1 = y0 + rnd() % (H - y0);
             int plane;
             pens();
             switch (rnd() % 6) {
             case 0:
+                old = ReadPixel(&rpa, x, y);
                 ra = WritePixel(&rpa, x, y); rb = ogfx_rp_WritePixel(&rpb, x, y);
                 plane = same(&at);
-                ASKED("%ld,%ld pen %ld mode %ld mask %02lx", x, y, (LONG)rpa.FgPen, (LONG)rpa.DrawMode, (LONG)rpa.Mask, 0, 0);
+                pa = ReadPixel(&rpa, x, y); pb = ogfx_rp_ReadPixel(&rpb, x, y);
+                ASKED("%ld,%ld fg %ld bg %ld mode %ld mask %02lx: pixel %ld, OS made %ld, ours %ld", x, y,
+                      (LONG)(UBYTE)rpa.FgPen, (LONG)(UBYTE)rpa.BgPen, (LONG)rpa.DrawMode, (LONG)rpa.Mask, old);
+                wa[7] = pa; wa[8] = pb;
                 report(0, ra, rb, plane, at);
                 break;
             case 1:
@@ -147,10 +161,27 @@ int main(void)
                 memset(arr_a, 0xA5, ARR); memset(arr_b, 0xA5, ARR);
                 ra = ReadPixelArray8(&rpa, x0, y0, x1, y1, arr_a, &tmprp);
                 rb = ogfx_rp_ReadPixelArray8(&rpb, x0, y0, x1, y1, arr_b, &tmprp);
-                for (i = 0; i < ARR && arr_a[i] == arr_b[i]; i++) ;
-                ASKED("%ld,%ld-%ld,%ld array byte %ld: OS %ld, ours %ld", (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1, (LONG)i,
-                      (LONG)(i < ARR ? arr_a[i] : 0), (LONG)(i < ARR ? arr_b[i] : 0));
-                report(4, ra, rb + (i < ARR), 0, 0);
+                {
+                    /* the pixels asked for; the row's padding to 16 is counted apart */
+                    ULONG bpr = (x1 - x0 + 16) & ~15UL, yy, xx, bad_at = ~0UL;
+                    for (yy = 0; yy <= y1 - y0 && bad_at == ~0UL; yy++)
+                        for (xx = 0; xx <= x1 - x0; xx++)
+                            if (arr_a[yy * bpr + xx] != arr_b[yy * bpr + xx]) { bad_at = yy * bpr + xx; break; }
+                    for (i = 0; i < ARR && arr_a[i] == arr_b[i]; i++) ;
+                    if (bad_at == ~0UL && i < ARR && ++pad_runs <= 4) {
+                        ULONG j, row = i / bpr * bpr;
+                        Printf("PAD ReadPixelArray8 %ld,%ld-%ld,%ld: OS fills row bytes %ld-%ld with",
+                               (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1, (LONG)(x1 - x0 + 1), (LONG)(bpr - 1));
+                        for (j = row + x1 - x0 + 1; j < row + bpr; j++) Printf(" %ld", (LONG)arr_a[j]);
+                        PutStr("; the bitmap there holds");
+                        for (j = x1 + 1; j < x0 + bpr; j++)
+                            Printf(" %ld", j < (ULONG)bma->BytesPerRow * 8 ? ReadPixel(&rpa, j, y0 + i / bpr) : -1L);
+                        PutStr("\n");
+                    }
+                    ASKED("%ld,%ld-%ld,%ld array byte %ld: OS %ld, ours %ld", (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1,
+                          (LONG)bad_at, (LONG)(bad_at != ~0UL ? arr_a[bad_at] : 0), (LONG)(bad_at != ~0UL ? arr_b[bad_at] : 0));
+                    report(4, ra, rb + (bad_at != ~0UL), 0, 0);
+                }
                 break;
             default: {
                 ULONG bpr = (x1 - x0 + 1) + rnd() % 9;
@@ -177,7 +208,8 @@ int main(void)
         total += runs[k]; bad += diffs[k];
     }
     Printf("%lu checks, %lu differ\n", total, bad);
+    if (pad_runs) Printf("%lu ReadPixelArray8 calls wrote the row padding differently (not counted)\n", pad_runs);
     FreeVec(arr_a); FreeVec(arr_b);
     if (rd) FreeArgs(rd);
-    return bad ? 5 : 0;
+    return bad ? 5 : nochip ? 10 : 0;
 }
