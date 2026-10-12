@@ -497,19 +497,26 @@ int main(void)
             case 10: case 11: {
                 /* BltBitMap, from the round's source or within the bitmap
                  * itself (overlapping), and BltBitMapRastPort, into the
-                 * RastPort (its layer, in LAYERS); mostly inside, sometimes
-                 * hanging over an edge */
+                 * RastPort (its layer, in LAYERS), which may hang over the
+                 * layer's edge */
                 int self = rnd() % 2, call = (int)(rnd() % 2) + 10;
                 struct BitMap *sa = self ? bma : sbm, *sb = self ? bmb : sbm;
                 LONG sw = (LONG)sa->BytesPerRow * 8, sh = sa->Rows, bw = 1 + (LONG)(rnd() % 64), bh = 1 + (LONG)(rnd() % 32);
                 LONG sx = (LONG)(rnd() % (ULONG)sw), sy = (LONG)(rnd() % (ULONG)sh), tx = (LONG)(rnd() % W), ty = (LONG)(rnd() % H);
                 ULONG mt = rnd() % 3 ? 0xC0 : rnd() & 0xF0, bmask = rnd() % 3 ? 0xFF : rnd() & 0xFF;
-                if (rnd() % 4) {
-                    if (sx + bw > sw) bw = sw - sx;
-                    if (sy + bh > sh) bh = sh - sy;
-                    if (call == 10 || !layered) { if (tx + bw > (LONG)W) bw = (LONG)W - tx; if (ty + bh > (LONG)H) bh = (LONG)H - ty; }
-                }
                 if (self && rnd() % 2) { tx = sx + (LONG)(rnd() % 9) - 4; ty = sy + (LONG)(rnd() % 3) - 1; if (tx < 0) tx = 0; if (ty < 0) ty = 0; }
+                /* OS 3.2 clips neither the source nor a bare bitmap: past
+                 * either edge it reads or writes memory that is not the
+                 * bitmap's (that corrupted the memory list), so both stay
+                 * inside; only a layer's RastPort may be overhung */
+                if (sx + bw > sw) bw = sw - sx;
+                if (sy + bh > sh) bh = sh - sy;
+                if (call == 10 || !layered || rnd() % 4) {
+                    LONG dw = call == 10 ? (LONG)bma->BytesPerRow * 8 : (LONG)W, dh = call == 10 ? (LONG)bma->Rows : (LONG)H;
+                    if (tx >= dw || ty >= dh) break;
+                    if (tx + bw > dw) bw = dw - tx;
+                    if (ty + bh > dh) bh = dh - ty;
+                }
                 if (call == 10) {
                     ra = BltBitMap(sa, sx, sy, bma, tx, ty, bw, bh, mt, bmask, NULL);
                     rb = ogfx_rp_BltBitMap(sb, sx, sy, bmb, tx, ty, bw, bh, mt, bmask, NULL);
@@ -520,9 +527,9 @@ int main(void)
                 }
                 plane = same(&at);
                 ASKED("%s %ld,%ld to %ld,%ld size %ld x %ld minterm %02lx", (LONG)(self ? "self" : "source"), sx, sy, tx, ty, bw, bh);
-                wa[6] = (LONG)mt; wa[7] = (LONG)(call == 10 ? bmask : rpa.Mask);
+                wa[7] = (LONG)mt;
                 if (report(call, ra, rb, plane, at))
-                    Printf("  mask %02lx, source %ld x %ld x %ld\n", wa[7], sw, sh, (LONG)sa->Depth);
+                    Printf("  mask %02lx, source %ld x %ld x %ld\n", (LONG)(call == 10 ? bmask : rpa.Mask), sw, sh, (LONG)sa->Depth);
                 break;
             }
             case 0:
