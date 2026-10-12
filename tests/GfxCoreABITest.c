@@ -35,6 +35,7 @@
  *                                rules)
  *   GfxCoreABITest AREAPROBE2   (the AreaInfo table, DrawEllipse and
  *                                AreaEllipse sizes, outline modes, EraseRect)
+ *   GfxCoreABITest AREAPROBE3   (flat and thin ellipses)
  */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -865,16 +866,70 @@ static int areaprobe2(void)
     return 0;
 }
 
+/* AREAPROBE3: DrawEllipse and AreaEllipse on flat and thin ellipses (a or
+ * b of 0 to 2) and every size up to 6 x 6, rows relative to the centre */
+static int areaprobe3(void)
+{
+    static const WORD big[] = { 8, 12, 16, 26, 34 };
+    struct BitMap *bm = AllocBitMap(160, 100, 1, BMF_CLEAR, NULL);
+    PLANEPTR tr = AllocRaster(160, 100);
+    WORD *vb = AllocVec(5 * 8, MEMF_CLEAR);
+    struct RastPort rp;
+    struct AreaInfo ai;
+    struct TmpRas tmp;
+    LONG a, b, i, k;
+
+    if (!bm || !tr || !vb) {
+        PutStr("no Chip RAM\n");
+        if (bm) FreeBitMap(bm);
+        if (tr) FreeRaster(tr, 160, 100);
+        if (vb) FreeVec(vb);
+        return 20;
+    }
+    Printf("AREAPROBE3, %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
+    InitRastPort(&rp); rp.BitMap = bm;
+    InitTmpRas(&tmp, tr, RASSIZE(160, 100));
+    rp.TmpRas = &tmp;
+    InitArea(&ai, vb, 8);
+    rp.AreaInfo = &ai;
+    SetAPen(&rp, 1);
+    for (k = 0; k < 49 + 4 * 5 * 3; k++) {
+        if (k < 49) { a = k / 7; b = k % 7; }
+        else {
+            i = k - 49;
+            a = big[i % 5]; b = i / 5 % 3;
+            if (i >= 15) { a = i / 5 % 3; b = big[i % 5]; }
+            if (i >= 30) { a = big[i % 5]; b = 1 + i / 5 % 3; if (i >= 45) { b = big[i % 5]; a = 1 + i / 5 % 3; } }
+            if (b > 45 || a > 75) continue;
+        }
+        SetRast(&rp, 0);
+        DrawEllipse(&rp, 80, 50, a, b);
+        WaitBlit();
+        Printf("== DrawEllipse %ld,%ld\n", a, b);
+        ell_rows(&rp, b);
+        SetRast(&rp, 0);
+        Printf("== AreaEllipse %ld,%ld: %ld", a, b, AreaEllipse(&rp, 80, 50, a, b));
+        Printf(" End %ld\n", AreaEnd(&rp));
+        WaitBlit();
+        ell_rows(&rp, b);
+    }
+    FreeVec(vb);
+    FreeRaster(tr, 160, 100);
+    FreeBitMap(bm);
+    return 0;
+}
+
 int main(void)
 {
-    LONG args[6] = { 0, 0, 0, 0, 0, 0 };
-    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S,AREAPROBE2/S", args, NULL);
+    LONG args[7] = { 0, 0, 0, 0, 0, 0, 0 };
+    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S,AREAPROBE/S,AREAPROBE2/S,AREAPROBE3/S", args, NULL);
     ULONG rounds = rd && args[0] ? *(ULONG *)args[0] : 400, r, k, total = 0, bad = 0;
 
     if (rd && args[1]) { int rc = probe(); FreeArgs(rd); return rc; }
     if (rd && args[3]) { int rc = lprobe(); FreeArgs(rd); return rc; }
     if (rd && args[4]) { int rc = areaprobe(); FreeArgs(rd); return rc; }
     if (rd && args[5]) { int rc = areaprobe2(); FreeArgs(rd); return rc; }
+    if (rd && args[6]) { int rc = areaprobe3(); FreeArgs(rd); return rc; }
     if (rd && args[2]) {
         layered = 1;
         if (!(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no layers.library\n"); FreeArgs(rd); return 20; }
