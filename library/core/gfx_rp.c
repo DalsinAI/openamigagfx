@@ -122,14 +122,6 @@ static int cut_to(const struct place *pl, LONG x0, LONG y0, LONG x1, LONG y1, LO
     return r[0] <= r[2] && r[1] <= r[3];
 }
 
-/* Inside the layer's own rectangle (RastPort coordinates). */
-static int in_layer(struct Layer *l, LONG x, LONG y)
-{
-    x += l->bounds.MinX - l->Scroll_X;
-    y += l->bounds.MinY - l->Scroll_Y;
-    return x >= l->bounds.MinX && x <= l->bounds.MaxX && y >= l->bounds.MinY && y <= l->bounds.MaxY;
-}
-
 int ogfx_rp_takes(struct RastPort *rp, int masked)
 {
     struct Layer *l = rp->Layer;
@@ -158,10 +150,11 @@ LONG ogfx_rp_WritePixel(struct RastPort *rp, LONG x, LONG y)
     int have = 0;
     UBYTE mode = rp->DrawMode;
 
-    /* in a layer: -1 outside the layer's rectangle (the autodoc's "outside
-     * the RastPort"); a covered pixel of a simple refresh layer is 0 */
-    if (rp->Layer && !in_layer(rp->Layer, x, y)) return -1;
-    if (!place_at(rp, &pl, &have, x, y) || (mode & (INVERSVID | JAM2)) == INVERSVID) return 0;
+    /* in a layer: -1 where nothing keeps the pixel (outside the layer, a
+     * simple refresh layer's covered part, outside its clip region:
+     * measured on OS 3.2); unlayered, 0 wherever it is */
+    if (!place_at(rp, &pl, &have, x, y)) return rp->Layer ? -1 : 0;
+    if ((mode & (INVERSVID | JAM2)) == INVERSVID) return 0;
     x += pl.dx;
     y += pl.dy;
     if (mode & COMPLEMENT)
@@ -264,6 +257,12 @@ LONG ogfx_rp_ReadPixelArray8(struct RastPort *rp, ULONG xstart, ULONG ystart, UL
     if (rp->Layer) {
         if (xstart > xstop || ystart > ystop) return 0;
         x1 = xstop; y1 = ystop;
+        /* a pixel nothing keeps reads as 0 (measured on OS 3.2) */
+        {
+            ULONG yy, xx;
+            for (yy = 0; yy <= y1 - ystart; yy++)
+                for (xx = 0; xx <= x1 - xstart; xx++) array[yy * bpr + xx] = 0;
+        }
         layer_array(rp, (LONG)xstart, (LONG)ystart, (LONG)xstop, (LONG)ystop, array, bpr, 0);
     } else {
         if (!cut(rp, &xstart, &ystart, &x1, &y1)) return 0;
@@ -447,7 +446,8 @@ void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl
 
     if (rp->Layer) {
         /* in a layer (no mask: ogfx_rp_takes): the rectangle in each place;
-         * the area pattern's row is the RastPort's y, its bit the bitmap's x */
+         * the area pattern lines up with the RastPort's own x and y (measured
+         * on OS 3.2), so each place's pattern is turned by its offset */
         struct walk w;
         struct place pl;
         LONG r[4], yy;
@@ -456,7 +456,8 @@ void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl
         while (walk_next(&w, &pl)) {
             if (!cut_to(&pl, (WORD)xl, (WORD)yl, (WORD)maxx, (WORD)maxy, r)) continue;
             for (yy = r[1]; yy <= r[3]; yy++) {
-                uint32_t pat = area_row(rp, yy - pl.dy);
+                uint32_t pat = area_row(rp, yy - pl.dy), r16 = (uint32_t)pl.dx & 15;
+                if (r16) pat = (pat >> r16 | pat << (16 - r16)) & 0xFFFF;
                 int mode = pat_mode(rp, &pat);
                 gfx_planar_span(&pl.bm, r[0], r[2], yy, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
             }

@@ -24,6 +24,8 @@
  *   GfxCoreABITest LAYERS       (the same in layers)
  *   GfxCoreABITest PROBE        (which pixels OS 3.2's BltPattern draws
  *                                through a mask, for the rule)
+ *   GfxCoreABITest LPROBE       (where a smart refresh layer keeps its
+ *                                covered pixels, for the rule)
  */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -320,13 +322,95 @@ static int make_layers(void)
     return 1;
 }
 
+/* The bits set in a covered part's bitmap, plane 0, as byte.bit (bit 7
+ * the leftmost), at most 12 */
+static void set_bits(struct BitMap *b)
+{
+    ULONG i, n = (ULONG)b->BytesPerRow * b->Rows, k = 0;
+    int j;
+    for (i = 0; i < n && k < 12; i++)
+        for (j = 7; j >= 0 && k < 12; j--)
+            if (((UBYTE *)b->Planes[0])[i] >> j & 1) { Printf(" r%ld x%ld", (LONG)(i / b->BytesPerRow), (LONG)(i % b->BytesPerRow * 8 + 7 - j)); k++; }
+    if (!k) PutStr(" none");
+}
+
+/* A smart refresh back layer at an odd x with a layer in front: for each
+ * covered part, its rectangle and bitmap, then which of its bits one
+ * WritePixel at the part's corner (and 1 and 5 pixels right of it, and one
+ * down) sets, then what SetRast sets in it. */
+static int lprobe(void)
+{
+    static const WORD geo[][8] = {
+        { 37, 10, 200, 60, 50, 20, 120, 50 },
+        { 16, 8, 150, 40, 3, 4, 40, 30 },
+        { 45, 5, 230, 50, 100, 30, 240, 70 },
+    };
+    struct BitMap *bm = AllocBitMap(320, 100, 2, BMF_CLEAR, NULL);
+    struct Layer_Info *info;
+    struct Layer *bk, *fr;
+    struct ClipRect *cr;
+    ULONG g;
+    int n;
+
+    if (!bm || !(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no Chip RAM or layers.library\n"); if (bm) FreeBitMap(bm); return 20; }
+    Printf("LPROBE, %s", (LONG)LayersBase->lib_IdString);
+    for (g = 0; g < sizeof geo / sizeof geo[0]; g++) {
+        const WORD *q = geo[g];
+        if (!(info = NewLayerInfo())) break;
+        bk = CreateUpfrontLayer(info, bm, q[0], q[1], q[2], q[3], LAYERSMART, NULL);
+        fr = bk ? CreateUpfrontLayer(info, bm, q[4], q[5], q[6], q[7], LAYERSMART, NULL) : NULL;
+        if (!fr) { if (bk) DeleteLayer(0, bk); DisposeLayerInfo(info); PutStr("no layers\n"); break; }
+        Printf("back %ld,%ld-%ld,%ld, front %ld,%ld-%ld,%ld\n", (LONG)q[0], (LONG)q[1], (LONG)q[2], (LONG)q[3],
+               (LONG)q[4], (LONG)q[5], (LONG)q[6], (LONG)q[7]);
+        SetAPen(bk->rp, 1); SetDrMd(bk->rp, JAM1); SetWriteMask(bk->rp, 1);
+        for (cr = bk->ClipRect, n = 1; cr; cr = cr->Next, n++) {
+            static const WORD at[][2] = { { 0, 0 }, { 1, 0 }, { 5, 0 }, { 0, 1 } };
+            struct BitMap *b = cr->BitMap;
+            ULONG p, k;
+            Printf(" part %ld %ld,%ld-%ld,%ld %s", (LONG)n, (LONG)cr->bounds.MinX, (LONG)cr->bounds.MinY,
+                   (LONG)cr->bounds.MaxX, (LONG)cr->bounds.MaxY, (LONG)(cr->obscured ? "covered" : "on top"));
+            if (!cr->obscured || !b) { PutStr("\n"); continue; }
+            Printf(", bitmap %ld bytes a row, %ld rows, depth %ld, flags %02lx\n", (LONG)b->BytesPerRow, (LONG)b->Rows,
+                   (LONG)b->Depth, (LONG)b->Flags);
+            for (k = 0; k < 4; k++) {
+                LONG x = cr->bounds.MinX - bk->bounds.MinX + at[k][0], y = cr->bounds.MinY - bk->bounds.MinY + at[k][1];
+                for (p = 0; p < b->Depth; p++) memset(b->Planes[p], 0, (ULONG)b->BytesPerRow * b->Rows);
+                Printf("  WritePixel %ld,%ld (screen %ld,%ld) answers %ld, sets", x, y, x + bk->bounds.MinX, y + bk->bounds.MinY,
+                       WritePixel(bk->rp, x, y));
+                WaitBlit();
+                set_bits(b);
+                PutStr("\n");
+            }
+            for (p = 0; p < b->Depth; p++) memset(b->Planes[p], 0, (ULONG)b->BytesPerRow * b->Rows);
+            SetRast(bk->rp, 1);
+            WaitBlit();
+            {
+                ULONG i, nb = (ULONG)b->BytesPerRow * b->Rows, ones = 0;
+                for (i = 0; i < nb; i++) { UBYTE v = ((UBYTE *)b->Planes[0])[i]; while (v) { ones += v & 1; v >>= 1; } }
+                Printf("  SetRast 1 sets %ld of its %ld bits; row 0:", (LONG)ones, (LONG)(nb * 8));
+                for (i = 0; i < b->BytesPerRow; i++) Printf(" %02lx", (LONG)((UBYTE *)b->Planes[0])[i]);
+                PutStr("\n");
+            }
+            SetRast(bk->rp, 0);
+        }
+        DeleteLayer(0, fr);
+        DeleteLayer(0, bk);
+        DisposeLayerInfo(info);
+    }
+    CloseLibrary(LayersBase);
+    LayersBase = NULL;
+    FreeBitMap(bm);
+    return 0;
+}
+
 int main(void)
 {
-    LONG args[3] = { 0, 0, 0 };
-    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S", args, NULL);
+    LONG args[4] = { 0, 0, 0, 0 };
+    struct RDArgs *rd = ReadArgs("ROUNDS/N,PROBE/S,LAYERS/S,LPROBE/S", args, NULL);
     ULONG rounds = rd && args[0] ? *(ULONG *)args[0] : 400, r, k, total = 0, bad = 0;
 
     if (rd && args[1]) { int rc = probe(); FreeArgs(rd); return rc; }
+    if (rd && args[3]) { int rc = lprobe(); FreeArgs(rd); return rc; }
     if (rd && args[2]) {
         layered = 1;
         if (!(LayersBase = OpenLibrary("layers.library", 39))) { PutStr("no layers.library\n"); FreeArgs(rd); return 20; }
