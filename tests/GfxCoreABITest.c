@@ -125,17 +125,17 @@ int main(void)
             pens();
             switch (rnd() % 6) {
             case 0:
-                old = ReadPixel(&rpa, x, y);
+                old = (LONG)ReadPixel(&rpa, x, y);
                 ra = WritePixel(&rpa, x, y); rb = ogfx_rp_WritePixel(&rpb, x, y);
                 plane = same(&at);
-                pa = ReadPixel(&rpa, x, y); pb = ogfx_rp_ReadPixel(&rpb, x, y);
+                pa = (LONG)ReadPixel(&rpa, x, y); pb = ogfx_rp_ReadPixel(&rpb, x, y);
                 ASKED("%ld,%ld fg %ld bg %ld mode %ld mask %02lx: pixel %ld, OS made %ld, ours %ld", x, y,
                       (LONG)(UBYTE)rpa.FgPen, (LONG)(UBYTE)rpa.BgPen, (LONG)rpa.DrawMode, (LONG)rpa.Mask, old);
                 wa[7] = pa; wa[8] = pb;
                 report(0, ra, rb, plane, at);
                 break;
             case 1:
-                ra = ReadPixel(&rpa, x, y); rb = ogfx_rp_ReadPixel(&rpb, x, y);
+                ra = (LONG)ReadPixel(&rpa, x, y); rb = ogfx_rp_ReadPixel(&rpb, x, y);
                 ASKED("%ld,%ld", x, y, 0, 0, 0, 0, 0);
                 report(1, ra, rb, 0, 0);
                 break;
@@ -175,7 +175,7 @@ int main(void)
                         for (j = row + x1 - x0 + 1; j < row + bpr; j++) Printf(" %ld", (LONG)arr_a[j]);
                         PutStr("; the bitmap there holds");
                         for (j = x1 + 1; j < x0 + bpr; j++)
-                            Printf(" %ld", j < (ULONG)bma->BytesPerRow * 8 ? ReadPixel(&rpa, j, y0 + i / bpr) : -1L);
+                            Printf(" %ld", j < (ULONG)bma->BytesPerRow * 8 ? (LONG)ReadPixel(&rpa, j, y0 + i / bpr) : -1L);
                         PutStr("\n");
                     }
                     ASKED("%ld,%ld-%ld,%ld array byte %ld: OS %ld, ours %ld", (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1,
