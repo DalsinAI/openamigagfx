@@ -99,7 +99,7 @@ static int same(ULONG *at)
     if ((p = same_bm(bma, bmb, at))) return p;
     if (!layered) return 0;
     for (ca = back[0]->ClipRect, cb = back[1]->ClipRect, n = 1; ca && cb; ca = ca->Next, cb = cb->Next, n++)
-        if (ca->BitMap && cb->BitMap && ca->lobs && (p = same_bm(ca->BitMap, cb->BitMap, at))) return 16 * n + p;
+        if (ca->BitMap && cb->BitMap && ca->obscured && (p = same_bm(ca->BitMap, cb->BitMap, at))) return 16 * n + p;
     return 0;
 }
 
@@ -112,7 +112,7 @@ static void sync_b(void)
     for (p = 0; p < bma->Depth; p++) CopyMem(bma->Planes[p], bmb->Planes[p], n);
     if (!layered) return;
     for (ca = back[0]->ClipRect, cb = back[1]->ClipRect; ca && cb; ca = ca->Next, cb = cb->Next)
-        if (ca->BitMap && cb->BitMap && ca->lobs)
+        if (ca->BitMap && cb->BitMap && ca->obscured)
             for (p = 0; p < ca->BitMap->Depth; p++)
                 CopyMem(ca->BitMap->Planes[p], cb->BitMap->Planes[p], (ULONG)ca->BitMap->BytesPerRow * ca->BitMap->Rows);
 }

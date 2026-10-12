@@ -70,7 +70,7 @@ static int walk_next(struct walk *w, struct place *pl)
         struct ClipRect *cr = w->cr;
         LONG ox = l->bounds.MinX - l->Scroll_X, oy = l->bounds.MinY - l->Scroll_Y, bx, by;
         w->cr = cr->Next;
-        if (!cr->lobs) { b = w->rp->BitMap; bx = by = 0; }
+        if (!cr->obscured) { b = w->rp->BitMap; bx = by = 0; }
         else if (cr->BitMap && !(l->Flags & LAYERSUPER)) { b = cr->BitMap; bx = cr->bounds.MinX & ~15L; by = cr->bounds.MinY; }
         else continue;
         planar_from(b, &pl->bm);
