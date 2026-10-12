@@ -23,7 +23,7 @@ cat > "$tmp/t.c" <<'C'
 #define H 40
 static uint32_t seed = 0x1200;
 static uint32_t rnd(void) { seed = seed * 1103515245u + 12345u; return seed >> 8; }
-static uint8_t mem[8][32 * H], chunk[W * H], model[H][W], buf[W * H];
+static uint8_t mem[8][32 * H], chunk[W * H], model[H][W], old[H][W], buf[W * H];
 static unsigned long checks, fails;
 static struct gfx_planar bm;
 static struct gfx_chunky8 cb;
@@ -91,7 +91,35 @@ int main(void)
         for (k = 0; k < 12; k++) {
             uint32_t pen = rnd() & 0xFF, mask = rnd() % 4 ? 0xFF : rnd() & 0xFF;
             int mode = rnd() % 3 == 0 ? GFX_INVERT : GFX_SET;
-            switch (rnd() % 5) {
+            switch (rnd() % 6) {
+            case 5: {
+                /* BltBitMap's copy within the bitmap, overlapping or not */
+                uint32_t mt = rnd() & 0xF0, live = 0, p;
+                int w = 1 + rnd() % width, h = 1 + rnd() % H, sx, sy, dx, dy;
+                if (rnd() % 3 == 0) mt = 0xC0;
+                if (w > width) w = width;
+                sx = rnd() % (width - w + 1); dx = rnd() % (width - w + 1);
+                sy = rnd() % (H - h + 1); dy = rnd() % (H - h + 1);
+                if (rnd() % 2) {
+                    dx = sx + (int)(rnd() % 9) - 4;
+                    dy = sy + (int)(rnd() % 3) - 1;
+                    dx = dx < 0 ? 0 : dx + w > width ? width - w : dx;
+                    dy = dy < 0 ? 0 : dy + h > H ? H - h : dy;
+                }
+                memcpy(old, model, sizeof old);
+                gfx_planar_blit(&bm, sx, sy, &bm, dx, dy, w, h, mt, mask);
+                for (p = 0; p < bm.depth; p++) if (mask >> p & 1 && bm.planes[p] && bm.planes[p] != (uint8_t *)-1) live |= 1u << p;
+                for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+                    uint32_t b = old[sy + y][sx + x], c = old[dy + y][dx + x], d = c;
+                    for (p = 0; p < 8; p++) {
+                        int bb = b >> p & 1, cc = c >> p & 1, bit = mt >> (bb ? (cc ? 7 : 6) : (cc ? 5 : 4)) & 1;
+                        if (live >> p & 1) d = (d & ~(1u << p)) | ((uint32_t)bit << p);
+                    }
+                    model[dy + y][dx + x] = (uint8_t)d;
+                }
+                check("blit");
+                break;
+            }
             case 4: {
                 uint32_t pat = rnd() % 4 ? rnd() & 0xFFFF : 0xFFFF, bg = rnd() & 0xFF;
                 int sm = rnd() % 3;

@@ -481,3 +481,73 @@ void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl
         gfx_planar_span(&bm, x0, x1, y, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
     }
 }
+
+/* ---- blits ------------------------------------------------------------------- */
+
+/* The rectangle cut to both bitmaps (source sw x sh, destination dw x dh):
+ * 0 when nothing is left. */
+static int cut_blit(LONG *sx, LONG *sy, LONG *dx, LONG *dy, LONG *w, LONG *h, LONG sw, LONG sh, LONG dw, LONG dh)
+{
+    if (*sx < 0) { *dx -= *sx; *w += *sx; *sx = 0; }
+    if (*sy < 0) { *dy -= *sy; *h += *sy; *sy = 0; }
+    if (*dx < 0) { *sx -= *dx; *w += *dx; *dx = 0; }
+    if (*dy < 0) { *sy -= *dy; *h += *dy; *dy = 0; }
+    if (*sx + *w > sw) *w = sw - *sx;
+    if (*sy + *h > sh) *h = sh - *sy;
+    if (*dx + *w > dw) *w = dw - *dx;
+    if (*dy + *h > dh) *h = dh - *dy;
+    return *w > 0 && *h > 0;
+}
+
+/* The planes a blit draws: those in mask that both have, the destination's
+ * not 0 or -1 (graphics.library's count, measured on OS 3.2) */
+static LONG planes_drawn(const struct gfx_planar *s, const struct gfx_planar *d, ULONG mask)
+{
+    uint32_t depth = s->depth < d->depth ? s->depth : d->depth, p;
+    LONG n = 0;
+    for (p = 0; p < depth; p++)
+        if (mask >> p & 1 && d->planes[p] && d->planes[p] != (uint8_t *)-1) n++;
+    return n;
+}
+
+LONG ogfx_rp_BltBitMap(struct BitMap *src, LONG sx, LONG sy, struct BitMap *dst, LONG dx, LONG dy,
+                       LONG w, LONG h, ULONG minterm, ULONG mask, UBYTE *temp)
+{
+    struct gfx_planar s, d;
+
+    (void)temp;
+    sx = (WORD)sx; sy = (WORD)sy; dx = (WORD)dx; dy = (WORD)dy; w = (WORD)w; h = (WORD)h;
+    planar_from(src, &s);
+    planar_from(dst, &d);
+    if (!cut_blit(&sx, &sy, &dx, &dy, &w, &h, (LONG)src->BytesPerRow * 8, src->Rows,
+                  (LONG)dst->BytesPerRow * 8, dst->Rows))
+        return 0;
+    gfx_planar_blit(&s, sx, sy, &d, dx, dy, w, h, minterm & 0xF0, mask & 0xFF);
+    return planes_drawn(&s, &d, mask & 0xFF);
+}
+
+void ogfx_rp_BltBitMapRastPort(struct BitMap *src, LONG sx, LONG sy, struct RastPort *rp, LONG dx, LONG dy,
+                               LONG w, LONG h, ULONG minterm)
+{
+    struct gfx_planar s;
+    struct walk wk;
+    struct place pl;
+    LONG r[4];
+
+    sx = (WORD)sx; sy = (WORD)sy; dx = (WORD)dx; dy = (WORD)dy; w = (WORD)w; h = (WORD)h;
+    if (w <= 0 || h <= 0) return;
+    planar_from(src, &s);
+    walk_start(&wk, rp);
+    while (walk_next(&wk, &pl)) {
+        LONG bsx, bsy, bw, bh, bdx, bdy;
+        if (!cut_to(&pl, dx, dy, dx + w - 1, dy + h - 1, r)) continue;
+        /* the part of the source under this place's piece */
+        bdx = r[0]; bdy = r[1];
+        bsx = sx + (r[0] - pl.dx - dx); bsy = sy + (r[1] - pl.dy - dy);
+        bw = r[2] - r[0] + 1; bh = r[3] - r[1] + 1;
+        if (!cut_blit(&bsx, &bsy, &bdx, &bdy, &bw, &bh, (LONG)src->BytesPerRow * 8, src->Rows,
+                      pl.x1 + 1, pl.y1 + 1))
+            continue;
+        gfx_planar_blit(&s, bsx, bsy, &pl.bm, bdx, bdy, bw, bh, minterm & 0xF0, rp->Mask);
+    }
+}

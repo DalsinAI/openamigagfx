@@ -67,6 +67,18 @@ void gfx_planar_write8(const struct gfx_planar *bm, int32_t x0, int32_t y0, int3
 void gfx_planar_read8(const struct gfx_planar *bm, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
                       uint8_t *dst, uint32_t dst_bpr);
 
+/* BltBitMap's copy: rectangle w x h from (sx, sy) of src to (dx, dy) of
+ * dst, plane p of dst from plane p of src, through the minterm's four
+ * high bits: for source bit B and destination bit C, the new
+ * bit is minterm bit 7 (B and C), 6 (B, not C), 5 (not B, C) or 4 (neither),
+ * as the blitter's A channel is all ones. Only the planes in mask and the
+ * planes both bitmaps have; src and dst may be the same bitmap and overlap
+ * (the copy is as if read whole first). A source plane of 0 reads zeros
+ * and -1 ones. Everything is already inside both bitmaps. Two records
+ * with the same planes are one bitmap. */
+void gfx_planar_blit(const struct gfx_planar *src, int32_t sx, int32_t sy, const struct gfx_planar *dst,
+                     int32_t dx, int32_t dy, int32_t w, int32_t h, uint32_t minterm, uint32_t mask);
+
 /* The same on a chunky bitmap: a pen is the byte; mask ANDs which bits are
  * written, as on a planar screen. */
 void gfx_chunky8_put(const struct gfx_chunky8 *bm, int32_t x, int32_t y, uint32_t pen, uint32_t mask, int mode);
