@@ -85,4 +85,16 @@ int ogfx_rp_ClipBlit(struct RastPort *srp, LONG sx, LONG sy, struct RastPort *dr
                      LONG w, LONG h, ULONG minterm);
 int ogfx_rp_ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0, LONG x1, LONG y1);
 
+/* Text, TextLength and TextExtent, as graphics.library draws and measures
+ * a string in the RastPort's font, AlgoStyle and TxSpacing. Text returns
+ * 0, drawing nothing, for a call graphics.library must make: no font, a
+ * colour font, a font drawn right to left, or a RastPort ogfx_rp_takes
+ * refuses. TextLength and TextExtent are measured for the fonts Text
+ * takes; ask ogfx_rp_takes_text first. */
+struct TextExtent;
+int ogfx_rp_takes_text(struct RastPort *rp);
+int ogfx_rp_Text(struct RastPort *rp, CONST_STRPTR s, ULONG n);
+WORD ogfx_rp_TextLength(struct RastPort *rp, CONST_STRPTR s, ULONG n);
+void ogfx_rp_TextExtent(struct RastPort *rp, CONST_STRPTR s, ULONG n, struct TextExtent *te);
+
 #endif
