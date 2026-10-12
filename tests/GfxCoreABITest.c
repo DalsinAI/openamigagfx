@@ -6,8 +6,12 @@
  * RastPort calls (library/core/gfx_rp.c) on the second, with the same pens,
  * DrawMode and Mask on an unlayered RastPort. Then every plane byte and the
  * result are compared. Calls: WritePixel, ReadPixel, SetRast,
- * WritePixelArray8, ReadPixelArray8, WriteChunkyPixels. Prints the first
- * DIFFs of each call with what was asked, and a count per call. Exit 0 when
+ * WritePixelArray8, ReadPixelArray8, WriteChunkyPixels, Draw (after a Move
+ * or chained, with line patterns), PolyDraw, RectFill and BltPattern (with
+ * area patterns and masks); after a line the RastPort's pen position,
+ * pattern count and Flags are compared too. Prints the first DIFFs of each
+ * call with what was asked and the first pixels that differ, and a count
+ * per call. Exit 0 when
  * nothing differs, 5 when something does, 20 when memory runs out.
  *
  *   GfxCoreABITest [ROUNDS=n]   (default 400)
@@ -22,9 +26,10 @@
 #include <string.h>
 #include "../library/core/gfx_rp.h"
 
-#define NCALLS 6
+#define NCALLS 10
 static const char *const names[NCALLS] = {
-    "WritePixel", "ReadPixel", "SetRast", "WritePixelArray8", "ReadPixelArray8", "WriteChunkyPixels"
+    "WritePixel", "ReadPixel", "SetRast", "WritePixelArray8", "ReadPixelArray8", "WriteChunkyPixels",
+    "Draw", "PolyDraw", "RectFill", "BltPattern"
 };
 static ULONG runs[NCALLS], diffs[NCALLS], pad_runs;
 static int nochip;
@@ -62,19 +67,52 @@ static int same(ULONG *at)
 static const char *what;
 static LONG wa[10];
 
-static void report(int call, LONG ra, LONG rb, int plane, ULONG at)
+/* 1 when the DIFF was printed */
+static int report(int call, LONG ra, LONG rb, int plane, ULONG at)
 {
     runs[call]++;
-    if (ra == rb && !plane) return;
+    if (ra == rb && !plane) return 0;
     diffs[call]++;
-    if (diffs[call] > 15) return;
+    if (diffs[call] > 15) return 0;
     Printf("DIFF %s ", (LONG)names[call]);
     VPrintf((STRPTR)what, wa);
     Printf(": OS %ld, ours %ld; ", ra, rb);
     if (plane) Printf("plane %ld byte %lu differs", (LONG)(plane - 1), at);
     else PutStr("same bytes");
     Printf(" (depth %ld, %ld bytes a row)\n", (LONG)bma->Depth, (LONG)bma->BytesPerRow);
+    return 1;
 }
+
+/* The first pixels of a rectangle that differ, OS's pen and ours */
+static void show_pixels(LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    LONG x, y, n = 0;
+    WaitBlit();
+    PutStr("  pixels:");
+    for (y = y0; y <= y1 && n < 8; y++)
+        for (x = x0; x <= x1 && n < 8; x++) {
+            LONG a = (LONG)ReadPixel(&rpa, x, y), b = ogfx_rp_ReadPixel(&rpb, x, y);
+            if (a != b) { Printf(" %ld,%ld OS %ld ours %ld;", x, y, a, b); n++; }
+        }
+    PutStr("\n");
+}
+
+/* The RastPort's line state after a line: pen position, pattern count, Flags */
+static int line_state(void)
+{
+    if (rpa.cp_x == rpb.cp_x && rpa.cp_y == rpb.cp_y && rpa.linpatcnt == rpb.linpatcnt && rpa.Flags == rpb.Flags)
+        return 0;
+    return 1;
+}
+static void show_state(void)
+{
+    Printf("  state: OS cp %ld,%ld cnt %ld flags %04lx; ours cp %ld,%ld cnt %ld flags %04lx\n",
+           (LONG)rpa.cp_x, (LONG)rpa.cp_y, (LONG)rpa.linpatcnt, (LONG)rpa.Flags,
+           (LONG)rpb.cp_x, (LONG)rpb.cp_y, (LONG)rpb.linpatcnt, (LONG)rpb.Flags);
+}
+
+static UWORD areapat[16];
+static UBYTE bltmask[2048];
 #define ASKED(f, a0, a1, a2, a3, a4, a5, a6) \
     (what = (f), wa[0] = (LONG)(a0), wa[1] = (LONG)(a1), wa[2] = (LONG)(a2), wa[3] = (LONG)(a3), \
      wa[4] = (LONG)(a4), wa[5] = (LONG)(a5), wa[6] = (LONG)(a6))
@@ -123,7 +161,7 @@ int main(void)
             ULONG x0 = rnd() % W, y0 = rnd() % H, x1 = x0 + rnd() % (W - x0), y1 = y0 + rnd() % (H - y0);
             int plane;
             pens();
-            switch (rnd() % 6) {
+            switch (rnd() % 10) {
             case 0:
                 old = (LONG)ReadPixel(&rpa, x, y);
                 ra = WritePixel(&rpa, x, y); rb = ogfx_rp_WritePixel(&rpb, x, y);
@@ -183,6 +221,74 @@ int main(void)
                     report(4, ra, rb + (bad_at != ~0UL), 0, 0);
                 }
                 break;
+            case 6: case 7: {
+                /* a line or a polyline, inside the bitmap, after a Move or
+                 * chained on from the last line (the pen position is kept
+                 * inside the bitmap too) */
+                UWORD ptrn = rnd() % 3 ? 0xFFFF : (UWORD)rnd();
+                WORD poly[2 * 6];
+                LONG n = k % 2 && rnd() % 2 ? 0 : 1, cnt = rnd() % 2 ? 1 : 1 + (LONG)(rnd() % 6), j;
+                LONG sx = rpa.cp_x, sy = rpa.cp_y;
+                int call = cnt > 1 ? 7 : 6, st;
+                if (sx < 0 || sy < 0 || sx >= (LONG)W || sy >= (LONG)H) n = 1;
+                if (n) {
+                    SetDrPt(&rpa, ptrn); SetDrPt(&rpb, ptrn);
+                    Move(&rpa, x, y); ogfx_rp_Move(&rpb, x, y);
+                    sx = x; sy = y;
+                }
+                for (j = 0; j < cnt; j++) {
+                    /* mostly short lines and every octant; sometimes flat or steep */
+                    LONG tx = (LONG)(rnd() % W), ty = (LONG)(rnd() % H);
+                    switch (rnd() % 4) {
+                    case 0: ty = j ? poly[2 * j - 1] : sy; break;
+                    case 1: tx = j ? poly[2 * j - 2] : sx; break;
+                    case 2: tx = (j ? poly[2 * j - 2] : sx) + (LONG)(rnd() % 9) - 4;
+                            ty = (j ? poly[2 * j - 1] : sy) + (LONG)(rnd() % 9) - 4;
+                            if (tx < 0) tx = 0;
+                            if (ty < 0) ty = 0;
+                            if (tx >= (LONG)W) tx = W - 1;
+                            if (ty >= (LONG)H) ty = H - 1;
+                            break;
+                    }
+                    poly[2 * j] = (WORD)tx; poly[2 * j + 1] = (WORD)ty;
+                }
+                if (call == 6) { Draw(&rpa, poly[0], poly[1]); ogfx_rp_Draw(&rpb, poly[0], poly[1]); }
+                else { PolyDraw(&rpa, cnt, poly); ogfx_rp_PolyDraw(&rpb, cnt, poly); }
+                plane = same(&at);
+                st = line_state();
+                ASKED("%s%ld,%ld to %ld,%ld (%ld points) ptrn %04lx fg %ld bg %ld mode %ld",
+                      (LONG)(n ? "Move " : "on from "), sx, sy, (LONG)poly[2 * cnt - 2], (LONG)poly[2 * cnt - 1],
+                      cnt, (LONG)rpa.LinePtrn);
+                wa[7] = (LONG)(UBYTE)rpa.FgPen; wa[8] = (LONG)(UBYTE)rpa.BgPen; wa[9] = (LONG)rpa.DrawMode;
+                if (report(call, 0, st, plane, at)) {
+                    show_pixels(0, 0, (LONG)W - 1, (LONG)H - 1);
+                    show_state();
+                }
+                break;
+            }
+            case 8: case 9: {
+                /* RectFill, or BltPattern with or without a mask; solid, a
+                 * one-row or a 2^n-row area pattern */
+                LONG sz = rnd() % 3 ? 0 : (LONG)(rnd() % 5), j, call = rnd() % 2 ? 8 : 9;
+                ULONG mbpr = ((x1 - x0 + 16) & ~15UL) / 8;
+                int usemask = call == 9 && rnd() % 3 && mbpr * (y1 - y0 + 1) <= sizeof bltmask;
+                for (j = 0; j < 16; j++) areapat[j] = rnd() % 4 ? (UWORD)rnd() : 0xFFFF;
+                if (rnd() % 3) { SetAfPt(&rpa, areapat, sz); SetAfPt(&rpb, areapat, sz); }
+                else { SetAfPt(&rpa, NULL, 0); SetAfPt(&rpb, NULL, 0); }
+                for (j = 0; j < (LONG)sizeof bltmask; j++) bltmask[j] = rnd() % 4 ? (UBYTE)rnd() : 0xFF;
+                if (call == 8) { RectFill(&rpa, x0, y0, x1, y1); ogfx_rp_RectFill(&rpb, x0, y0, x1, y1); }
+                else {
+                    BltPattern(&rpa, usemask ? bltmask : NULL, x0, y0, x1, y1, mbpr);
+                    ogfx_rp_BltPattern(&rpb, usemask ? bltmask : NULL, x0, y0, x1, y1, mbpr);
+                }
+                plane = same(&at);
+                ASKED("%ld,%ld-%ld,%ld pattern %ld rows %ld mask %ld fg %ld mode %ld",
+                      (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1, (LONG)(rpa.AreaPtrn ? 1L << sz : 0),
+                      (LONG)(usemask ? mbpr : 0), (LONG)(UBYTE)rpa.FgPen);
+                wa[7] = (LONG)rpa.DrawMode;
+                if (report(call, 0, 0, plane, at)) show_pixels((LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                break;
+            }
             default: {
                 ULONG bpr = (x1 - x0 + 1) + rnd() % 9;
                 if (bpr * (y1 - y0 + 1) > ARR) break;
@@ -195,6 +301,7 @@ int main(void)
             }
             }
             /* keep the two in step after a DIFF, so later calls are judged alone */
+            rpb.cp_x = rpa.cp_x; rpb.cp_y = rpa.cp_y; rpb.linpatcnt = rpa.linpatcnt; rpb.Flags = rpa.Flags;
             if (same(&at)) {
                 ULONG p, n = (ULONG)bma->BytesPerRow * bma->Rows;
                 for (p = 0; p < bma->Depth; p++) CopyMem(bma->Planes[p], bmb->Planes[p], n);

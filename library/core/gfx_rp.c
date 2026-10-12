@@ -122,3 +122,112 @@ void ogfx_rp_WriteChunkyPixels(struct RastPort *rp, ULONG xstart, ULONG ystart, 
     planar_of(rp, &bm);
     gfx_planar_write8(&bm, xstart, ystart, x1, y1, array, (uint32_t)bytesperrow, rp->Mask);
 }
+
+/* What a pattern bit of 1 and of 0 do in the RastPort's DrawMode: INVERSVID
+ * swaps them, JAM2 draws BgPen for a 0, COMPLEMENT inverts for a 1. */
+static int pat_mode(struct RastPort *rp, uint32_t *pat)
+{
+    UBYTE mode = rp->DrawMode;
+
+    if (mode & INVERSVID) *pat = ~*pat & 0xFFFF;
+    if (mode & COMPLEMENT) return GFX_XOR;
+    return mode & JAM2 ? GFX_JAM2 : GFX_JAM1;
+}
+
+void ogfx_rp_Move(struct RastPort *rp, LONG x, LONG y)
+{
+    rp->cp_x = (WORD)x;
+    rp->cp_y = (WORD)y;
+    rp->Flags |= FRST_DOT;
+    rp->linpatcnt = 15;
+}
+
+/* A line from the pen position to (x, y), Bresenham along the longer axis,
+ * every pixel on it drawn through LinePtrn: pixel i takes bit
+ * (linpatcnt - i) & 15. The first pixel is left out when FRST_DOT is clear
+ * (it is the last one of the line before), so a COMPLEMENT polyline does not
+ * invert its corners twice. */
+void ogfx_rp_Draw(struct RastPort *rp, LONG x, LONG y)
+{
+    struct gfx_planar bm;
+    WORD x0 = rp->cp_x, y0 = rp->cp_y, x1 = (WORD)x, y1 = (WORD)y;
+    LONG dx = x1 > x0 ? x1 - x0 : x0 - x1, dy = y1 > y0 ? y1 - y0 : y0 - y1;
+    LONG sx = x1 >= x0 ? 1 : -1, sy = y1 >= y0 ? 1 : -1;
+    LONG len = dx > dy ? dx : dy, mn = dx > dy ? dy : dx, err = 2 * mn - len, i;
+    LONG px = x0, py = y0;
+    UWORD ptrn = rp->LinePtrn;
+    int cnt = rp->linpatcnt, first = (rp->Flags & FRST_DOT) != 0, mode;
+    uint32_t inv = rp->DrawMode & INVERSVID ? 1 : 0, fg = rp->FgPen, bg = rp->BgPen;
+
+    planar_of(rp, &bm);
+    mode = rp->DrawMode & COMPLEMENT ? GFX_XOR : rp->DrawMode & JAM2 ? GFX_JAM2 : GFX_JAM1;
+    for (i = 0; i <= len; i++) {
+        uint32_t on = (ptrn >> ((cnt - i) & 15) & 1) ^ inv;
+        if ((i || first) && inside(rp, px, py)) {
+            if (mode == GFX_XOR) { if (on) gfx_planar_put(&bm, px, py, 0, rp->Mask, GFX_INVERT); }
+            else if (on) gfx_planar_put(&bm, px, py, fg, rp->Mask, GFX_SET);
+            else if (mode == GFX_JAM2) gfx_planar_put(&bm, px, py, bg, rp->Mask, GFX_SET);
+        }
+        if (err >= 0) {
+            if (dx > dy) py += sy; else px += sx;
+            err -= 2 * len;
+        }
+        err += 2 * mn;
+        if (dx > dy) px += sx; else py += sy;
+    }
+    rp->linpatcnt = (BYTE)((cnt - len) & 15);
+    rp->Flags &= ~FRST_DOT;
+    rp->cp_x = x1;
+    rp->cp_y = y1;
+}
+
+void ogfx_rp_PolyDraw(struct RastPort *rp, LONG count, const WORD *xy)
+{
+    for (; count > 0; count--, xy += 2) ogfx_rp_Draw(rp, xy[0], xy[1]);
+}
+
+/* The area pattern's row for line y: AreaPtrn holds 1 << AreaPtSz rows,
+ * repeating down the bitmap; none is solid. Multicolour patterns (a
+ * negative AreaPtSz) come later and draw solid for now. */
+static uint32_t area_row(struct RastPort *rp, LONG y)
+{
+    if (!rp->AreaPtrn || rp->AreaPtSz < 0) return 0xFFFF;
+    return rp->AreaPtrn[y & ((1L << rp->AreaPtSz) - 1)];
+}
+
+void ogfx_rp_RectFill(struct RastPort *rp, LONG xmin, LONG ymin, LONG xmax, LONG ymax)
+{
+    ogfx_rp_BltPattern(rp, NULL, xmin, ymin, xmax, ymax, 0);
+}
+
+/* The rectangle through the area pattern and, when there is one, a
+ * one-plane mask of bytecnt bytes a row whose bit for (x - xl, y - yl)
+ * says whether pixel (x, y) is drawn at all. */
+void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl, LONG maxx, LONG maxy,
+                        ULONG bytecnt)
+{
+    struct gfx_planar bm;
+    ULONG x0 = (ULONG)(WORD)xl, y0 = (ULONG)(WORD)yl, x1 = (ULONG)(WORD)maxx, y1 = (ULONG)(WORD)maxy, y;
+
+    if ((WORD)xl < 0 || (WORD)yl < 0 || !cut(rp, &x0, &y0, &x1, &y1)) return;
+    planar_of(rp, &bm);
+    for (y = y0; y <= y1; y++) {
+        uint32_t pat = area_row(rp, (LONG)y);
+        int mode = pat_mode(rp, &pat);
+        if (!mask) {
+            gfx_planar_span(&bm, x0, x1, y, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
+            continue;
+        }
+        {
+            const UBYTE *m = mask + (y - y0) * bytecnt;
+            ULONG x = x0, run;
+            while (x <= x1) {
+                ULONG i = x - x0;
+                if (!(m[i >> 3] & (0x80 >> (i & 7)))) { x++; continue; }
+                for (run = x; run + 1 <= x1 && (m[(run + 1 - x0) >> 3] & (0x80 >> ((run + 1 - x0) & 7))); run++) ;
+                gfx_planar_span(&bm, x, run, y, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
+                x = run + 1;
+            }
+        }
+    }
+}

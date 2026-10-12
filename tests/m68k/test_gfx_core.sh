@@ -1,8 +1,8 @@
 #!/bin/sh
 # OpenGfx's core (library/core/gfx_core.c) built with an m68k cross GCC for
 # the 68000, 68020 and 68040 at -O0 and -O2, each run on that CPU under
-# qemu-m68k, against a
-# plain model: an array of pens drawn one pixel at a time. Random bitmaps
+# qemu-m68k, against a plain model: an array of pens drawn one pixel at a
+# time. Random bitmaps
 # (depth 1 to 8, some planes 0 or -1, odd sizes), pens, masks and
 # rectangles; every pixel of every plane is compared after every call.
 #   sh tests/m68k/test_gfx_core.sh
@@ -91,7 +91,21 @@ int main(void)
         for (k = 0; k < 12; k++) {
             uint32_t pen = rnd() & 0xFF, mask = rnd() % 4 ? 0xFF : rnd() & 0xFF;
             int mode = rnd() % 3 == 0 ? GFX_INVERT : GFX_SET;
-            switch (rnd() % 4) {
+            switch (rnd() % 5) {
+            case 4: {
+                uint32_t pat = rnd() % 4 ? rnd() & 0xFFFF : 0xFFFF, bg = rnd() & 0xFF;
+                int sm = rnd() % 3;
+                x0 = rnd() % width; x1 = x0 + rnd() % (width - x0); y = rnd() % H;
+                gfx_planar_span(&bm, x0, x1, y, pat, pen, bg, mask, sm);
+                for (x = x0; x <= x1; x++) {
+                    int on = pat >> (15 - (x & 15)) & 1;
+                    if (sm == GFX_XOR) { if (on) mput(x, y, 0, mask, GFX_INVERT); }
+                    else if (on) mput(x, y, pen, mask, GFX_SET);
+                    else if (sm == GFX_JAM2) mput(x, y, bg, mask, GFX_SET);
+                }
+                check("span");
+                break;
+            }
             case 0:
                 x = rnd() % width; y = rnd() % H;
                 gfx_planar_put(&bm, x, y, pen, mask, mode); mput(x, y, pen, mask, mode); check("put");
@@ -134,7 +148,20 @@ int main(void)
         uint32_t pen = rnd() & 0xFF, mask = rnd() % 4 ? 0xFF : rnd() & 0xFF, sbpr;
         int mode = rnd() % 3 == 0 ? GFX_INVERT : GFX_SET;
         uint8_t m = (uint8_t)mask;
-        switch (rnd() % 4) {
+        switch (rnd() % 5) {
+        case 4: {
+            uint32_t pat = rnd() & 0xFFFF, bg = rnd() & 0xFF;
+            int sm = rnd() % 3;
+            x0 = rnd() % W; x1 = x0 + rnd() % (W - x0); y = rnd() % H;
+            gfx_chunky8_span(&cb, x0, x1, y, pat, pen, bg, mask, sm);
+            for (x = x0; x <= x1; x++) {
+                int on = pat >> (15 - (x & 15)) & 1;
+                if (sm == GFX_XOR) { if (on) model[y][x] ^= m; }
+                else if (on) model[y][x] = (uint8_t)((model[y][x] & ~m) | (pen & m));
+                else if (sm == GFX_JAM2) model[y][x] = (uint8_t)((model[y][x] & ~m) | (bg & m));
+            }
+            break;
+        }
         case 0:
             x = rnd() % W; y = rnd() % H;
             gfx_chunky8_put(&cb, x, y, pen, mask, mode);

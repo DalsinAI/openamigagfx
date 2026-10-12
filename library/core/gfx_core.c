@@ -46,6 +46,29 @@ static void fill_bytes(uint8_t *d, uint32_t n, uint8_t v)
     while (n--) *d++ = v;
 }
 
+void gfx_planar_span(const struct gfx_planar *bm, int32_t x0, int32_t x1, int32_t y, uint32_t pat,
+                     uint32_t fg, uint32_t bg, uint32_t mask, int mode)
+{
+    uint32_t row = (uint32_t)y * bm->bytes_per_row, bx0 = (uint32_t)x0 >> 3, bx1 = (uint32_t)x1 >> 3, bx, p;
+    uint8_t first = (uint8_t)(0xFF >> (x0 & 7)), last = (uint8_t)(0xFF << (7 - (x1 & 7)));
+
+    for (p = 0; p < bm->depth; p++) {
+        uint8_t *pl = bm->planes[p], f = fg >> p & 1 ? 0xFF : 0x00, b = bg >> p & 1 ? 0xFF : 0x00;
+        if (!(mask >> p & 1) || !PLANE_OK(pl)) continue;
+        pl += row;
+        for (bx = bx0; bx <= bx1; bx++) {
+            uint8_t edge = (uint8_t)((bx == bx0 ? first : 0xFF) & (bx == bx1 ? last : 0xFF));
+            uint8_t on = (uint8_t)(bx & 1 ? pat : pat >> 8), d = pl[bx];
+            if (mode == GFX_XOR) d ^= on & edge;
+            else {
+                d = (uint8_t)((d & ~(on & edge)) | (f & on & edge));
+                if (mode == GFX_JAM2) d = (uint8_t)((d & ~(~on & edge)) | (b & ~on & edge));
+            }
+            pl[bx] = d;
+        }
+    }
+}
+
 void gfx_planar_fill_all(const struct gfx_planar *bm, uint32_t pen, uint32_t mask)
 {
     uint32_t p, n = bm->bytes_per_row * bm->rows;
@@ -142,6 +165,20 @@ void gfx_chunky8_fill_all(const struct gfx_chunky8 *bm, uint32_t pen, uint32_t m
             uint8_t *d = bm->base + y * bm->bytes_per_row + x;
             *d = (uint8_t)((*d & ~m) | v);
         }
+}
+
+void gfx_chunky8_span(const struct gfx_chunky8 *bm, int32_t x0, int32_t x1, int32_t y, uint32_t pat,
+                      uint32_t fg, uint32_t bg, uint32_t mask, int mode)
+{
+    uint8_t *d = bm->base + (uint32_t)y * bm->bytes_per_row, m = (uint8_t)mask;
+    int32_t x;
+
+    for (x = x0; x <= x1; x++) {
+        int on = pat >> (15 - (x & 15)) & 1;
+        if (mode == GFX_XOR) { if (on) d[x] ^= m; }
+        else if (on) d[x] = (uint8_t)((d[x] & ~m) | (fg & m));
+        else if (mode == GFX_JAM2) d[x] = (uint8_t)((d[x] & ~m) | (bg & m));
+    }
 }
 
 void gfx_chunky8_write8(const struct gfx_chunky8 *bm, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
