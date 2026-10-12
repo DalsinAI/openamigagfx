@@ -50,4 +50,14 @@ LONG ogfx_rp_BltBitMap(struct BitMap *src, LONG sx, LONG sy, struct BitMap *dst,
 void ogfx_rp_BltBitMapRastPort(struct BitMap *src, LONG sx, LONG sy, struct RastPort *rp, LONG dx, LONG dy,
                                LONG w, LONG h, ULONG minterm);
 
+/* ClipBlit and ScrollRaster: the whole rectangle moves as one, overlapping
+ * or not; ScrollRaster fills the space it leaves with BgPen. In a layer
+ * they draw where ogfx_rp_takes_copy says: unlayered, or a smart refresh
+ * layer, or a simple refresh layer nothing covers (where OS 3.2 would add
+ * damage, the rest is graphics.library's). */
+int ogfx_rp_takes_copy(struct RastPort *rp);
+void ogfx_rp_ClipBlit(struct RastPort *srp, LONG sx, LONG sy, struct RastPort *drp, LONG dx, LONG dy,
+                      LONG w, LONG h, ULONG minterm);
+void ogfx_rp_ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0, LONG x1, LONG y1);
+
 #endif

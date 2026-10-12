@@ -9,7 +9,8 @@
  * WritePixelArray8, ReadPixelArray8, WriteChunkyPixels, Draw (after a Move
  * or chained, with line patterns), PolyDraw, RectFill and BltPattern (with
  * area patterns and masks), BltBitMap and BltBitMapRastPort (minterms,
- * plane masks, overlapping copies); after a line the RastPort's pen position,
+ * plane masks, overlapping copies), ClipBlit and ScrollRaster (overlapping,
+ * and in a layer whether OS 3.2 adds damage, which the core never does); after a line the RastPort's pen position,
  * pattern count and Flags are compared too. Prints the first DIFFs of each
  * call with what was asked and the first pixels that differ, and a count
  * per call. Exit 0 when
@@ -43,12 +44,12 @@
 #include <string.h>
 #include "../library/core/gfx_rp.h"
 
-#define NCALLS 12
+#define NCALLS 14
 static const char *const names[NCALLS] = {
     "WritePixel", "ReadPixel", "SetRast", "WritePixelArray8", "ReadPixelArray8", "WriteChunkyPixels",
-    "Draw", "PolyDraw", "RectFill", "BltPattern", "BltBitMap", "BltBitMapRastPort"
+    "Draw", "PolyDraw", "RectFill", "BltPattern", "BltBitMap", "BltBitMapRastPort", "ClipBlit", "ScrollRaster"
 };
-static ULONG runs[NCALLS], diffs[NCALLS], pad_runs;
+static ULONG runs[NCALLS], diffs[NCALLS], pad_runs, refused;
 static int nochip;
 static ULONG seed = 0x0A6A;
 static ULONG rnd(void) { seed = seed * 1103515245UL + 12345UL; return seed >> 8; }
@@ -152,6 +153,22 @@ static void show_part(int n, int plane, ULONG at)
     for (c = back[0]->ClipRect, m = 1; c; c = c->Next, m++)
         if (m != n && c->BitMap == b) Printf("; shares its bitmap with part %ld", (LONG)m);
     PutStr("\n");
+}
+
+/* A's back layer's damage, to see whether an OS call added some (the core
+ * adds none, so the calls it takes must not need any): LAYERREFRESH, the
+ * damage's bounds and how many rectangles it has */
+static ULONG damage_sig(void)
+{
+    struct Layer *l = back[0];
+    struct RegionRectangle *r;
+    ULONG n = 0;
+    if (!l) return 0;
+    if (l->DamageList)
+        for (r = l->DamageList->RegionRectangle; r; r = r->Next) n++;
+    return (l->Flags & LAYERREFRESH ? 0x80000000UL : 0) ^ (n << 20) ^
+           (l->DamageList ? (ULONG)(l->DamageList->bounds.MinX * 7 + l->DamageList->bounds.MinY * 131 +
+                                    l->DamageList->bounds.MaxX * 1031 + l->DamageList->bounds.MaxY * 8191) : 0);
 }
 
 /* What was asked, for a DIFF line: a format and its arguments */
@@ -493,7 +510,56 @@ int main(void)
                 sync_b();
             }
             pens();
-            switch (rnd() % 12) {
+            switch (rnd() % 14) {
+            case 12: case 13: {
+                /* ClipBlit within the RastPort or from an unlayered one on the
+                 * round's source; ScrollRaster. Unlayered, inside the bitmap
+                 * (OS 3.2 clips neither); in a layer, anywhere near it. Where
+                 * the core refuses the layer (ogfx_rp_takes_copy), B gets
+                 * graphics.library's call too and the call is not counted. */
+                int call = (int)(rnd() % 2) + 12, self = rnd() % 3 != 0, mine = ogfx_rp_takes_copy(&rpb);
+                LONG sdx = (LONG)(rnd() % 21) - 10, sdy = (LONG)(rnd() % 11) - 5, bw = (LONG)(x1 - x0 + 1), bh = (LONG)(y1 - y0 + 1);
+                LONG sx = (LONG)x0, sy = (LONG)y0, tx = (LONG)x0 + sdx, ty = (LONG)y0 + sdy;
+                ULONG mt = call == 13 || rnd() % 3 ? 0xC0 : rnd() & 0xF0, dsig = layered ? damage_sig() : 0;
+                struct RastPort srca, *sa = &rpa, *sb = &rpb;
+                if (!self) {
+                    InitRastPort(&srca); srca.BitMap = sbm; sa = sb = &srca;
+                    sx = (LONG)(rnd() % (ULONG)(sbm->BytesPerRow * 8)); sy = (LONG)(rnd() % (ULONG)sbm->Rows);
+                    if (sx + bw > (LONG)sbm->BytesPerRow * 8) bw = (LONG)sbm->BytesPerRow * 8 - sx;
+                    if (sy + bh > (LONG)sbm->Rows) bh = (LONG)sbm->Rows - sy;
+                }
+                if (!layered) {
+                    if (tx < 0) tx = 0;
+                    if (ty < 0) ty = 0;
+                    if (tx >= (LONG)W || ty >= (LONG)H) break;
+                    if (tx + bw > (LONG)W) bw = (LONG)W - tx;
+                    if (ty + bh > (LONG)H) bh = (LONG)H - ty;
+                }
+                if (call == 12) {
+                    ClipBlit(sa, sx, sy, &rpa, tx, ty, bw, bh, mt);
+                    if (mine) ogfx_rp_ClipBlit(sb, sx, sy, &rpb, tx, ty, bw, bh, mt);
+                    else ClipBlit(sb, sx, sy, &rpb, tx, ty, bw, bh, mt);
+                    ASKED("%s %ld,%ld to %ld,%ld size %ld x %ld minterm %02lx", (LONG)(self ? "self" : "source"), sx, sy, tx, ty, bw, bh);
+                    wa[7] = (LONG)mt;
+                } else {
+                    ScrollRaster(&rpa, sdx, sdy, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                    if (mine) ogfx_rp_ScrollRaster(&rpb, sdx, sdy, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                    else ScrollRaster(&rpb, sdx, sdy, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                    ASKED("by %ld,%ld in %ld,%ld-%ld,%ld fg %ld bg %ld", sdx, sdy, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1, (LONG)(UBYTE)rpa.FgPen);
+                    wa[7] = (LONG)(UBYTE)rpa.BgPen;
+                }
+                if (!mine) { refused++; break; }
+                plane = same(&at);
+                if (!plane && layered && damage_sig() != dsig) {
+                    plane = 0; ra = 1; rb = 0;   /* OS added damage, the core none */
+                } else ra = rb = 0;
+                if (report(call, ra, rb, plane, at)) {
+                    Printf("  mode %ld writemask %02lx pattern %s%s\n", (LONG)rpa.DrawMode, (LONG)rpa.Mask,
+                           (LONG)(rpa.AreaPtrn ? "set" : "none"), (LONG)(ra != rb ? "; OS added damage (answers: 1 = OS)" : ""));
+                    if (!layered) show_pixels((LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                }
+                break;
+            }
             case 10: case 11: {
                 /* BltBitMap, from the round's source or within the bitmap
                  * itself (overlapping), and BltBitMapRastPort, into the
@@ -691,6 +757,7 @@ int main(void)
         total += runs[k]; bad += diffs[k];
     }
     Printf("%lu checks, %lu differ\n", total, bad);
+    if (refused) Printf("%lu ClipBlit and ScrollRaster calls left to graphics.library (a simple refresh layer partly covered)\n", refused);
     if (pad_runs) Printf("%lu ReadPixelArray8 calls wrote the row padding differently (not counted)\n", pad_runs);
     FreeVec(arr_a); FreeVec(arr_b); FreeVec(areapat); FreeVec(bltmask);
     if (LayersBase) CloseLibrary(LayersBase);
