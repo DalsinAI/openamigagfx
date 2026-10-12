@@ -123,16 +123,29 @@ static int same_part(struct ClipRect *ca, struct ClipRect *cb, ULONG *at)
     return 0;
 }
 
+/* B's ClipRect with A's ClipRect's bounds: graphics.library may reorder
+ * one side's list (a ScrollRaster or ClipBlit does), so parts pair up by
+ * their rectangles, not their places in the lists */
+static struct ClipRect *twin(struct ClipRect *ca)
+{
+    struct ClipRect *cb;
+    for (cb = back[1]->ClipRect; cb; cb = cb->Next)
+        if (ca->bounds.MinX == cb->bounds.MinX && ca->bounds.MinY == cb->bounds.MinY && ca->bounds.MaxX == cb->bounds.MaxX &&
+            ca->bounds.MaxY == cb->bounds.MaxY)
+            return cb;
+    return NULL;
+}
+
 /* 1 when the back layer's ClipRects differ between the sides in number,
  * bounds, being covered or having a bitmap */
 static int cuts_differ(void)
 {
-    struct ClipRect *ca = back[0]->ClipRect, *cb = back[1]->ClipRect;
-    for (; ca && cb; ca = ca->Next, cb = cb->Next)
-        if (ca->bounds.MinX != cb->bounds.MinX || ca->bounds.MinY != cb->bounds.MinY || ca->bounds.MaxX != cb->bounds.MaxX ||
-            ca->bounds.MaxY != cb->bounds.MaxY || !ca->obscured != !cb->obscured || !ca->BitMap != !cb->BitMap)
-            return 1;
-    return ca || cb;
+    struct ClipRect *ca, *cb;
+    int na = 0, nb = 0;
+    for (ca = back[0]->ClipRect; ca; ca = ca->Next, na++)
+        if (!(cb = twin(ca)) || !ca->obscured != !cb->obscured || !ca->BitMap != !cb->BitMap) return 1;
+    for (cb = back[1]->ClipRect; cb; cb = cb->Next) nb++;
+    return na != nb;
 }
 
 static void show_cuts(int s)
@@ -155,8 +168,8 @@ static int same(ULONG *at)
     if ((p = same_bm(bma, bmb, at))) return p;
     if (!layered) return 0;
     if (cuts_differ()) { recut = 1; return 0; }
-    for (ca = back[0]->ClipRect, cb = back[1]->ClipRect, n = 1; ca && cb; ca = ca->Next, cb = cb->Next, n++)
-        if (ca->BitMap && cb->BitMap && ca->obscured && (p = same_part(ca, cb, at))) return 16 * n + p;
+    for (ca = back[0]->ClipRect, n = 1; ca; ca = ca->Next, n++)
+        if ((cb = twin(ca)) && ca->BitMap && cb->BitMap && ca->obscured && (p = same_part(ca, cb, at))) return 16 * n + p;
     return 0;
 }
 
@@ -168,8 +181,8 @@ static void sync_b(void)
     WaitBlit();
     for (p = 0; p < bma->Depth; p++) CopyMem(bma->Planes[p], bmb->Planes[p], n);
     if (!layered) return;
-    for (ca = back[0]->ClipRect, cb = back[1]->ClipRect; ca && cb; ca = ca->Next, cb = cb->Next)
-        if (ca->BitMap && cb->BitMap && ca->obscured)
+    for (ca = back[0]->ClipRect; ca; ca = ca->Next)
+        if ((cb = twin(ca)) && ca->BitMap && cb->BitMap && ca->obscured)
             for (p = 0; p < ca->BitMap->Depth; p++)
                 CopyMem(ca->BitMap->Planes[p], cb->BitMap->Planes[p], (ULONG)ca->BitMap->BytesPerRow * ca->BitMap->Rows);
 }
@@ -195,8 +208,8 @@ static void show_part(int n, int plane, ULONG at)
     struct ClipRect *ca = back[0]->ClipRect, *cb = back[1]->ClipRect, *c;
     struct BitMap *b;
     int i, m;
-    for (i = 1; i < n && ca && cb; i++) { ca = ca->Next; cb = cb->Next; }
-    if (!ca || !cb) return;
+    for (i = 1; i < n && ca; i++) ca = ca->Next;
+    if (!ca || !(cb = twin(ca))) return;
     b = ca->BitMap;
     Printf("  part %ld %ld,%ld-%ld,%ld, bitmap %ld bytes a row %ld rows; row %ld x %ld-%ld: OS %02lx ours %02lx", (LONG)n,
            (LONG)ca->bounds.MinX, (LONG)ca->bounds.MinY, (LONG)ca->bounds.MaxX, (LONG)ca->bounds.MaxY,
@@ -831,7 +844,7 @@ int main(void)
     }
     Printf("%lu checks, %lu differ\n", total, bad);
     if (refused) Printf("%lu ClipBlit and ScrollRaster calls left to graphics.library (a simple refresh layer, a clip region, a rectangle not inside the layer or a ScrollRaster shift of its size)\n", refused);
-    if (recuts) Printf("%lu rounds ended early: graphics.library cut the two sides' ClipRects differently\n", recuts);
+    if (recuts) Printf("%lu rounds ended early: graphics.library cut the two sides' ClipRects into different rectangles\n", recuts);
     if (chip_rounds_lost) Printf("%lu rounds kept %ld bytes of Chip RAM in all\n", chip_rounds_lost, chip_round_lost);
     for (k = 0; k < 14; k++)
         if (chip_kept[k]) Printf("call kind %ld kept %ld bytes of Chip RAM until its round ended\n", (LONG)k, chip_kept[k]);
