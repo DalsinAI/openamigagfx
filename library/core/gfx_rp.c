@@ -192,13 +192,15 @@ void ogfx_rp_Draw(struct RastPort *rp, LONG x, LONG y)
 }
 
 /* Measured on OS 3.2: PolyDraw's first line keeps to FRST_DOT as Draw
- * does, but every later line draws its first pixel too, so a COMPLEMENT
- * polyline's corners are inverted twice. */
+ * does. Every later line draws its first pixel too, except in COMPLEMENT
+ * without JAM2: so a COMPLEMENT polyline's corners are inverted once, and
+ * with JAM2 (every pixel inverted) twice. */
 void ogfx_rp_PolyDraw(struct RastPort *rp, LONG count, const WORD *xy)
 {
+    int again = (rp->DrawMode & (COMPLEMENT | JAM2)) != COMPLEMENT;
     LONG i;
 
-    for (i = 0; i < count; i++, xy += 2) line(rp, xy[0], xy[1], i ? 1 : (rp->Flags & FRST_DOT) != 0);
+    for (i = 0; i < count; i++, xy += 2) line(rp, xy[0], xy[1], i ? again : (rp->Flags & FRST_DOT) != 0);
 }
 
 /* The area pattern's row for line y: AreaPtrn holds 1 << AreaPtSz rows,
@@ -217,7 +219,11 @@ void ogfx_rp_RectFill(struct RastPort *rp, LONG xmin, LONG ymin, LONG xmax, LONG
 
 /* The rectangle through the area pattern and, when there is one, a
  * one-plane mask of bytecnt bytes a row whose bit for (x - xl, y - yl)
- * says whether pixel (x, y) is drawn at all. */
+ * says whether pixel (x, y) is drawn at all. Measured on OS 3.2: with a
+ * mask, each row is drawn on to the end of the 16-pixel word that holds
+ * maxx, wherever the mask's bits (read on past bytecnt if need be) are
+ * set; a mask as wide as the rectangle with its padding clear draws only
+ * the rectangle. */
 void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl, LONG maxx, LONG maxy,
                         ULONG bytecnt)
 {
@@ -235,11 +241,12 @@ void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl
         }
         {
             const UBYTE *m = mask + (y - y0) * bytecnt;
-            ULONG x = x0, run;
-            while (x <= x1) {
+            ULONG x = x0, run, xe = x1 | 15, w = (ULONG)rp->BitMap->BytesPerRow * 8;
+            if (xe >= w) xe = w - 1;
+            while (x <= xe) {
                 ULONG i = x - x0;
                 if (!(m[i >> 3] & (0x80 >> (i & 7)))) { x++; continue; }
-                for (run = x; run + 1 <= x1 && (m[(run + 1 - x0) >> 3] & (0x80 >> ((run + 1 - x0) & 7))); run++) ;
+                for (run = x; run + 1 <= xe && (m[(run + 1 - x0) >> 3] & (0x80 >> ((run + 1 - x0) & 7))); run++) ;
                 gfx_planar_span(&bm, x, run, y, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
                 x = run + 1;
             }

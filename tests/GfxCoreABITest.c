@@ -279,7 +279,7 @@ int main(void)
                  * one-row or a 2^n-row area pattern */
                 LONG sz = rnd() % 3 ? 0 : (LONG)(rnd() % 5), j, call = rnd() % 2 ? 8 : 9;
                 ULONG mbpr = ((x1 - x0 + 16) & ~15UL) / 8;
-                int usemask = call == 9 && rnd() % 3 && mbpr * (y1 - y0 + 1) <= BLTMASK;
+                int usemask = call == 9 && rnd() % 3 && mbpr * (y1 - y0 + 1) + 4 <= BLTMASK;  /* OS reads up to 2 bytes past a row */
                 for (j = 0; j < 16; j++) areapat[j] = rnd() % 4 ? (UWORD)rnd() : 0xFFFF;
                 if (rnd() % 3) { SetAfPt(&rpa, areapat, sz); SetAfPt(&rpb, areapat, sz); }
                 else { SetAfPt(&rpa, NULL, 0); SetAfPt(&rpb, NULL, 0); }
@@ -295,7 +295,7 @@ int main(void)
                       (LONG)(usemask ? mbpr : 0), (LONG)(UBYTE)rpa.FgPen);
                 wa[7] = (LONG)(UBYTE)rpa.BgPen; wa[8] = (LONG)rpa.DrawMode; wa[9] = (LONG)rpa.Mask;
                 if (report(call, 0, 0, plane, at)) {
-                    show_pixels((LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                    show_pixels((LONG)x0, (LONG)y0, (LONG)(x1 | 15) < (LONG)W ? (LONG)(x1 | 15) : (LONG)W - 1, (LONG)y1);
                     Printf("  pattern %04lx %04lx %04lx %04lx", (LONG)areapat[0], (LONG)areapat[1], (LONG)areapat[2], (LONG)areapat[3]);
                     if (usemask) Printf("; mask row 0 %02lx %02lx %02lx %02lx", (LONG)bltmask[0], (LONG)bltmask[1], (LONG)bltmask[2], (LONG)bltmask[3]);
                     PutStr("\n");
