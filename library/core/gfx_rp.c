@@ -600,9 +600,10 @@ int ogfx_rp_DrawEllipse(struct RastPort *rp, LONG xc, LONG yc, LONG a, LONG b)
  * are DrawEllipse's. Everything in one AreaEnd counts together, so where
  * two shapes overlap the inside is left out and the edges are not. The
  * area is then drawn like a RectFill through it: FgPen, the area pattern,
- * DrawMode and Mask. With an area pattern of four rows (AreaPtSz 2) the
- * edges' pixels are taken out of the area instead (AREAPROBE4: a two-point
- * polygon draws nothing). With AREAOUTLINE each polygon's edges are drawn over
+ * DrawMode and Mask. In JAM1 with AreaPtSz 2 (four pattern rows, or none
+ * at all) the edges' pixels are taken out of the area instead (AREAPROBE4:
+ * a two-point polygon draws nothing; with 1, 2, 8 or 16 rows, or any other
+ * DrawMode, they are drawn). With AREAOUTLINE each polygon's edges are drawn over
  * it in AOlPen, solid, whatever DrawMode and LinePtrn say (LinePtrn's
  * count runs down as Draw's does), and each ellipse's DrawEllipse.
  *
@@ -866,8 +867,8 @@ int ogfx_rp_takes_area(struct RastPort *rp)
     LONG i;
 
     if (rp->Flags & 0x20) return 0;     /* NOCROSSFILL */
-    /* area patterns of more than four rows and multicolour ones: not measured */
-    if (rp->AreaPtrn && (rp->AreaPtSz < 0 || rp->AreaPtSz > 2)) return 0;
+    /* area patterns of more than 16 rows and multicolour ones: not measured */
+    if (rp->AreaPtrn && (rp->AreaPtSz < 0 || rp->AreaPtSz > 4)) return 0;
     if (!l || !(rp->Flags & AREAOUTLINE)) return 1;
     for (i = 0; i < ai->Count; i++) {
         LONG x = ai->VctrTbl[2 * i] - l->Scroll_X, y = ai->VctrTbl[2 * i + 1] - l->Scroll_Y;
@@ -924,7 +925,7 @@ LONG ogfx_rp_AreaEnd(struct RastPort *rp)
     for (i = 0; i < a.bpr * (a.y1 - a.y0 + 1); i++) a.m[i] = 0;
     am_shapes(&a, ai, 0);
     am_fill(&a);
-    am_shapes(&a, ai, rp->AreaPtrn && rp->AreaPtSz == 2 ? 2 : 1);
+    am_shapes(&a, ai, rp->DrawMode == JAM1 && rp->AreaPtSz == 2 ? 2 : 1);
     am_draw(rp, &a);
 out:
     rp->Flags |= FRST_DOT;
