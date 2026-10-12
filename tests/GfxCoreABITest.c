@@ -165,9 +165,10 @@ static int same(ULONG *at)
     struct ClipRect *ca, *cb;
     int p, n;
     WaitBlit();
+    /* the cuts first: with them differing, no comparison is fair */
+    if (layered && cuts_differ()) { recut = 1; return 0; }
     if ((p = same_bm(bma, bmb, at))) return p;
     if (!layered) return 0;
-    if (cuts_differ()) { recut = 1; return 0; }
     for (ca = back[0]->ClipRect, n = 1; ca; ca = ca->Next, n++)
         if ((cb = twin(ca)) && ca->BitMap && cb->BitMap && ca->obscured && (p = same_part(ca, cb, at))) return 16 * n + p;
     return 0;

@@ -573,12 +573,17 @@ static void rp_copy(struct RastPort *srp, LONG sx, LONG sy, struct RastPort *drp
     uint8_t sbuf[CHUNK], kept[CHUNK], dbuf[CHUNK];
     uint8_t m7 = minterm & 0x80 ? 0xFF : 0, m6 = minterm & 0x40 ? 0xFF : 0;
     uint8_t m5 = minterm & 0x20 ? 0xFF : 0, m4 = minterm & 0x10 ? 0xFF : 0;
-    int same = srp->BitMap == drp->BitMap;
-    int up = same && dy + off_y(drp) > sy + off_y(srp), left = same && dx + off_x(drp) > sx + off_x(srp);
+    int same = srp->BitMap == drp->BitMap, p;
+    int up, left;
     uint32_t depth = srp->BitMap->Depth < drp->BitMap->Depth ? srp->BitMap->Depth : drp->BitMap->Depth;
     LONG j, c, nchunks = (w + CHUNK - 1) / CHUNK;
 
     if (w <= 0 || h <= 0) return;
+    /* two BitMaps on the same planes are one bitmap */
+    for (p = 0; !same && p < (int)depth; p++)
+        if (srp->BitMap->Planes[p] == drp->BitMap->Planes[p] && srp->BitMap->BytesPerRow == drp->BitMap->BytesPerRow) same = 1;
+    up = same && dy + off_y(drp) > sy + off_y(srp);
+    left = same && dx + off_x(drp) > sx + off_x(srp);
     if (depth < 8) mask &= (1u << depth) - 1;
     for (j = 0; j < h; j++) {
         LONG row = up ? h - 1 - j : j;
