@@ -614,29 +614,46 @@ int ogfx_rp_takes_copy(struct RastPort *rp)
 {
     struct Layer *l = rp->Layer;
 
-    /* a simple refresh layer: OS 3.2 adds damage for what a copy leaves */
-    return !l || !(l->Flags & (LAYERSUPER | LAYERSIMPLE));
+    /* a simple refresh layer: OS 3.2 adds damage for what a copy leaves; a
+     * clip region: what OS 3.2 does there is not measured yet */
+    return !l || !(l->Flags & (LAYERSUPER | LAYERSIMPLE) || l->ClipRegion);
 }
 
-void ogfx_rp_ClipBlit(struct RastPort *srp, LONG sx, LONG sy, struct RastPort *drp, LONG dx, LONG dy,
-                      LONG w, LONG h, ULONG minterm)
+/* 1 when the rectangle lies inside the RastPort's layer (or there is none) */
+static int inside(struct RastPort *rp, LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    struct Layer *l = rp->Layer;
+
+    if (!l) return 1;
+    return x0 >= l->Scroll_X && y0 >= l->Scroll_Y && x1 <= l->Scroll_X + l->bounds.MaxX - l->bounds.MinX &&
+           y1 <= l->Scroll_Y + l->bounds.MaxY - l->bounds.MinY;
+}
+
+int ogfx_rp_ClipBlit(struct RastPort *srp, LONG sx, LONG sy, struct RastPort *drp, LONG dx, LONG dy,
+                     LONG w, LONG h, ULONG minterm)
 {
     sx = (WORD)sx; sy = (WORD)sy; dx = (WORD)dx; dy = (WORD)dy; w = (WORD)w; h = (WORD)h;
+    if (w <= 0 || h <= 0) return 1;
+    if (!inside(srp, sx, sy, sx + w - 1, sy + h - 1) || !inside(drp, dx, dy, dx + w - 1, dy + h - 1)) return 0;
     rp_copy(srp, sx, sy, drp, dx, dy, w, h, minterm & 0xF0, drp->Mask);
+    return 1;
 }
 
-void ogfx_rp_ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0, LONG x1, LONG y1)
+int ogfx_rp_ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y0, LONG x1, LONG y1)
 {
     LONG w, h, adx, ady;
     UBYTE pen = rp->FgPen, mode = rp->DrawMode;
     UWORD *ptrn = rp->AreaPtrn;
 
     dx = (WORD)dx; dy = (WORD)dy; x0 = (WORD)x0; y0 = (WORD)y0; x1 = (WORD)x1; y1 = (WORD)y1;
-    if (x0 > x1 || y0 > y1) return;
+    if (x0 > x1 || y0 > y1) return 1;
     w = x1 - x0 + 1; h = y1 - y0 + 1;
     adx = dx < 0 ? -dx : dx; ady = dy < 0 ? -dy : dy;
-    /* OS 3.2 leaves the rectangle alone when the shift is its size or more */
-    if (adx >= w || ady >= h) return;
+    /* unlayered, OS 3.2 leaves the rectangle alone when the shift is its
+     * size or more; in a layer it draws outside the rectangle then, and
+     * clips one that is partly outside the layer: those stay with it */
+    if (rp->Layer && (adx >= w || ady >= h || !inside(rp, x0, y0, x1, y1))) return 0;
+    if (adx >= w || ady >= h) return 1;
     rp_copy(rp, x0 + (dx > 0 ? dx : 0), y0 + (dy > 0 ? dy : 0), rp, x0 + (dx < 0 ? -dx : 0), y0 + (dy < 0 ? -dy : 0),
             w - adx, h - ady, 0xC0, rp->Mask);
     /* the space it leaves: solid BgPen through the write mask, whatever the
@@ -647,4 +664,5 @@ void ogfx_rp_ScrollRaster(struct RastPort *rp, LONG dx, LONG dy, LONG x0, LONG y
     if (dy > 0) ogfx_rp_RectFill(rp, x0, y1 - dy + 1, x1, y1);
     if (dy < 0) ogfx_rp_RectFill(rp, x0, y0, x1, y0 - dy - 1);
     rp->FgPen = pen; rp->DrawMode = mode; rp->AreaPtrn = ptrn;
+    return 1;
 }

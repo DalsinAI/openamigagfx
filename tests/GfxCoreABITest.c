@@ -566,14 +566,12 @@ int main(void)
                 }
                 if (call == 12) {
                     ClipBlit(sa, sx, sy, &rpa, tx, ty, bw, bh, mt);
-                    if (mine) ogfx_rp_ClipBlit(sb, sx, sy, &rpb, tx, ty, bw, bh, mt);
-                    else ClipBlit(sb, sx, sy, &rpb, tx, ty, bw, bh, mt);
+                    if (!mine || !(mine = ogfx_rp_ClipBlit(sb, sx, sy, &rpb, tx, ty, bw, bh, mt))) ClipBlit(sb, sx, sy, &rpb, tx, ty, bw, bh, mt);
                     ASKED("%s %ld,%ld to %ld,%ld size %ld x %ld minterm %02lx", (LONG)(self ? "self" : "source"), sx, sy, tx, ty, bw, bh);
                     wa[7] = (LONG)mt;
                 } else {
                     ScrollRaster(&rpa, sdx, sdy, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
-                    if (mine) ogfx_rp_ScrollRaster(&rpb, sdx, sdy, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
-                    else ScrollRaster(&rpb, sdx, sdy, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                    if (!mine || !(mine = ogfx_rp_ScrollRaster(&rpb, sdx, sdy, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1))) ScrollRaster(&rpb, sdx, sdy, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
                     ASKED("by %ld,%ld in %ld,%ld-%ld,%ld fg %ld bg %ld", sdx, sdy, (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1, (LONG)(UBYTE)rpa.FgPen);
                     wa[7] = (LONG)(UBYTE)rpa.BgPen;
                 }
@@ -792,7 +790,7 @@ int main(void)
         total += runs[k]; bad += diffs[k];
     }
     Printf("%lu checks, %lu differ\n", total, bad);
-    if (refused) Printf("%lu ClipBlit and ScrollRaster calls left to graphics.library (a simple refresh layer)\n", refused);
+    if (refused) Printf("%lu ClipBlit and ScrollRaster calls left to graphics.library (a simple refresh layer, a clip region, a rectangle not inside the layer or a ScrollRaster shift of its size)\n", refused);
     if (chip_rounds_lost) Printf("%lu rounds kept %ld bytes of Chip RAM in all\n", chip_rounds_lost, chip_round_lost);
     for (k = 0; k < 14; k++)
         if (chip_kept[k]) Printf("call kind %ld kept %ld bytes of Chip RAM until its round ended\n", (LONG)k, chip_kept[k]);
