@@ -223,8 +223,48 @@ void ogfx_rp_RectFill(struct RastPort *rp, LONG xmin, LONG ymin, LONG xmax, LONG
 
 /* The rectangle through the area pattern and, when there is one, a
  * one-plane mask of bytecnt bytes a row whose bit for (x - xl, y - yl)
- * says whether pixel (x, y) is drawn at all. OS 3.2 draws past maxx when
- * the mask's padding bits are set; GfxCoreABITest's PROBE measures how far. */
+ * says whether pixel (x, y) is drawn at all.
+ *
+ * With a mask, OS 3.2 draws as its blitter does, and a caller whose mask
+ * is not exactly as many words wide as the rectangle's words on screen
+ * sees it (measured by GfxCoreABITest PROBE on graphics 47.10). Each row
+ * covers the screen words from xl's to maxx's (dw of them), reading dw
+ * mask words from the row's start, on past bytecnt if need be. The last
+ * of them keeps only the rectangle's width when dw is bytecnt / 2 words,
+ * and nothing otherwise. The words are shifted right by xl & 15, the
+ * bits shifted out carrying into the next word, and from the end of one
+ * row into the start of the next: so with a set bit past the width, the
+ * row below can be drawn left of xl. */
+static void blt_masked(struct RastPort *rp, struct gfx_planar *bm, const UBYTE *mask, LONG xl, LONG yl,
+                       LONG maxx, LONG maxy, ULONG bytecnt)
+{
+    LONG s = xl & 15, w = maxx - xl + 1, dw = (maxx >> 4) - (xl >> 4) + 1, y, j;
+    LONG width = (LONG)rp->BitMap->BytesPerRow * 8, x0 = xl & ~15L;
+    UWORD last = dw == (LONG)(bytecnt >> 1) ? (UWORD)(0xFFFF << ((-w) & 15)) : 0, prev = 0;
+
+    for (y = yl; y <= maxy; y++) {
+        const UBYTE *m = mask + (ULONG)(y - yl) * bytecnt;
+        uint32_t pat = area_row(rp, y);
+        int mode = pat_mode(rp, &pat);
+        for (j = 0; j < dw; j++) {
+            UWORD a = (UWORD)(m[2 * j] << 8 | m[2 * j + 1]), d;
+            LONG x, run, xa, xb;
+            if (j == dw - 1) a &= last;
+            d = (UWORD)(s ? (prev << (16 - s)) | (a >> s) : a);
+            prev = a;
+            for (x = 0; x < 16; x = run + 1) {
+                run = x;
+                if (!(d & (0x8000 >> x))) continue;
+                while (run < 15 && (d & (0x8000 >> (run + 1)))) run++;
+                xa = x0 + 16 * j + x;
+                xb = x0 + 16 * j + run;
+                if (xb >= width) xb = width - 1;
+                if (xa <= xb) gfx_planar_span(bm, xa, xb, y, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
+            }
+        }
+    }
+}
+
 void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl, LONG maxx, LONG maxy,
                         ULONG bytecnt)
 {
@@ -233,23 +273,13 @@ void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl
 
     if ((WORD)xl < 0 || (WORD)yl < 0 || !cut(rp, &x0, &y0, &x1, &y1)) return;
     planar_of(rp, &bm);
+    if (mask) {
+        blt_masked(rp, &bm, mask, (WORD)xl, (WORD)yl, (WORD)maxx, (LONG)y1, bytecnt);
+        return;
+    }
     for (y = y0; y <= y1; y++) {
         uint32_t pat = area_row(rp, (LONG)y);
         int mode = pat_mode(rp, &pat);
-        if (!mask) {
-            gfx_planar_span(&bm, x0, x1, y, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
-            continue;
-        }
-        {
-            const UBYTE *m = mask + (y - y0) * bytecnt;
-            ULONG x = x0, run, xe = x1;
-            while (x <= xe) {
-                ULONG i = x - x0;
-                if (!(m[i >> 3] & (0x80 >> (i & 7)))) { x++; continue; }
-                for (run = x; run + 1 <= xe && (m[(run + 1 - x0) >> 3] & (0x80 >> ((run + 1 - x0) & 7))); run++) ;
-                gfx_planar_span(&bm, x, run, y, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
-                x = run + 1;
-            }
-        }
+        gfx_planar_span(&bm, x0, x1, y, pat, rp->FgPen, rp->BgPen, rp->Mask, mode);
     }
 }
