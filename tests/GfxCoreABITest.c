@@ -945,13 +945,20 @@ static const struct aprobe4 aprobe4s[] = {
     { "pattern 4 rows two points",         2, 0, { 'M',14,38, 'D',18,28, 0 } },
     { "pattern 2 rows two points",         1, 0, { 'M',14,38, 'D',18,28, 0 } },
     { "pattern 4 rows two polygons",       2, 0, { 'M',10,5, 'D',30,6, 'D',20,14, 'M',35,21, 'D',50,30, 'D',38,33, 0 } },
+    { "pattern 8 rows two points",         3, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 16 rows two points",        4, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 8 rows rect y 1",           3, 0, { 'M',3,1, 'D',40,1, 'D',40,8, 'D',3,8, 0 } },
+    { "no pattern, AreaPtSz 2, two points", -2, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 1 row two points",          0, 0, { 'M',14,38, 'D',18,28, 0 } },
+    { "pattern 4 rows ellipse",            2, 0, { 'E',30,20,12,6, 0 } },
     { "outline, lone move last",          -1, 1, { 'M',10,5, 'D',40,15, 'D',5,18, 'M',50,30, 0 } },
     { "outline, move then ellipse",       -1, 1, { 'M',10,5, 'D',40,15, 'D',5,18, 'M',50,30, 'E',30,30,8,4, 0 } },
     { "outline, ellipse then lone move",  -1, 1, { 'E',30,30,8,4, 'M',50,30, 0 } },
     { "outline, two points",              -1, 1, { 'M',14,38, 'D',18,28, 0 } },
     { "no outline, lone move last",       -1, 0, { 'M',10,5, 'D',40,15, 'D',5,18, 'M',50,30, 0 } },
 };
-static UWORD apat4[4] = { 0xFF00, 0x0FF0, 0x00FF, 0xF00F };
+static UWORD apat4[16] = { 0xFF00, 0x0FF0, 0x00FF, 0xF00F, 0xFF00, 0x0FF0, 0x00FF, 0xF00F,
+                           0xFF00, 0x0FF0, 0x00FF, 0xF00F, 0xFF00, 0x0FF0, 0x00FF, 0xF00F };
 
 static int areaprobe4(void)
 {
@@ -987,6 +994,7 @@ static int areaprobe4(void)
         SetAPen(&rp, 1);
         if (a->outline) SetOutlinePen(&rp, 2);
         if (a->sz >= 0) SetAfPt(&rp, apat4, a->sz);
+        if (a->sz == -2) rp.AreaPtSz = 2;
         Printf("== %s:", (LONG)a->name);
         for (i = 0; a->ops[i]; ) {
             LONG x = a->ops[i + 1], y = a->ops[i + 2], ea = 0, eb = 0;

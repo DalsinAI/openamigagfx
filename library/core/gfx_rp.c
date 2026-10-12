@@ -600,7 +600,9 @@ int ogfx_rp_DrawEllipse(struct RastPort *rp, LONG xc, LONG yc, LONG a, LONG b)
  * are DrawEllipse's. Everything in one AreaEnd counts together, so where
  * two shapes overlap the inside is left out and the edges are not. The
  * area is then drawn like a RectFill through it: FgPen, the area pattern,
- * DrawMode and Mask. With AREAOUTLINE each polygon's edges are drawn over
+ * DrawMode and Mask. With an area pattern of four rows (AreaPtSz 2) the
+ * edges' pixels are taken out of the area instead (AREAPROBE4: a two-point
+ * polygon draws nothing). With AREAOUTLINE each polygon's edges are drawn over
  * it in AOlPen, solid, whatever DrawMode and LinePtrn say (LinePtrn's
  * count runs down as Draw's does), and each ellipse's DrawEllipse.
  *
@@ -628,17 +630,21 @@ struct amask {
     } \
 } while (0)
 
-static void am_bit(struct amask *a, LONG x, LONG y, int toggle)
+/* how: 0 set the bit, 1 toggle it (a toggle left of the box toggles the
+ * box's left column), 3 clear it */
+static void am_bit(struct amask *a, LONG x, LONG y, int how)
 {
     UBYTE *b, bit;
     if (y < a->y0 || y > a->y1 || x > a->x1) return;
     if (x < a->x0) {
-        if (!toggle) return;
+        if (how != 1) return;
         x = a->x0;
     }
     b = a->m + (y - a->y0) * a->bpr + ((x - a->x0) >> 3);
     bit = (UBYTE)(0x80 >> ((x - a->x0) & 7));
-    if (toggle) *b ^= bit; else *b |= bit;
+    if (how == 1) *b ^= bit;
+    else if (how == 3) *b &= (UBYTE)~bit;
+    else *b |= bit;
 }
 
 /* An edge's crossings: one a row from its upper end down to its lower
@@ -650,22 +656,22 @@ static void am_cross(struct amask *a, LONG x0, LONG y0, LONG x1, LONG y1)
     LINE_STEP(x0, y0, x1, y1, if (py != bot && py != last) { am_bit(a, px, py, 1); last = py; });
 }
 
-static void am_edge(struct amask *a, LONG x0, LONG y0, LONG x1, LONG y1)
+static void am_edge(struct amask *a, LONG x0, LONG y0, LONG x1, LONG y1, int how)
 {
-    LINE_STEP(x0, y0, x1, y1, am_bit(a, px, py, 0));
+    LINE_STEP(x0, y0, x1, y1, am_bit(a, px, py, how ? 3 : 0));
 }
 
-/* An ellipse's crossings (cross) or pixels: a crossing on each side of
- * each row, at the first point that row gets (run A's rows, then run B's
- * below them) */
-static void am_ellipse(struct amask *a, LONG xc, LONG yc, LONG ea, LONG eb, int cross)
+/* An ellipse's crossings (how 1) or pixels (how as am_bit's): a crossing
+ * on each side of each row, at the first point that row gets (run A's
+ * rows, then run B's below them) */
+static void am_ellipse(struct amask *a, LONG xc, LONG yc, LONG ea, LONG eb, int how)
 {
     struct ell e;
     LONG x, y, last_a = -1, last_b = -1, low_a = 0x10000;
 
     ell_start(&e, ea, eb);
     while (ell_next(&e, &x, &y)) {
-        if (cross) {
+        if (how == 1) {
             if (!e.from) {
                 if (y == last_a) continue;
                 last_a = low_a = y;
@@ -674,11 +680,11 @@ static void am_ellipse(struct amask *a, LONG xc, LONG yc, LONG ea, LONG eb, int 
                 last_b = y;
             }
         }
-        am_bit(a, xc + x, yc + y, cross);
-        am_bit(a, xc - x, yc + y, cross);
+        am_bit(a, xc + x, yc + y, how);
+        am_bit(a, xc - x, yc + y, how);
         if (y) {
-            am_bit(a, xc + x, yc - y, cross);
-            am_bit(a, xc - x, yc - y, cross);
+            am_bit(a, xc + x, yc - y, how);
+            am_bit(a, xc - x, yc - y, how);
         }
     }
 }
@@ -742,13 +748,21 @@ static void am_draw(struct RastPort *rp, struct amask *a)
  * vector is two WORDs (x, y) in VctrTbl and a flag byte in FlagTbl. A
  * move is flagged 0x00, a draw 0x03, and an ellipse takes two vectors,
  * its box's corners (xc - a, yc - b) flagged 0x83 and (xc + a, yc + b)
- * 0x02. FirstX, FirstY is the open polygon's first vertex. A polygon is
- * closed, with a draw back to that vertex, by AreaMove, AreaEllipse and
- * AreaEnd when its last vertex is elsewhere. */
+ * 0x02. A level draw is flagged 0x02, not 0x03 (AREAPROBE4), and with
+ * AREAOUTLINE set a draw or an ellipse has 0x04 too. FirstX, FirstY is the
+ * open polygon's first vertex. A polygon is closed, with a draw back to
+ * that vertex, by AreaMove, AreaEllipse and AreaEnd when its last vertex
+ * is elsewhere. A move or an ellipse after a move takes its place. */
 #define AV_MOVE 0x00
 #define AV_DRAW 0x03
 #define AV_ELL  0x83
 #define AV_ELL2 0x02
+
+/* What vector i is: a move, a draw or an ellipse's first vector */
+#define AV_IS_ELL(ai, i)  (((UBYTE)(ai)->FlagTbl[i] & 0x80) != 0)
+#define AV_IS_DRAW(ai, i) (!AV_IS_ELL(ai, i) && ((UBYTE)(ai)->FlagTbl[i] & 0x02) && \
+                           !((i) > 0 && AV_IS_ELL(ai, (i) - 1)))
+#define AV_IS_MOVE(ai, i) (!AV_IS_ELL(ai, i) && !AV_IS_DRAW(ai, i) && !((i) > 0 && AV_IS_ELL(ai, (i) - 1)))
 
 static void av_put(struct AreaInfo *ai, LONG x, LONG y, int flag)
 {
@@ -760,11 +774,21 @@ static void av_put(struct AreaInfo *ai, LONG x, LONG y, int flag)
     ai->FlagPtr = ai->FlagTbl + ai->Count;
 }
 
+/* A draw to (x, y), flagged as OS 3.2 flags it */
+static void av_draw(struct RastPort *rp, LONG x, LONG y)
+{
+    struct AreaInfo *ai = rp->AreaInfo;
+    int f = 0x02;
+    if (ai->Count == 0 || ai->VctrTbl[2 * ai->Count - 1] != (WORD)y) f |= 0x01;
+    if (rp->Flags & AREAOUTLINE) f |= 0x04;
+    av_put(ai, x, y, f);
+}
+
 /* Whether the open polygon needs a draw back to its first vertex */
 static int av_open(struct AreaInfo *ai)
 {
     LONG n = ai->Count - 1;
-    return n >= 0 && (UBYTE)ai->FlagTbl[n] == AV_DRAW &&
+    return n >= 0 && AV_IS_DRAW(ai, n) &&
            (ai->VctrTbl[2 * n] != ai->FirstX || ai->VctrTbl[2 * n + 1] != ai->FirstY);
 }
 
@@ -772,7 +796,7 @@ LONG ogfx_rp_AreaMove(struct RastPort *rp, LONG x, LONG y)
 {
     struct AreaInfo *ai = rp->AreaInfo;
 
-    if (ai->Count > 0 && (UBYTE)ai->FlagTbl[ai->Count - 1] == AV_MOVE) {
+    if (ai->Count > 0 && AV_IS_MOVE(ai, ai->Count - 1)) {
         /* a move after a move takes its place */
         ai->Count--;
     } else {
@@ -780,7 +804,7 @@ LONG ogfx_rp_AreaMove(struct RastPort *rp, LONG x, LONG y)
          * there is then none for the move (measured) */
         if (av_open(ai)) {
             if (ai->Count >= ai->MaxCount) return -1;
-            av_put(ai, ai->FirstX, ai->FirstY, AV_DRAW);
+            av_draw(rp, ai->FirstX, ai->FirstY);
         }
         if (ai->Count >= ai->MaxCount) return -1;
     }
@@ -795,7 +819,7 @@ LONG ogfx_rp_AreaDraw(struct RastPort *rp, LONG x, LONG y)
     struct AreaInfo *ai = rp->AreaInfo;
 
     if (ai->Count >= ai->MaxCount) return -1;
-    av_put(ai, x, y, AV_DRAW);
+    av_draw(rp, x, y);
     return 0;
 }
 
@@ -803,31 +827,33 @@ LONG ogfx_rp_AreaEllipse(struct RastPort *rp, LONG xc, LONG yc, LONG a, LONG b)
 {
     struct AreaInfo *ai = rp->AreaInfo;
 
-    /* closing the open polygon first, as AreaMove does */
-    if (av_open(ai)) {
+    /* taking a move's place, or closing the open polygon first, as
+     * AreaMove does */
+    if (ai->Count > 0 && AV_IS_MOVE(ai, ai->Count - 1)) ai->Count--;
+    else if (av_open(ai)) {
         if (ai->Count >= ai->MaxCount) return -1;
-        av_put(ai, ai->FirstX, ai->FirstY, AV_DRAW);
+        av_draw(rp, ai->FirstX, ai->FirstY);
     }
     if (ai->Count + 2 > ai->MaxCount) return -1;
-    av_put(ai, (WORD)xc - (WORD)a, (WORD)yc - (WORD)b, AV_ELL);
+    av_put(ai, (WORD)xc - (WORD)a, (WORD)yc - (WORD)b, AV_ELL | (rp->Flags & AREAOUTLINE ? 0x04 : 0));
     av_put(ai, (WORD)xc + (WORD)a, (WORD)yc + (WORD)b, AV_ELL2);
     return 0;
 }
 
-/* Every edge and ellipse of the table: crossings (pass 0) or pixels (1) */
+/* Every edge and ellipse of the table: crossings (pass 0), pixels (1) or
+ * pixels taken out (2) */
 static void am_shapes(struct amask *a, struct AreaInfo *ai, int pass)
 {
     LONG i, px = 0, py = 0;
     for (i = 0; i < ai->Count; i++) {
         LONG x = ai->VctrTbl[2 * i], y = ai->VctrTbl[2 * i + 1];
-        UBYTE f = (UBYTE)ai->FlagTbl[i];
-        if (f == AV_ELL && i + 1 < ai->Count) {
+        if (AV_IS_ELL(ai, i) && i + 1 < ai->Count) {
             LONG x1 = ai->VctrTbl[2 * i + 2], y1 = ai->VctrTbl[2 * i + 3];
-            am_ellipse(a, (x + x1) >> 1, (y + y1) >> 1, (x1 - x) >> 1, (y1 - y) >> 1, !pass);
+            am_ellipse(a, (x + x1) >> 1, (y + y1) >> 1, (x1 - x) >> 1, (y1 - y) >> 1, pass == 0 ? 1 : pass == 1 ? 0 : 3);
             i++;
             x = x1; y = y1;
-        } else if (f == AV_DRAW) {
-            if (pass) am_edge(a, px, py, x, y); else am_cross(a, px, py, x, y);
+        } else if (AV_IS_DRAW(ai, i)) {
+            if (pass) am_edge(a, px, py, x, y, pass - 1); else am_cross(a, px, py, x, y);
         }
         px = x; py = y;
     }
@@ -840,11 +866,12 @@ int ogfx_rp_takes_area(struct RastPort *rp)
     LONG i;
 
     if (rp->Flags & 0x20) return 0;     /* NOCROSSFILL */
+    /* area patterns of more than four rows and multicolour ones: not measured */
+    if (rp->AreaPtrn && (rp->AreaPtSz < 0 || rp->AreaPtSz > 2)) return 0;
     if (!l || !(rp->Flags & AREAOUTLINE)) return 1;
     for (i = 0; i < ai->Count; i++) {
         LONG x = ai->VctrTbl[2 * i] - l->Scroll_X, y = ai->VctrTbl[2 * i + 1] - l->Scroll_Y;
-        UBYTE f = (UBYTE)ai->FlagTbl[i];
-        if ((f == AV_MOVE || f == AV_DRAW) &&
+        if (!AV_IS_ELL(ai, i) && !(i > 0 && AV_IS_ELL(ai, i - 1)) &&
             (x < 0 || y < 0 || x > l->bounds.MaxX - l->bounds.MinX || y > l->bounds.MaxY - l->bounds.MinY))
             return 0;
     }
@@ -857,23 +884,24 @@ LONG ogfx_rp_AreaEnd(struct RastPort *rp)
     struct TmpRas *tr = rp->TmpRas;
     struct amask a;
     LONG i, n, bx0 = 0x7FFF, by0 = 0x7FFF, bx1 = -0x8000, by1 = -0x8000, cx0, cy0, cx1, cy1;
-    LONG rc = 0;
+    LONG rc = 0, shapes = 0;
 
     if (av_open(ai)) {
         if (ai->Count >= ai->MaxCount) { rc = -1; goto out; }
-        av_put(ai, ai->FirstX, ai->FirstY, AV_DRAW);
+        av_draw(rp, ai->FirstX, ai->FirstY);
     }
     if (!tr || !tr->RasPtr) { rc = -1; goto out; }
     n = ai->Count;
     for (i = 0; i < n; i++) {
         LONG x = ai->VctrTbl[2 * i], y = ai->VctrTbl[2 * i + 1];
-        if ((UBYTE)ai->FlagTbl[i] == AV_MOVE && (i + 1 >= n || (UBYTE)ai->FlagTbl[i + 1] != AV_DRAW)) continue;
+        if (AV_IS_MOVE(ai, i) && (i + 1 >= n || !AV_IS_DRAW(ai, i + 1))) continue;
         if (x < bx0) bx0 = x;
         if (x > bx1) bx1 = x;
         if (y < by0) by0 = y;
         if (y > by1) by1 = y;
     }
     if (bx0 > bx1) goto out;
+    shapes = 1;
     /* the part of the box the RastPort draws in */
     if (rp->Layer) {
         struct Layer *l = rp->Layer;
@@ -896,25 +924,22 @@ LONG ogfx_rp_AreaEnd(struct RastPort *rp)
     for (i = 0; i < a.bpr * (a.y1 - a.y0 + 1); i++) a.m[i] = 0;
     am_shapes(&a, ai, 0);
     am_fill(&a);
-    am_shapes(&a, ai, 1);
+    am_shapes(&a, ai, rp->AreaPtrn && rp->AreaPtSz == 2 ? 2 : 1);
     am_draw(rp, &a);
 out:
     rp->Flags |= FRST_DOT;
-    if (!rc && (rp->Flags & AREAOUTLINE)) {
+    /* a table with nothing drawn in it gets no outline (measured) */
+    if (!rc && shapes && (rp->Flags & AREAOUTLINE)) {
         /* the outlines: polygons drawn as Draw draws, in AOlPen, solid */
         UBYTE fg = rp->FgPen, dm = rp->DrawMode;
         UWORD lp = rp->LinePtrn;
         rp->FgPen = rp->AOlPen; rp->DrawMode = JAM1; rp->LinePtrn = 0xFFFF;
         for (i = 0; i < ai->Count; i++) {
             LONG x = ai->VctrTbl[2 * i], y = ai->VctrTbl[2 * i + 1];
-            UBYTE f = (UBYTE)ai->FlagTbl[i];
-            /* a move is made unless an ellipse follows it (measured:
-             * one left last moves the pen there) */
-            if (f == AV_MOVE) {
-                if (i + 1 >= ai->Count || (UBYTE)ai->FlagTbl[i + 1] != AV_ELL) ogfx_rp_Move(rp, x, y);
-            }
-            else if (f == AV_DRAW) ogfx_rp_Draw(rp, x, y);
-            else if (f == AV_ELL && i + 1 < ai->Count) {
+            /* a lone move left last moves the pen too (measured) */
+            if (AV_IS_MOVE(ai, i)) ogfx_rp_Move(rp, x, y);
+            else if (AV_IS_DRAW(ai, i)) ogfx_rp_Draw(rp, x, y);
+            else if (AV_IS_ELL(ai, i) && i + 1 < ai->Count) {
                 LONG x1 = ai->VctrTbl[2 * i + 2], y1 = ai->VctrTbl[2 * i + 3];
                 ell_draw(rp, (x + x1) >> 1, (y + y1) >> 1, (x1 - x) >> 1, (y1 - y) >> 1);
                 i++;

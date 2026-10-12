@@ -53,9 +53,10 @@ LONG ogfx_rp_AreaMove(struct RastPort *rp, LONG x, LONG y);
 LONG ogfx_rp_AreaDraw(struct RastPort *rp, LONG x, LONG y);
 LONG ogfx_rp_AreaEllipse(struct RastPort *rp, LONG xc, LONG yc, LONG a, LONG b);
 LONG ogfx_rp_AreaEnd(struct RastPort *rp);
-/* Whether AreaEnd draws this table here: not with NOCROSSFILL, and not an
- * outline in a layer with a vertex outside it (OS 3.2's clipped outline is
- * not measured yet); else the caller makes graphics.library's AreaEnd,
+/* Whether AreaEnd draws this table here: not with NOCROSSFILL, not with
+ * an area pattern of more than four rows or a multicolour one, and not an
+ * outline in a layer with a vertex outside it (none of those is measured
+ * yet); else the caller makes graphics.library's AreaEnd,
  * which takes the same table. */
 int ogfx_rp_takes_area(struct RastPort *rp);
 int ogfx_rp_DrawEllipse(struct RastPort *rp, LONG xc, LONG yc, LONG a, LONG b);
