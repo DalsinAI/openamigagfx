@@ -54,6 +54,10 @@ static int nochip;
 /* Chip RAM a switch case kept (after both sides' calls), and rounds that
  * ended with less Chip RAM than they started with */
 static LONG chip_kept[14], chip_round_lost;
+/* graphics.library cut the back layer's ClipRects differently on the two
+ * sides (the parts no longer pair up): set by same(), counted per round */
+static int recut, last_call;
+static ULONG recuts;
 static ULONG chip_rounds_lost;
 static ULONG seed = 0x0A6A;
 static ULONG rnd(void) { seed = seed * 1103515245UL + 12345UL; return seed >> 8; }
@@ -119,6 +123,28 @@ static int same_part(struct ClipRect *ca, struct ClipRect *cb, ULONG *at)
     return 0;
 }
 
+/* 1 when the back layer's ClipRects differ between the sides in number,
+ * bounds, being covered or having a bitmap */
+static int cuts_differ(void)
+{
+    struct ClipRect *ca = back[0]->ClipRect, *cb = back[1]->ClipRect;
+    for (; ca && cb; ca = ca->Next, cb = cb->Next)
+        if (ca->bounds.MinX != cb->bounds.MinX || ca->bounds.MinY != cb->bounds.MinY || ca->bounds.MaxX != cb->bounds.MaxX ||
+            ca->bounds.MaxY != cb->bounds.MaxY || !ca->obscured != !cb->obscured || !ca->BitMap != !cb->BitMap)
+            return 1;
+    return ca || cb;
+}
+
+static void show_cuts(int s)
+{
+    struct ClipRect *c;
+    Printf("  %s:", (LONG)(s ? "ours" : "OS  "));
+    for (c = back[s]->ClipRect; c; c = c->Next)
+        Printf(" %ld,%ld-%ld,%ld%s", (LONG)c->bounds.MinX, (LONG)c->bounds.MinY, (LONG)c->bounds.MaxX, (LONG)c->bounds.MaxY,
+               (LONG)(!c->obscured ? "" : c->BitMap ? "c" : "h"));
+    PutStr("\n");
+}
+
 /* 0 when both sides hold the same bytes: the bitmaps and, in layers, the
  * back layer's covered parts (then 16 * the ClipRect's number + plane+1) */
 static int same(ULONG *at)
@@ -128,6 +154,7 @@ static int same(ULONG *at)
     WaitBlit();
     if ((p = same_bm(bma, bmb, at))) return p;
     if (!layered) return 0;
+    if (cuts_differ()) { recut = 1; return 0; }
     for (ca = back[0]->ClipRect, cb = back[1]->ClipRect, n = 1; ca && cb; ca = ca->Next, cb = cb->Next, n++)
         if (ca->BitMap && cb->BitMap && ca->obscured && (p = same_part(ca, cb, at))) return 16 * n + p;
     return 0;
@@ -205,6 +232,7 @@ static LONG wa[10];
 static int report(int call, LONG ra, LONG rb, int plane, ULONG at)
 {
     runs[call]++;
+    last_call = call;
     if (ra == rb && !plane) return 0;
     diffs[call]++;
     if (diffs[call] > 15) return 0;
@@ -772,6 +800,18 @@ int main(void)
             }
             }
             chip_kept[sel] += chip0 - (LONG)AvailMem(MEMF_CHIP);
+            if (recut) {
+                /* the rest of the round can't be judged part by part */
+                runs[last_call]--;
+                if (recuts++ < 5) {
+                    Printf("CUT %s ", (LONG)names[last_call]);
+                    VPrintf((STRPTR)what, wa);
+                    PutStr(": the two sides' ClipRects no longer pair up (c covered, h hidden); round ended\n");
+                    shown_setup = 0; show_setup(); show_cuts(0); show_cuts(1);
+                }
+                recut = 0;
+                break;
+            }
             /* keep the two in step after a DIFF, so later calls are judged alone */
             rpb.cp_x = rpa.cp_x; rpb.cp_y = rpa.cp_y; rpb.linpatcnt = rpa.linpatcnt; rpb.Flags = rpa.Flags;
             if (same(&at)) sync_b();
@@ -791,6 +831,7 @@ int main(void)
     }
     Printf("%lu checks, %lu differ\n", total, bad);
     if (refused) Printf("%lu ClipBlit and ScrollRaster calls left to graphics.library (a simple refresh layer, a clip region, a rectangle not inside the layer or a ScrollRaster shift of its size)\n", refused);
+    if (recuts) Printf("%lu rounds ended early: graphics.library cut the two sides' ClipRects differently\n", recuts);
     if (chip_rounds_lost) Printf("%lu rounds kept %ld bytes of Chip RAM in all\n", chip_rounds_lost, chip_round_lost);
     for (k = 0; k < 14; k++)
         if (chip_kept[k]) Printf("call kind %ld kept %ld bytes of Chip RAM until its round ended\n", (LONG)k, chip_kept[k]);
