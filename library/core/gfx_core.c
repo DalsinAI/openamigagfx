@@ -138,6 +138,62 @@ void gfx_planar_read8(const struct gfx_planar *bm, int32_t x0, int32_t y0, int32
             dst[x - x0] = (uint8_t)gfx_planar_get(bm, x, y);
 }
 
+/* Eight bits of a plane row from bit x on (bit 7 of the answer is x),
+ * zeros past the row's end. */
+static uint8_t bits8(const uint8_t *row, uint32_t nbytes, uint32_t x)
+{
+    uint32_t b = x >> 3, s = x & 7, v;
+
+    v = (uint32_t)(b < nbytes ? row[b] : 0) << 8 | (b + 1 < nbytes ? row[b + 1] : 0);
+    return (uint8_t)(v >> (8 - s));
+}
+
+void gfx_planar_blit(const struct gfx_planar *src, int32_t sx, int32_t sy, const struct gfx_planar *dst,
+                     int32_t dx, int32_t dy, int32_t w, int32_t h, uint32_t minterm, uint32_t mask)
+{
+    uint8_t m7 = minterm & 0x80 ? 0xFF : 0, m6 = minterm & 0x40 ? 0xFF : 0;
+    uint8_t m5 = minterm & 0x20 ? 0xFF : 0, m4 = minterm & 0x10 ? 0xFF : 0;
+    uint32_t depth = src->depth < dst->depth ? src->depth : dst->depth, p;
+    int32_t bx0 = dx >> 3, bx1 = (dx + w - 1) >> 3;
+    uint8_t first = (uint8_t)(0xFF >> (dx & 7)), last = (uint8_t)(0xFF << (7 - ((dx + w - 1) & 7)));
+    /* overlapping in one bitmap: rows from the bottom when moving down,
+     * bytes from the right when moving right, so no source is overwritten
+     * before it is read */
+    int same = src == dst, up, left;
+
+    if (!same && src->bytes_per_row == dst->bytes_per_row)
+        for (same = 1, p = 0; p < 8; p++)
+            if (src->planes[p] != dst->planes[p]) { same = 0; break; }
+    up = same && dy > sy;
+    left = same && dy == sy && dx > sx;
+
+    if (w <= 0 || h <= 0) return;
+    for (p = 0; p < depth; p++) {
+        const uint8_t *sp = src->planes[p];
+        uint8_t *dp = dst->planes[p];
+        int32_t j;
+        if (!(mask >> p & 1) || !PLANE_OK(dp)) continue;
+        for (j = 0; j < h; j++) {
+            int32_t r = up ? h - 1 - j : j, k;
+            uint8_t *drow = dp + (uint32_t)(dy + r) * dst->bytes_per_row;
+            const uint8_t *srow = PLANE_OK(sp) ? sp + (uint32_t)(sy + r) * src->bytes_per_row : 0;
+            for (k = 0; k <= bx1 - bx0; k++) {
+                int32_t bx = left ? bx1 - k : bx0 + k;
+                /* the source bits under dest byte bx: x = 8 * bx - dx + sx on */
+                int32_t xs = 8 * bx - dx + sx;
+                uint8_t b, c = drow[bx], e = 0xFF, d;
+                if (bx == bx0) e &= first;
+                if (bx == bx1) e &= last;
+                if (!srow) b = sp ? 0xFF : 0x00;
+                else if (xs >= 0) b = bits8(srow, src->bytes_per_row, (uint32_t)xs);
+                else b = (uint8_t)(bits8(srow, src->bytes_per_row, 0) >> -xs);  /* only bits right of the edge matter */
+                d = (uint8_t)((b & c & m7) | (b & ~c & m6) | (~b & c & m5) | (~b & ~c & m4));
+                drow[bx] = (uint8_t)((c & ~e) | (d & e));
+            }
+        }
+    }
+}
+
 void gfx_chunky8_put(const struct gfx_chunky8 *bm, int32_t x, int32_t y, uint32_t pen, uint32_t mask, int mode)
 {
     uint8_t *d = bm->base + (uint32_t)y * bm->bytes_per_row + (uint32_t)x, m = (uint8_t)mask;

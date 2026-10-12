@@ -40,4 +40,14 @@ void ogfx_rp_RectFill(struct RastPort *rp, LONG xmin, LONG ymin, LONG xmax, LONG
 void ogfx_rp_BltPattern(struct RastPort *rp, const UBYTE *mask, LONG xl, LONG yl, LONG maxx, LONG maxy,
                         ULONG bytecnt);
 
+/* Blits. Coordinates and sizes are graphics.library's WORDs; minterm's
+ * high four bits act (the A channel is all ones). BltBitMap copies between
+ * standard planar bitmaps and answers with the planes it drew;
+ * BltBitMapRastPort draws a bitmap into a RastPort through its Mask, into
+ * the layer's places when it has one. */
+LONG ogfx_rp_BltBitMap(struct BitMap *src, LONG sx, LONG sy, struct BitMap *dst, LONG dx, LONG dy,
+                       LONG w, LONG h, ULONG minterm, ULONG mask, UBYTE *temp);
+void ogfx_rp_BltBitMapRastPort(struct BitMap *src, LONG sx, LONG sy, struct RastPort *rp, LONG dx, LONG dy,
+                               LONG w, LONG h, ULONG minterm);
+
 #endif

@@ -8,7 +8,8 @@
  * result are compared. Calls: WritePixel, ReadPixel, SetRast,
  * WritePixelArray8, ReadPixelArray8, WriteChunkyPixels, Draw (after a Move
  * or chained, with line patterns), PolyDraw, RectFill and BltPattern (with
- * area patterns and masks); after a line the RastPort's pen position,
+ * area patterns and masks), BltBitMap and BltBitMapRastPort (minterms,
+ * plane masks, overlapping copies); after a line the RastPort's pen position,
  * pattern count and Flags are compared too. Prints the first DIFFs of each
  * call with what was asked and the first pixels that differ, and a count
  * per call. Exit 0 when
@@ -42,17 +43,17 @@
 #include <string.h>
 #include "../library/core/gfx_rp.h"
 
-#define NCALLS 10
+#define NCALLS 12
 static const char *const names[NCALLS] = {
     "WritePixel", "ReadPixel", "SetRast", "WritePixelArray8", "ReadPixelArray8", "WriteChunkyPixels",
-    "Draw", "PolyDraw", "RectFill", "BltPattern"
+    "Draw", "PolyDraw", "RectFill", "BltPattern", "BltBitMap", "BltBitMapRastPort"
 };
 static ULONG runs[NCALLS], diffs[NCALLS], pad_runs;
 static int nochip;
 static ULONG seed = 0x0A6A;
 static ULONG rnd(void) { seed = seed * 1103515245UL + 12345UL; return seed >> 8; }
 
-static struct BitMap *bma, *bmb, *tmpbm;
+static struct BitMap *bma, *bmb, *tmpbm, *sbm;   /* sbm: a source for the blits, the same for both */
 static struct RastPort rpa, rpb, tmprp;
 static UBYTE *arr_a, *arr_b;
 #define ARR 16384
@@ -452,9 +453,15 @@ int main(void)
         bma = AllocBitMap(w, h, d, BMF_CLEAR, NULL);
         bmb = AllocBitMap(w, h, d, BMF_CLEAR, NULL);
         tmpbm = AllocBitMap(((w + 15) & ~15) + 32, 1, d, BMF_CLEAR, NULL);
-        if (bma && bmb && tmpbm && layered) { fill_random(); lay_ok = make_layers(); }
-        if (!bma || !bmb || !tmpbm || !lay_ok) {
+        sbm = AllocBitMap(16 + rnd() % 320, 1 + rnd() % 64, 1 + rnd() % 8, 0, NULL);
+        if (sbm) {
+            ULONG p, i, n = (ULONG)sbm->BytesPerRow * sbm->Rows;
+            for (p = 0; p < sbm->Depth; p++) for (i = 0; i < n; i++) ((UBYTE *)sbm->Planes[p])[i] = (UBYTE)rnd();
+        }
+        if (bma && bmb && tmpbm && sbm && layered) { fill_random(); lay_ok = make_layers(); }
+        if (!bma || !bmb || !tmpbm || !sbm || !lay_ok) {
             if (layered) free_layers();
+            if (sbm) FreeBitMap(sbm);
             if (bma) FreeBitMap(bma);
             if (bmb) FreeBitMap(bmb);
             if (tmpbm) FreeBitMap(tmpbm);
@@ -486,7 +493,38 @@ int main(void)
                 sync_b();
             }
             pens();
-            switch (rnd() % 10) {
+            switch (rnd() % 12) {
+            case 10: case 11: {
+                /* BltBitMap, from the round's source or within the bitmap
+                 * itself (overlapping), and BltBitMapRastPort, into the
+                 * RastPort (its layer, in LAYERS); mostly inside, sometimes
+                 * hanging over an edge */
+                int self = rnd() % 2, call = (int)(rnd() % 2) + 10;
+                struct BitMap *sa = self ? bma : sbm, *sb = self ? bmb : sbm;
+                LONG sw = (LONG)sa->BytesPerRow * 8, sh = sa->Rows, bw = 1 + (LONG)(rnd() % 64), bh = 1 + (LONG)(rnd() % 32);
+                LONG sx = (LONG)(rnd() % (ULONG)sw), sy = (LONG)(rnd() % (ULONG)sh), tx = (LONG)(rnd() % W), ty = (LONG)(rnd() % H);
+                ULONG mt = rnd() % 3 ? 0xC0 : rnd() & 0xF0, bmask = rnd() % 3 ? 0xFF : rnd() & 0xFF;
+                if (rnd() % 4) {
+                    if (sx + bw > sw) bw = sw - sx;
+                    if (sy + bh > sh) bh = sh - sy;
+                    if (call == 10 || !layered) { if (tx + bw > (LONG)W) bw = (LONG)W - tx; if (ty + bh > (LONG)H) bh = (LONG)H - ty; }
+                }
+                if (self && rnd() % 2) { tx = sx + (LONG)(rnd() % 9) - 4; ty = sy + (LONG)(rnd() % 3) - 1; if (tx < 0) tx = 0; if (ty < 0) ty = 0; }
+                if (call == 10) {
+                    ra = BltBitMap(sa, sx, sy, bma, tx, ty, bw, bh, mt, bmask, NULL);
+                    rb = ogfx_rp_BltBitMap(sb, sx, sy, bmb, tx, ty, bw, bh, mt, bmask, NULL);
+                } else {
+                    ra = rb = 0;
+                    BltBitMapRastPort(sa, sx, sy, &rpa, tx, ty, bw, bh, mt);
+                    ogfx_rp_BltBitMapRastPort(sb, sx, sy, &rpb, tx, ty, bw, bh, mt);
+                }
+                plane = same(&at);
+                ASKED("%s %ld,%ld to %ld,%ld size %ld x %ld minterm %02lx", (LONG)(self ? "self" : "source"), sx, sy, tx, ty, bw, bh);
+                wa[6] = (LONG)mt; wa[7] = (LONG)(call == 10 ? bmask : rpa.Mask);
+                if (report(call, ra, rb, plane, at))
+                    Printf("  mask %02lx, source %ld x %ld x %ld\n", wa[7], sw, sh, (LONG)sa->Depth);
+                break;
+            }
             case 0:
                 old = (LONG)ReadPixel(&rpa, x, y);
                 ra = WritePixel(&rpa, x, y); rb = ogfx_rp_WritePixel(&rpb, x, y);
@@ -639,7 +677,7 @@ int main(void)
         }
         WaitBlit();
         if (layered) free_layers();
-        FreeBitMap(bma); FreeBitMap(bmb); FreeBitMap(tmpbm);
+        FreeBitMap(bma); FreeBitMap(bmb); FreeBitMap(tmpbm); FreeBitMap(sbm);
     }
     for (k = 0; k < NCALLS; k++) {
         Printf("%-18s %6lu runs, %lu differ\n", (LONG)names[k], runs[k], diffs[k]);
