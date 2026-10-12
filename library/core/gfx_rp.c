@@ -124,13 +124,18 @@ void ogfx_rp_WriteChunkyPixels(struct RastPort *rp, ULONG xstart, ULONG ystart, 
 }
 
 /* What a pattern bit of 1 and of 0 do in the RastPort's DrawMode: INVERSVID
- * swaps them, JAM2 draws BgPen for a 0, COMPLEMENT inverts for a 1. */
+ * swaps them, JAM2 draws BgPen for a 0, COMPLEMENT inverts for a 1.
+ * Measured on OS 3.2: COMPLEMENT with JAM2 inverts every pixel, 1 or 0,
+ * for lines and fills alike. */
 static int pat_mode(struct RastPort *rp, uint32_t *pat)
 {
     UBYTE mode = rp->DrawMode;
 
     if (mode & INVERSVID) *pat = ~*pat & 0xFFFF;
-    if (mode & COMPLEMENT) return GFX_XOR;
+    if (mode & COMPLEMENT) {
+        if (mode & JAM2) *pat = 0xFFFF;
+        return GFX_XOR;
+    }
     return mode & JAM2 ? GFX_JAM2 : GFX_JAM1;
 }
 
@@ -144,10 +149,12 @@ void ogfx_rp_Move(struct RastPort *rp, LONG x, LONG y)
 
 /* A line from the pen position to (x, y), Bresenham along the longer axis,
  * every pixel on it drawn through LinePtrn: pixel i takes bit
- * (linpatcnt - i) & 15. The first pixel is left out when FRST_DOT is clear
- * (it is the last one of the line before), so a COMPLEMENT polyline does not
- * invert its corners twice. */
-void ogfx_rp_Draw(struct RastPort *rp, LONG x, LONG y)
+ * (linpatcnt - i) & 15, and linpatcnt goes down by the line's length (a
+ * BYTE, not kept to 0-15: measured on OS 3.2). The first pixel is left out
+ * when FRST_DOT is clear (it is the last one of the line before), so a
+ * COMPLEMENT line drawn on from another does not invert their corner
+ * twice. */
+static void line(struct RastPort *rp, LONG x, LONG y, int first)
 {
     struct gfx_planar bm;
     WORD x0 = rp->cp_x, y0 = rp->cp_y, x1 = (WORD)x, y1 = (WORD)y;
@@ -155,18 +162,16 @@ void ogfx_rp_Draw(struct RastPort *rp, LONG x, LONG y)
     LONG sx = x1 >= x0 ? 1 : -1, sy = y1 >= y0 ? 1 : -1;
     LONG len = dx > dy ? dx : dy, mn = dx > dy ? dy : dx, err = 2 * mn - len, i;
     LONG px = x0, py = y0;
-    UWORD ptrn = rp->LinePtrn;
-    int cnt = rp->linpatcnt, first = (rp->Flags & FRST_DOT) != 0, mode;
-    uint32_t inv = rp->DrawMode & INVERSVID ? 1 : 0, fg = rp->FgPen, bg = rp->BgPen;
+    uint32_t ptrn = rp->LinePtrn;
+    int cnt = rp->linpatcnt, mode = pat_mode(rp, &ptrn);
 
     planar_of(rp, &bm);
-    mode = rp->DrawMode & COMPLEMENT ? GFX_XOR : rp->DrawMode & JAM2 ? GFX_JAM2 : GFX_JAM1;
     for (i = 0; i <= len; i++) {
-        uint32_t on = (ptrn >> ((cnt - i) & 15) & 1) ^ inv;
+        uint32_t on = ptrn >> ((cnt - i) & 15) & 1;
         if ((i || first) && inside(rp, px, py)) {
             if (mode == GFX_XOR) { if (on) gfx_planar_put(&bm, px, py, 0, rp->Mask, GFX_INVERT); }
-            else if (on) gfx_planar_put(&bm, px, py, fg, rp->Mask, GFX_SET);
-            else if (mode == GFX_JAM2) gfx_planar_put(&bm, px, py, bg, rp->Mask, GFX_SET);
+            else if (on) gfx_planar_put(&bm, px, py, rp->FgPen, rp->Mask, GFX_SET);
+            else if (mode == GFX_JAM2) gfx_planar_put(&bm, px, py, rp->BgPen, rp->Mask, GFX_SET);
         }
         if (err >= 0) {
             if (dx > dy) py += sy; else px += sx;
@@ -175,15 +180,25 @@ void ogfx_rp_Draw(struct RastPort *rp, LONG x, LONG y)
         err += 2 * mn;
         if (dx > dy) px += sx; else py += sy;
     }
-    rp->linpatcnt = (BYTE)((cnt - len) & 15);
+    rp->linpatcnt = (BYTE)(cnt - len);
     rp->Flags &= ~FRST_DOT;
     rp->cp_x = x1;
     rp->cp_y = y1;
 }
 
+void ogfx_rp_Draw(struct RastPort *rp, LONG x, LONG y)
+{
+    line(rp, x, y, (rp->Flags & FRST_DOT) != 0);
+}
+
+/* Measured on OS 3.2: PolyDraw's first line keeps to FRST_DOT as Draw
+ * does, but every later line draws its first pixel too, so a COMPLEMENT
+ * polyline's corners are inverted twice. */
 void ogfx_rp_PolyDraw(struct RastPort *rp, LONG count, const WORD *xy)
 {
-    for (; count > 0; count--, xy += 2) ogfx_rp_Draw(rp, xy[0], xy[1]);
+    LONG i;
+
+    for (i = 0; i < count; i++, xy += 2) line(rp, xy[0], xy[1], i ? 1 : (rp->Flags & FRST_DOT) != 0);
 }
 
 /* The area pattern's row for line y: AreaPtrn holds 1 << AreaPtSz rows,

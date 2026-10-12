@@ -112,8 +112,10 @@ static void show_state(void)
            (LONG)rpb.cp_x, (LONG)rpb.cp_y, (LONG)rpb.linpatcnt, (LONG)rpb.Flags);
 }
 
-static UWORD areapat[16];
-static UBYTE bltmask[2048];
+/* in Chip RAM: graphics.library's blitter reads BltPattern's mask */
+static UWORD *areapat;
+static UBYTE *bltmask;
+#define BLTMASK 2048
 #define ASKED(f, a0, a1, a2, a3, a4, a5, a6) \
     (what = (f), wa[0] = (LONG)(a0), wa[1] = (LONG)(a1), wa[2] = (LONG)(a2), wa[3] = (LONG)(a3), \
      wa[4] = (LONG)(a4), wa[5] = (LONG)(a5), wa[6] = (LONG)(a6))
@@ -133,7 +135,9 @@ int main(void)
 
     arr_a = AllocVec(ARR, MEMF_ANY);
     arr_b = AllocVec(ARR, MEMF_ANY);
-    if (!arr_a || !arr_b) { PutStr("no memory\n"); return 20; }
+    areapat = AllocVec(16 * sizeof(UWORD), MEMF_CHIP);
+    bltmask = AllocVec(BLTMASK, MEMF_CHIP);
+    if (!arr_a || !arr_b || !areapat || !bltmask) { PutStr("no memory\n"); return 20; }
     Printf("OpenGfx core against %s", (LONG)((struct Library *)GfxBase)->lib_IdString);
 
     for (r = 0; r < rounds && !(SetSignal(0, 0) & SIGBREAKF_CTRL_C); r++) {
@@ -264,6 +268,9 @@ int main(void)
                 if (report(call, 0, st, plane, at)) {
                     show_pixels(0, 0, (LONG)W - 1, (LONG)H - 1);
                     show_state();
+                    PutStr("  points:");
+                    for (j = 0; j < cnt; j++) Printf(" %ld,%ld", (LONG)poly[2 * j], (LONG)poly[2 * j + 1]);
+                    PutStr("\n");
                 }
                 break;
             }
@@ -272,22 +279,27 @@ int main(void)
                  * one-row or a 2^n-row area pattern */
                 LONG sz = rnd() % 3 ? 0 : (LONG)(rnd() % 5), j, call = rnd() % 2 ? 8 : 9;
                 ULONG mbpr = ((x1 - x0 + 16) & ~15UL) / 8;
-                int usemask = call == 9 && rnd() % 3 && mbpr * (y1 - y0 + 1) <= sizeof bltmask;
+                int usemask = call == 9 && rnd() % 3 && mbpr * (y1 - y0 + 1) <= BLTMASK;
                 for (j = 0; j < 16; j++) areapat[j] = rnd() % 4 ? (UWORD)rnd() : 0xFFFF;
                 if (rnd() % 3) { SetAfPt(&rpa, areapat, sz); SetAfPt(&rpb, areapat, sz); }
                 else { SetAfPt(&rpa, NULL, 0); SetAfPt(&rpb, NULL, 0); }
-                for (j = 0; j < (LONG)sizeof bltmask; j++) bltmask[j] = rnd() % 4 ? (UBYTE)rnd() : 0xFF;
+                for (j = 0; j < (LONG)BLTMASK; j++) bltmask[j] = rnd() % 4 ? (UBYTE)rnd() : 0xFF;
                 if (call == 8) { RectFill(&rpa, x0, y0, x1, y1); ogfx_rp_RectFill(&rpb, x0, y0, x1, y1); }
                 else {
                     BltPattern(&rpa, usemask ? bltmask : NULL, x0, y0, x1, y1, mbpr);
                     ogfx_rp_BltPattern(&rpb, usemask ? bltmask : NULL, x0, y0, x1, y1, mbpr);
                 }
                 plane = same(&at);
-                ASKED("%ld,%ld-%ld,%ld pattern %ld rows %ld mask %ld fg %ld mode %ld",
+                ASKED("%ld,%ld-%ld,%ld pattern rows %ld mask bytes a row %ld fg %ld bg %ld mode %ld writemask %02lx",
                       (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1, (LONG)(rpa.AreaPtrn ? 1L << sz : 0),
                       (LONG)(usemask ? mbpr : 0), (LONG)(UBYTE)rpa.FgPen);
-                wa[7] = (LONG)rpa.DrawMode;
-                if (report(call, 0, 0, plane, at)) show_pixels((LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                wa[7] = (LONG)(UBYTE)rpa.BgPen; wa[8] = (LONG)rpa.DrawMode; wa[9] = (LONG)rpa.Mask;
+                if (report(call, 0, 0, plane, at)) {
+                    show_pixels((LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1);
+                    Printf("  pattern %04lx %04lx %04lx %04lx", (LONG)areapat[0], (LONG)areapat[1], (LONG)areapat[2], (LONG)areapat[3]);
+                    if (usemask) Printf("; mask row 0 %02lx %02lx %02lx %02lx", (LONG)bltmask[0], (LONG)bltmask[1], (LONG)bltmask[2], (LONG)bltmask[3]);
+                    PutStr("\n");
+                }
                 break;
             }
             default: {
@@ -317,7 +329,7 @@ int main(void)
     }
     Printf("%lu checks, %lu differ\n", total, bad);
     if (pad_runs) Printf("%lu ReadPixelArray8 calls wrote the row padding differently (not counted)\n", pad_runs);
-    FreeVec(arr_a); FreeVec(arr_b);
+    FreeVec(arr_a); FreeVec(arr_b); FreeVec(areapat); FreeVec(bltmask);
     if (rd) FreeArgs(rd);
     return bad ? 5 : nochip ? 10 : 0;
 }
