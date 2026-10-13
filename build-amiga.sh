@@ -1,7 +1,8 @@
 #!/bin/sh
 # OpenGfx with the os32-gcc16 stove: builds GfxCoreABITest, OpenGfx's core
-# and RastPort calls side by side with OS 3.2's graphics.library.
-#   sh build-amiga.sh   (out: build-amiga/GfxCoreABITest)
+# and RastPort calls side by side with OS 3.2's graphics.library, and
+# RegionABITest, its regions likewise.
+#   sh build-amiga.sh   (out: build-amiga/GfxCoreABITest, RegionABITest)
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 STOVE=${STOVE:-"$HOME/AmigaChrome/stoves/os32-gcc16"}
@@ -13,3 +14,7 @@ mkdir -p "$OUT"
   -I"$HERE/library/core" -o "$OUT/GfxCoreABITest" \
   "$HERE/tests/GfxCoreABITest.c" "$HERE/library/core/gfx_rp.c" "$HERE/library/core/gfx_core.c"
 echo "$OUT/GfxCoreABITest ($(wc -c < "$OUT/GfxCoreABITest") bytes)"
+"$CC" -m68000 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -noixemul \
+  -I"$HERE/library/core" -o "$OUT/RegionABITest" \
+  "$HERE/tests/RegionABITest.c" "$HERE/library/core/gfx_region.c"
+echo "$OUT/RegionABITest ($(wc -c < "$OUT/RegionABITest") bytes)"

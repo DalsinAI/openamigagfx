@@ -23,3 +23,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-m68k-linux-gnu qemu-user
       - name: OpenGfx core
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_core.sh
+      - name: OpenGfx regions
+        run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_region.sh
