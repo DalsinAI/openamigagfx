@@ -16,3 +16,15 @@ It is the home for the open graphics.library work (amigachrome-guest `libraries/
 | `tests/GfxCoreABITest.c`, `build-amiga.sh` | The RastPort calls side by side with OS 3.2's graphics.library on Chip RAM bitmaps, byte for byte; `LAYERS` does the same in layers made with OS 3.2's layers.library (smart and simple refresh, clip regions, layers in front), the covered parts included. |
 
 These are the calls OpenGfx 1.4 still hands to graphics.library's own code. WritePixelArray8 and WriteChunkyPixels are how a browser that renders into a chunky buffer gets its page onto an AGA screen.
+
+## OpenLayers
+
+The open layers.library starts here too, next to the graphics.library it draws through: clean-room, MIT, API and ABI compatible with OS 3.2's.
+
+| File | What |
+| --- | --- |
+| `library/layers/layers_core.c`, `.h` | The geometry in plain C: sets of disjoint rectangles (subtract, and, or, as a Region's), a layer's bounds cut into pieces each visible, behind the frontmost layer covering it (a ClipRect's `lobs`) or off the Layer_Info's bounds, WhichLayer, and an order for copying rectangles moved by one offset (SortLayerCR). Damage is set arithmetic on these. Pure: memory comes from the caller, any core may run it. |
+| `library/layers/layers.lvo` | layers.library's jump table, to be checked against the NDK 3.2 `layers_lib.fd`. |
+| `tests/m68k/test_layers_core.sh` | The core for the 68000, 68020 and 68040 at -O0 and -O2 under qemu-m68k (and the host with `HOST_CC`, under ASan and UBSan), against a grid of pixels: every pixel of every set, piece and copy order checked. |
+
+Next: the library itself (Layer_Info, Layer and ClipRect lists, locking, smart refresh backing store through BltBitMap, damage, hooks), then `LayersABITest`, which runs the same calls through OS 3.2's layers.library and ours and lists each difference.

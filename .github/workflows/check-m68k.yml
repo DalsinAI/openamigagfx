@@ -1,4 +1,4 @@
-name: m68k (OpenGfx core)
+name: m68k (OpenGfx and OpenLayers cores)
 
 # OpenGfx's core is plain C that runs on a real 68k: built by an m68k cross
 # GCC for the 68000, 68020 and 68040 and run under qemu-m68k on every change.
@@ -8,6 +8,7 @@ on:
     paths:
       - .github/workflows/check-m68k.yml
       - library/core/**
+      - library/layers/**
       - tests/m68k/**
 
 permissions:
@@ -23,3 +24,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-m68k-linux-gnu qemu-user
       - name: OpenGfx core
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_core.sh
+      - name: OpenLayers core
+        run: QEMU_M68K=qemu-m68k HOST_CC=gcc sh tests/m68k/test_layers_core.sh
