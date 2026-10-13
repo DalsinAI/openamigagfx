@@ -1169,6 +1169,9 @@ LONG ol_HideLayer(struct Layer *l)
     if (OL(l)->hidden) return TRUE;
     if (begin(l->LayerInfo, &ch)) return FALSE;
     set_hidden(l, 1);
+    /* OS 3.2 moves a hidden layer to the very back */
+    unlink_layer(l->LayerInfo, l);
+    link_before(l->LayerInfo, l, 0);
     return finish(&ch, 0, 0) ? FALSE : TRUE;
 }
 

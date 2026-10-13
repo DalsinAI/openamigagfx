@@ -724,12 +724,13 @@ static void one_round(int round)
         }
         check_after(-1);
         check_locks();
-        /* backdrop layers stay behind the others */
+        /* backdrop layers stay behind the others (OS 3.2 sends a hidden layer to the very back) */
         {
             struct Layer *l;
             int seen = 0;
             checks++;
             for (l = li->top_layer; l; l = l->back) {
+                if (l->Flags & 0x1000) continue;
                 if (l->Flags & LAYERBACKDROP) seen = 1;
                 else if (seen) { fail("a backdrop layer in front of another", 0, 0); break; }
             }
