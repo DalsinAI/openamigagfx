@@ -217,6 +217,24 @@ int main(void)
         for (y = 0; y < H; y++) for (x = 0; x < W; x++)
             if (gfx_chunky8_get(&cb, x, y) != model[y][x]) { if (++fails < 20) printf("FAIL chunky at %d,%d\n", x, y); y = H; break; }
     }
+    {   /* an interleaved bitmap (BMF_INTERLEAVED): three planes 4 bytes a
+         * row each, 12 bytes a row; fill_all keeps to each plane's part */
+        static uint8_t il[12 * 5 + 4];
+        struct gfx_planar ib;
+        uint32_t p;
+        memset(il, 0xA5, sizeof il);
+        ib.depth = 3;
+        ib.bytes_per_row = 12;
+        ib.rows = 5;
+        for (p = 0; p < 8; p++) ib.planes[p] = p < 3 ? il + 4 * p : 0;
+        gfx_planar_fill_all(&ib, 5, 0xFF);
+        checks++;
+        for (y = 0; y < 5; y++) for (x = 0; x < 32; x++)
+            if (gfx_planar_get(&ib, x, y) != 5) { if (++fails < 20) printf("FAIL interleaved at %d,%d\n", x, y); y = 5; break; }
+        checks++;
+        for (x = 60; x < 64; x++)
+            if (il[x] != 0xA5) { if (++fails < 20) printf("FAIL interleaved past the end\n"); break; }
+    }
     if (fails) { printf("%lu of %lu checks failed\n", fails, checks); return 1; }
     printf("%lu checks\n", checks);
     return 0;
