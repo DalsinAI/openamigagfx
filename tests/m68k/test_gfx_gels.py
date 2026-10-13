@@ -32,12 +32,19 @@ class Bitmap:
         self.bpr, self.rows, self.flags, self.depth, self.planes = bpr, rows, flags, depth, planes
 
     def width(self):
+        # interleaved: the planes' share of a row, where the first two real
+        # planes are that far apart for each plane between them, or where
+        # there are fewer than two real planes
         bpr = self.bpr
-        p0, p1 = self.planes[0], self.planes[1]
-        if (self.flags & 4) and self.depth > 1 and isinstance(p0, tuple) and isinstance(p1, tuple) \
-                and p0[0] == p1[0] and p1[1] == p0[1] + bpr // self.depth:
-            bpr //= self.depth
-        return bpr * 8
+        if not (self.flags & 4) or self.depth < 2:
+            return bpr * 8
+        part = bpr // self.depth
+        real = [(k, p) for k, p in enumerate(self.planes[:self.ndepth()]) if isinstance(p, tuple)]
+        if len(real) >= 2:
+            (k0, p0), (k1, p1) = real[0], real[1]
+            if p0[0] != p1[0] or p1[1] != p0[1] + (k1 - k0) * part:
+                return bpr * 8
+        return part * 8
 
     def ndepth(self):
         return min(self.depth, 8)
@@ -72,10 +79,15 @@ class Model:
         self.emit(70, 1 if blitter or self.rng.random() < 0.75 else 0)
         self.reset_round()
 
-    def BUF(self, size, chip, seed):
+    def BUF(self, size, chip, seed, guard=False):
         i = self.nextbuf
         self.nextbuf += 1
-        self.emit(1, i, size, chip, seed)
+        if guard:
+            # Fast RAM ending at a page no one may touch: reading past it faults
+            chip = 0
+            self.emit(71, i, size, seed)
+        else:
+            self.emit(1, i, size, chip, seed)
         b = bytearray(size)
         x = seed
         if seed:
@@ -1041,6 +1053,42 @@ def round_anim(m):
         m.GETGB(o, db, r.choice([-1, r.randint(0, 20)]))
 
 
+def round_ilmask(m):
+    """BltMaskBitMapRastPort from an interleaved bitmap to itself, reaching
+    its last row, the bitmap at the end of its memory: each plane's part
+    of a row is read, never what follows the block. Sometimes plane 0 is
+    constant."""
+    r = m.rng
+    m.RESET(blitter=False)
+    depth, bpr, rows = r.randint(2, 5), r.choice([4, 6, 8]), r.randint(6, 16)
+    b = m.BUF(bpr * depth * rows, 0, r.randrange(1, 1 << 30), guard=True)
+    planes = [(b, p * bpr) for p in range(depth)]
+    if r.random() < 0.3:
+        planes[0] = r.choice([None, 'ones'])
+    m.BITMAP(0, bpr * depth, rows, 4, depth, planes)
+    mask, fg, bg = 0xFF, r.randrange(256), r.randrange(256)
+    m.emit(4, 0, 0, -1, mask, fg, bg, 0)
+    m.rps[0] = dict(bm=0, layer=None, mask=mask, fg=fg, bg=bg, mode=0)
+    for _ in range(r.randint(1, 3)):
+        h = r.randint(1, rows)
+        ox, oy = r.randint(0, bpr * 4), rows - h
+        omb = m.BUF(bpr * rows, r.randrange(2), r.randrange(1, 1 << 30))
+        m.MASKBLT(0, ox, oy, 0, ox + r.randint(-4, 9), oy - r.randint(0, 3), r.randint(1, bpr * 8), h,
+                  r.choice([0xE0, 0x20]), omb)
+    m.HASH([b])
+    # in Chip RAM with the blitter, the destination a whole number of words
+    # along: the blitter reads the copy (MEMF_ANY may be Chip RAM), and it
+    # is not freed until that blit is done
+    m.RESET(blitter=True)
+    ids, w, rows, depth = make_rp(m, 1, False, mode_rnd=False, interleaved=False)
+    for _ in range(2):
+        ox, oy = r.randint(0, 15), r.randint(0, 6)
+        omb = m.BUF((w // 8) * rows, 1, r.randrange(1, 1 << 30))
+        m.MASKBLT(0, ox, oy, 0, ox + 16 * r.randint(0, 1), oy + r.randint(0, 3), r.randint(1, 16 - ox),
+                  r.randint(1, 12), r.choice([0xE0, 0x20]), omb)
+    m.HASH(ids)
+
+
 def round_queue(m):
     r = m.rng
     m.RESET(blitter=True)
@@ -1093,7 +1141,7 @@ def main():
     seed = int(sys.argv[2]) if len(sys.argv) > 2 else 1
     rounds = int(sys.argv[3]) if len(sys.argv) > 3 else 40
     m = Model(seed)
-    kinds = [round_blits, round_gels, round_dbgels, round_coll, round_vsprites, round_anim, round_queue]
+    kinds = [round_blits, round_gels, round_dbgels, round_coll, round_vsprites, round_anim, round_queue, round_ilmask]
     for k in range(rounds):
         kinds[k % len(kinds)](m)
     m.emit(0)

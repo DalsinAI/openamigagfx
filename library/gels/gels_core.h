@@ -155,6 +155,13 @@ struct gels_state {
      * the tests give C functions) */
     int32_t (*call_blit)(struct gels_state *st, struct gl_bltnode *bn);  /* bn->function: A0 custom, A1 bn */
     void (*call_cleanup)(struct gels_state *st, struct gl_bltnode *bn); /* bn->cleanup: A0 custom, A1 bn */
+    /* the side-by-side opengfx.library: OS 3.2's graphics.library keeps
+     * the blitter, so OwnBlitter, DisownBlitter, WaitBlit, QBlit and
+     * QBSBlit are its (lvo GELS_SYS_*, bn the node for QBlit and QBSBlit),
+     * and every blit of ours is the CPU's, made while we own its blitter
+     * or after its WaitBlit. 0 when gels is the system's. */
+    void (*sys_blitter)(struct gels_state *st, int32_t lvo, struct gl_bltnode *bn);
+    void *sys_gfx;                      /* OS 3.2's GfxBase, for gels_lvo.c */
     /* a hardware blitter at 0xDFF000 (0: none, every blit by the CPU) */
     uint16_t has_blitter;
     /* the QBlit queue's step in progress: the routine asked to be called
@@ -166,6 +173,10 @@ struct gels_state {
     struct gfx_interrupt vertb;
     struct gfx_interrupt *old_blit;
 };
+
+/* graphics.library's LVOs that sys_blitter is given */
+enum { GELS_SYS_WAITBLIT = -228, GELS_SYS_QBLIT = -276, GELS_SYS_QBSBLIT = -294, GELS_SYS_OWNBLITTER = -456,
+       GELS_SYS_DISOWNBLITTER = -462 };
 
 /* gfx_init_gels's work, once st->env, call_blit and call_cleanup are set:
  * the blitter's fields of GfxBase. */
