@@ -17,7 +17,7 @@ int lc_meet(const struct lc_rect *a, const struct lc_rect *b, struct lc_rect *ou
 /* r less the part m inside it (m within r): up to four rectangles, the
  * band above m and the band below it across r's width, then left and
  * right of m. Answers how many. */
-static uint32_t cut(const struct lc_rect *r, const struct lc_rect *m, struct lc_rect out[4])
+uint32_t lc_cut(const struct lc_rect *r, const struct lc_rect *m, struct lc_rect out[4])
 {
     uint32_t k = 0;
     if (r->y0 < m->y0) { out[k] = *r; out[k].y1 = m->y0 - 1; k++; }
@@ -38,6 +38,8 @@ static uint32_t cut_x(const struct lc_rect *r, const struct lc_rect *m, struct l
     if (m->y1 < r->y1) { out[k].y0 = m->y1 + 1; out[k].y1 = r->y1; out[k].x0 = m->x0; out[k].x1 = m->x1; k++; }
     return k;
 }
+
+#define cut lc_cut
 
 /* Grows an array of items of size sz to hold at least want. */
 static int grow(const struct lc_mem *mem, void **arr, uint32_t *cap, uint32_t n, uint32_t want, uint32_t sz)
@@ -289,6 +291,16 @@ int lc_layer_pieces(const struct lc_layer *stack, uint32_t n, uint32_t idx, cons
         if (stack[k].flags & LC_HIDDEN) continue;
         if (cut_pieces(out, &stack[k].bounds, (int32_t)k)) return -1;
     }
+    return 0;
+}
+
+int lc_pieces_add(struct lc_pieces *s, const struct lc_rect *r, int32_t owner)
+{
+    void *a = s->p;
+    if (grow(s->mem, &a, &s->cap, s->n, s->n + 1, sizeof *s->p)) return -1;
+    s->p = a;
+    s->p[s->n].r = *r;
+    s->p[s->n++].obscurer = owner;
     return 0;
 }
 

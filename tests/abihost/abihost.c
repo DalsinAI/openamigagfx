@@ -7,9 +7,9 @@
  * Bitmaps are planar, laid out as AllocBitMap lays them out (rows of whole
  * words), so the screen's checksum is the Amiga's. RectFill and ReadPixel
  * go through a layer's ClipRects as graphics.library does: the screen where
- * a ClipRect is not obscured, else the super bitmap at the layer's own
- * coordinates, else the ClipRect's backing bitmap at x - (MinX & ~15),
- * y - MinY, else nowhere (ReadPixel gives -1). */
+ * a ClipRect is not obscured, else the ClipRect's backing bitmap at
+ * x - (MinX & ~15), y - MinY (super bitmap layers' too), else nowhere
+ * (ReadPixel gives -1). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -237,10 +237,6 @@ static struct BitMap *where(struct RastPort *rp, LONG x, LONG y, LONG *bx, LONG 
     for (cr = l->ClipRect; cr; cr = cr->Next) {
         if (sx < cr->bounds.MinX || sx > cr->bounds.MaxX || sy < cr->bounds.MinY || sy > cr->bounds.MaxY) continue;
         if (!cr->obscured) { *bx = sx; *by = sy; return inside(rp->BitMap, sx, sy) ? rp->BitMap : 0; }
-        if (l->Flags & LAYERSUPER) {
-            *bx = x; *by = y;
-            return l->SuperBitMap && inside(l->SuperBitMap, x, y) ? l->SuperBitMap : 0;
-        }
         if (cr->BitMap) {
             *bx = sx - (cr->bounds.MinX & ~15); *by = sy - cr->bounds.MinY;
             if (!inside(cr->BitMap, *bx, *by)) bad("backing bitmap too small", *bx, *by);
@@ -305,3 +301,4 @@ void UnlockLayers(struct Layer_Info *li) { ol_UnlockLayers(li); }
 void DoHookClipRects(struct Hook *h, struct RastPort *rp, struct Rectangle *r) { ol_DoHookClipRects(h, rp, r); }
 void SortLayerCR(struct Layer *l, LONG dx, LONG dy) { ol_SortLayerCR(l, dx, dy); }
 void SwapBitsRastPortClipRect(struct RastPort *rp, struct ClipRect *cr) { ol_SwapBitsRastPortClipRect(rp, cr); }
+

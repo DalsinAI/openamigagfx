@@ -12,7 +12,8 @@
  * every pixel each layer can be drawn into (through its ClipRects, as
  * graphics.library draws) and the screen behind the layers get random
  * values, and are read back. After it:
- *  - every layer's ClipRects cover its bounds once each, obscured exactly
+ *  - every layer's ClipRects cover its bounds once each (a simple refresh
+ *    layer's only where it is on show), obscured exactly
  *    where a shown layer is in front or the Layer_Info's bounds end, an
  *    obscured smart refresh ClipRect has a bitmap big enough for it;
  *  - a smart refresh or super bitmap layer still has every pixel it had,
@@ -277,8 +278,8 @@ ULONG ol_call_hook(struct Hook *hook, APTR obj, APTR msg) { return ((hookfn)(voi
 /* A pattern of the layer's (or screen's) own coordinates. */
 static uint8_t pat(LONG x, LONG y, uint32_t salt) { return (uint8_t)(((x * 7) ^ (y * 13) ^ salt) | 1); }
 
-/* A layer's hook gets the layer's RastPort (Layer set, as OS 3.2 gives
- * it) on the bitmap to fill; the Layer_Info's a bare one. */
+/* A hook gets a RastPort on the bitmap to fill: bare, or naming the
+ * layer the message names (as OS 3.2 gives it). */
 static ULONG fill_hook(struct Hook *h, APTR obj, APTR m)
 {
     struct RastPort *rp = obj;
@@ -287,13 +288,15 @@ static ULONG fill_hook(struct Hook *h, APTR obj, APTR m)
     struct BitMap *bm = rp->BitMap;
     checks++;
     if (msg->Bounds.MinX < 0 || msg->Bounds.MinY < 0 || msg->Bounds.MaxX >= bm->BytesPerRow ||
-        msg->Bounds.MaxY >= bm->Rows || rp->Layer != msg->Layer) {
+        msg->Bounds.MaxY >= bm->Rows || (rp->Layer && rp->Layer != msg->Layer)) {
         fail("hook bounds", msg->Bounds.MinX, msg->Bounds.MinY);
         return 0;
     }
     for (y = msg->Bounds.MinY; y <= msg->Bounds.MaxY; y++)
         for (x = msg->Bounds.MinX; x <= msg->Bounds.MaxX; x++)
-            bm->Planes[0][y * bm->BytesPerRow + x] =
+            /* the Layer_Info's hook (salt 99) in the screen's coordinates:
+             * its offsets are from the layer that uncovered the place */
+            bm->Planes[0][y * bm->BytesPerRow + x] = h->h_Data == (APTR)(uintptr_t)99 ? pat(x, y, 99) :
                 pat(msg->OffsetX + x - msg->Bounds.MinX, msg->OffsetY + y - msg->Bounds.MinY, (uint32_t)(uintptr_t)h->h_Data);
     return 0;
 }
@@ -318,10 +321,6 @@ static uint8_t *pix(struct Layer *l, struct ClipRect *list, LONG u, LONG v)
     for (cr = list; cr; cr = cr->Next) {
         if (x < cr->bounds.MinX || x > cr->bounds.MaxX || y < cr->bounds.MinY || y > cr->bounds.MaxY) continue;
         if (!cr->obscured) return &screen->Planes[0][y * SW + x];
-        if (l->Flags & LAYERSUPER) {
-            struct BitMap *s = l->SuperBitMap;
-            return &s->Planes[0][(v + l->Scroll_Y) * s->BytesPerRow + u + l->Scroll_X];
-        }
         if (cr->BitMap) {
             LONG bx = x - (cr->bounds.MinX & ~15), by = y - cr->bounds.MinY;
             if (bx < 0 || by < 0 || bx >= cr->BitMap->BytesPerRow || by >= cr->BitMap->Rows) {
@@ -409,10 +408,10 @@ static void check_cliprects(int i)
             fail("ClipRect outside its layer", cr->bounds.MinX, cr->bounds.MinY);
             return;
         }
-        if (cr->obscured && (l->Flags & (LAYERSMART | LAYERSUPER)) == LAYERSMART &&
+        if (cr->obscured && (l->Flags & (LAYERSMART | LAYERSUPER)) &&
             (!cr->BitMap || cr->BitMap->BytesPerRow < cr->bounds.MaxX - (cr->bounds.MinX & ~15) + 1 ||
              cr->BitMap->Rows < cr->bounds.MaxY - cr->bounds.MinY + 1)) {
-            fail("obscured smart ClipRect without a big enough bitmap", cr->bounds.MinX, cr->bounds.MinY);
+            fail("obscured smart or super ClipRect without a big enough bitmap", cr->bounds.MinX, cr->bounds.MinY);
             return;
         }
         for (y = cr->bounds.MinY; y <= cr->bounds.MaxY; y++)
@@ -426,7 +425,11 @@ static void check_cliprects(int i)
     }
     for (y = l->bounds.MinY; y <= l->bounds.MaxY; y++)
         for (x = l->bounds.MinX; x <= l->bounds.MaxX; x++)
-            if (!cov[y + oy][x + ox]) { fail("ClipRects leave a hole", x, y); return; }
+            if (!cov[y + oy][x + ox]) {
+                /* a simple refresh layer has none where it is not on show */
+                int vis = !hidden[i] && shown_at(x, y, me) < 0 && x >= 0 && y >= 0 && x < SW && y < SH;
+                if (vis || (l->Flags & (LAYERSMART | LAYERSUPER))) { fail("ClipRects leave a hole", x, y); return; }
+            }
 }
 
 /* What a fresh pixel of layer i must be at its (u, v), or -1 for any. */
@@ -665,24 +668,32 @@ static void one_round(int round)
             continue;
         case 12:
             if (lay[i]->Flags & LAYERSUPER) {
-                /* the super bitmap scrolls under the layer: what shows is
-                 * the super bitmap (with the screen written back) at the
-                 * new place */
+                /* the super bitmap scrolls under the layer, unclamped: every
+                 * pixel the layer keeps goes into it (where it reaches),
+                 * then what shows is the super bitmap at the new place, or
+                 * the pixel as it was where the super bitmap does not reach */
                 struct Layer *l = lay[i];
-                LONG dx = (LONG)(rnd() % 21) - 10, dy = (LONG)(rnd() % 21) - 10, u, v;
+                LONG dx = (LONG)(rnd() % 21) - 10, dy = (LONG)(rnd() % 21) - 10, u, v, sx, sy;
                 static uint8_t sup[SH * 2][SW * 2];
                 LONG w = l->bounds.MaxX - l->bounds.MinX + 1, h = l->bounds.MaxY - l->bounds.MinY + 1;
                 doing = "scroll";
                 for (v = 0; v < SH * 2; v++)
                     for (u = 0; u < SW * 2; u++) sup[v][u] = l->SuperBitMap->Planes[0][v * SW * 2 + u];
                 for (v = 0; v < h; v++)
-                    for (u = 0; u < w; u++) sup[v + l->Scroll_Y][u + l->Scroll_X] = before[i].v[v][u];
+                    for (u = 0; u < w; u++) {
+                        sx = u + l->Scroll_X; sy = v + l->Scroll_Y;
+                        if (before[i].have[v][u] && sx >= 0 && sy >= 0 && sx < SW * 2 && sy < SH * 2)
+                            sup[sy][sx] = before[i].v[v][u];
+                    }
                 ol_ScrollLayer(l, dx, dy);
                 checks++;
                 for (v = 0; v < h; v++)
                     for (u = 0; u < w; u++) {
                         uint8_t *p = pix(l, l->ClipRect, u, v);
-                        if (p && *p != sup[v + l->Scroll_Y][u + l->Scroll_X]) { fail("scrolled pixel", u, v); v = h; break; }
+                        int in;
+                        sx = u + l->Scroll_X; sy = v + l->Scroll_Y;
+                        in = sx >= 0 && sy >= 0 && sx < SW * 2 && sy < SH * 2;
+                        if (p && *p != (in ? sup[sy][sx] : before[i].v[v][u])) { fail("scrolled pixel", u, v); v = h; break; }
                     }
                 check_locks();
                 continue;
@@ -698,7 +709,7 @@ static void one_round(int round)
         default: {
             /* LayerOccluded */
             struct Layer *f;
-            int want = 0;
+            int want = hidden[i];       /* a hidden layer counts as occluded, as on OS 3.2 */
             doing = "occluded";
             for (f = lay[i]->front; f; f = f->front) {
                 int k = idx_of(f);

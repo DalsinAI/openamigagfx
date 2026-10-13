@@ -27,11 +27,13 @@
  *     and update lists are made again. If memory runs out before any pixel
  *     has moved, the stack goes back as it was and the call fails.
  *
- * Where a piece's pixels are: on the screen at its bounds (visible), in its
- * backing bitmap at (x - (MinX & ~15), y - MinY) as graphics.library reads
- * an obscured ClipRect, or in the layer's super bitmap at the layer's own
- * coordinates plus Scroll_X and Scroll_Y. A simple refresh layer keeps
- * nothing that is not on the screen.
+ * Where a piece's pixels are: on the screen at its bounds (visible), or in
+ * its backing bitmap at (x - (MinX & ~15), y - MinY) as graphics.library
+ * reads an obscured ClipRect; a super bitmap layer's obscured pieces have
+ * backing bitmaps too (as OS 3.2's do), filled from the super bitmap (the
+ * layer's own coordinates plus Scroll_X and Scroll_Y) where they are new
+ * to the layer; SyncSBitMap brings them all back to it. A simple refresh
+ * layer keeps nothing that is not on the screen.
  *
  * DamageList rectangles are relative to the layer's top left; a clip
  * region is in the RastPort's coordinates (the layer's own plus Scroll_X
@@ -56,13 +58,8 @@
 #include "layers_lib.h"
 
 /* NDK 3.2's ClipRect says obscured with a LONG, zero or not (it was lobs,
- * the layer in front, before V45). Ours holds the layer in front, as lobs
- * did, for programs that still read it so. */
-static LONG obscurer(const void *p)
-{
-    LONG v = (LONG)(uintptr_t)p;
-    return v ? v : 1;
-}
+ * the layer in front, before V45). OS 3.2 puts 1 there (measured). */
+#define OBSCURED 1
 
 enum { K_SCREEN, K_BM, K_SUPER, K_NONE };
 
@@ -219,6 +216,18 @@ static struct place place_of(struct Layer *l, const struct OClip *c, LONG ox, LO
     return p;
 }
 
+/* Where a super bitmap layer's super bitmap reaches, in screen
+ * coordinates. */
+static struct lc_rect super_ext(struct Layer *l)
+{
+    struct lc_rect e;
+    e.x0 = l->bounds.MinX - l->Scroll_X;
+    e.y0 = l->bounds.MinY - l->Scroll_Y;
+    e.x1 = e.x0 + (LONG)GetBitMapAttr(l->SuperBitMap, BMA_WIDTH) - 1;
+    e.y1 = e.y0 + (LONG)GetBitMapAttr(l->SuperBitMap, BMA_HEIGHT) - 1;
+    return e;
+}
+
 /* Copies r (screen coordinates where it lands) from s, where it was
  * (ddx, ddy) away, to d. */
 static void copy(const struct place *s, const struct place *d, const struct lc_rect *r, LONG ddx, LONG ddy)
@@ -228,7 +237,8 @@ static void copy(const struct place *s, const struct place *d, const struct lc_r
 }
 
 /* Fills r of a place with a hook: l's (or the Layer_Info's, l 0). */
-static void backfill(struct Layer *l, struct Hook *hook, const struct place *p, const struct lc_rect *r)
+static void backfill_with(struct Layer *l, struct RastPort *from, struct Hook *hook, const struct place *p,
+                          const struct lc_rect *r)
 {
     struct ol_hookmsg msg;
     struct RastPort rp;
@@ -239,10 +249,8 @@ static void backfill(struct Layer *l, struct Hook *hook, const struct place *p, 
                   r->x1 - r->x0 + 1, r->y1 - r->y0 + 1, 0x00, 0xFF, 0);
         return;
     }
-    /* as OS 3.2 calls it: a layer's own RastPort, Layer and all, on the
-     * bitmap to fill (a hook draws with Layer cleared, in its own copy);
-     * the Layer_Info's hook a bare one */
-    if (l) rp = *l->rp;
+    /* a copy of from (or a bare RastPort) on the bitmap to fill */
+    if (from) rp = *from;
     else InitRastPort(&rp);
     rp.BitMap = p->bm;
     msg.Layer = l;
@@ -253,6 +261,14 @@ static void backfill(struct Layer *l, struct Hook *hook, const struct place *p, 
     msg.OffsetX = l ? r->x0 - l->bounds.MinX + l->Scroll_X : r->x0;
     msg.OffsetY = l ? r->y0 - l->bounds.MinY + l->Scroll_Y : r->y0;
     ol_call_hook(hook, &rp, &msg);
+}
+
+/* As OS 3.2 calls a layer's hook: the layer's own RastPort, Layer and all
+ * (a hook draws with Layer cleared, in its own copy); the Layer_Info's
+ * hook, l 0, a bare one. */
+static void backfill(struct Layer *l, struct Hook *hook, const struct place *p, const struct lc_rect *r)
+{
+    backfill_with(l, l ? l->rp : 0, hook, p, r);
 }
 
 /* ---- ClipRect lists ---------------------------------------------------- */
@@ -340,8 +356,7 @@ static void detach(struct Layer *l)
     if (o->update_list) drop_sub(l, o->update_list);
     if (o->region_list) drop_sub(l, o->region_list);
     o->update_list = o->region_list = 0;
-    l->ClipRect = &o->full->cr;
-    if (!o->full) l->ClipRect = 0;
+    l->ClipRect = o->full ? &o->full->cr : 0;
 }
 
 /* The clip region's list, then the update's, made again from the full one. */
@@ -541,11 +556,10 @@ static int build(struct change *ch, struct lc_layer *st, struct Layer **ord, ULO
         int32_t ob = p.p[i].obscurer;
         UBYTE kind;
         if (ob == LC_VISIBLE && !o->hidden) kind = K_SCREEN;
-        else if (l->Flags & LAYERSUPER) kind = K_SUPER;
-        else if (l->Flags & LAYERSMART) kind = K_BM;
-        else kind = K_NONE;
+        else if (l->Flags & (LAYERSMART | LAYERSUPER)) kind = K_BM;
+        else continue;  /* OS 3.2 gives a simple refresh layer no ClipRect where it is not on show */
         if (!(c = add_clip(&head, &tail, &p.p[i].r, kind))) goto fail;
-        if (kind != K_SCREEN) c->cr.obscured = obscurer(ob >= 0 ? (const void *)ord[ob] : (const void *)l);
+        if (kind != K_SCREEN) c->cr.obscured = OBSCURED;
         if (kind != K_BM) continue;
         /* an old backing bitmap of the same bounds, where the layer has not
          * moved, is taken over as it is */
@@ -656,11 +670,21 @@ static void transfer(struct Layer *l, int phase)
 }
 
 /* Phase d for layer l: what none of its old pieces had (plan's fills). */
+/* Whether a layer's bounds changed since begin. */
+static int moved(struct Layer *l)
+{
+    struct Rectangle *a = &l->bounds, *b = &OL(l)->oldb;
+    return a->MinX != b->MinX || a->MinY != b->MinY || a->MaxX != b->MaxX || a->MaxY != b->MaxY;
+}
+
 static void fill_fresh(struct Layer *l, int made)
 {
     struct OLayer *o = OL(l);
     struct OClip *n, sup;
     struct place ps, pd;
+    struct Layer tmp;
+    struct RastPort trp;
+    int simple = !(l->Flags & (LAYERSMART | LAYERSUPER));
     uint32_t i;
 
     sup.kind = K_SUPER;
@@ -673,11 +697,6 @@ static void fill_fresh(struct Layer *l, int made)
                 break;
         if (!n) continue;
         pd = place_of(l, n, l->bounds.MinX, l->bounds.MinY);
-        if (l->Flags & LAYERSUPER) {
-            copy(&ps, &pd, r, 0, 0);
-            continue;
-        }
-        backfill(l, l->BackFill, &pd, r);
         if (!made) {
             struct Rectangle d;
             d.MinX = (WORD)(r->x0 - l->bounds.MinX); d.MinY = (WORD)(r->y0 - l->bounds.MinY);
@@ -686,7 +705,74 @@ static void fill_fresh(struct Layer *l, int made)
             /* OS 3.2 sets Intuition's two bits with it; only they clear them */
             l->Flags |= LAYERREFRESH | LAYERIREFRESH | LAYERIREFRESH2;
         }
+        if (l->Flags & LAYERSUPER) {
+            /* a super bitmap layer's new part comes from its bitmap (and is
+             * damage all the same); where the bitmap does not reach, the
+             * backing bitmap is cleared */
+            struct lc_rect e, m, out[4];
+            uint32_t k, nk = 1;
+            if (!l->SuperBitMap) continue;
+            e = super_ext(l);
+            out[0] = *r;
+            if (lc_meet(r, &e, &m)) {
+                copy(&ps, &pd, &m, 0, 0);
+                nk = lc_cut(r, &m, out);
+            }
+            for (k = 0; k < nk; k++) backfill(l, LAYERS_BACKFILL, &pd, &out[k]);
+        } else if (made) {
+            /* a layer just made gets its hook with its own RastPort; a
+             * simple refresh one a second time with a bare one (so the
+             * hook draws), its refresh bits up meanwhile, as on OS 3.2 */
+            backfill(l, l->BackFill, &pd, r);
+            if (simple) {
+                UWORD f = l->Flags;
+                l->Flags |= LAYERREFRESH | LAYERIREFRESH | LAYERIREFRESH2;
+                backfill_with(l, 0, l->BackFill, &pd, r);
+                l->Flags = f;
+            }
+        } else if (moved(l)) {
+            /* moved or sized: OS 3.2 hands the hook its stand-in for the
+             * layer (a copy with the new bounds, whose RastPort names the
+             * copy); a simple refresh layer then gets it itself, with a
+             * bare RastPort (as one uncovered by a restack does) */
+            tmp = *l;
+            trp = *l->rp;
+            tmp.rp = &trp;
+            trp.Layer = &tmp;
+            backfill_with(&tmp, &trp, l->BackFill, &pd, r);
+            if (simple) backfill_with(l, 0, l->BackFill, &pd, r);
+        } else {
+            backfill_with(l, 0, l->BackFill, &pd, r);
+        }
     }
+}
+
+
+/* The screen newly uncovered, as OS 3.2 hands it to the Layer_Info's
+ * hook: for each layer of the old stack (front to back), what it covered
+ * that no layer in front of it did then and no layer covers now, with that
+ * layer (index into the old stack) as owner. */
+static int uncovered_by(const struct lc_layer *st, ULONG n, const struct lc_layer *ost, ULONG on,
+                        const struct lc_rect *screen, struct lc_pieces *who)
+{
+    struct lc_rects one;
+    ULONG k, j;
+    uint32_t i;
+    int e = 0;
+
+    lc_init(&one, &mem);
+    for (k = 0; k < on && !e; k++) {
+        struct lc_rect b;
+        if ((ost[k].flags & LC_HIDDEN) || !lc_meet(&ost[k].bounds, screen, &b)) continue;
+        if ((e = lc_set(&one, &b))) break;
+        for (j = 0; j < n && one.n && !e; j++)
+            if (!(st[j].flags & LC_HIDDEN)) e = lc_sub_rect(&one, &st[j].bounds);
+        for (j = 0; j < k && one.n && !e; j++)
+            if (!(ost[j].flags & LC_HIDDEN)) e = lc_sub_rect(&one, &ost[j].bounds);
+        for (i = 0; i < one.n && !e; i++) e = lc_pieces_add(who, &one.r[i], (int32_t)k);
+    }
+    lc_free(&one);
+    return e ? -1 : 0;
 }
 
 /* Moves the pixels for the change since begin, puts in the new lists and
@@ -695,10 +781,10 @@ static void fill_fresh(struct Layer *l, int made)
  * 0, or -1 when memory ran out and the stack is back as it was. */
 static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
 {
-    struct lc_layer *st, *ost;
-    struct Layer **ord, **oord, *l;
+    struct lc_layer *st, *ost = 0;
+    struct Layer **ord, **oord = 0, *l;
     ULONG n, on = 0, i;
-    struct lc_rects unew, uold;
+    struct lc_pieces who;
     struct OInfo *inf;
     int phase;
 
@@ -725,22 +811,20 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
         }
 
     /* what needs memory, before any pixel moves */
-    lc_init(&unew, &mem);
-    lc_init(&uold, &mem);
+    lc_pieces_init(&who, &mem);
     for (i = 0; i < n; i++)
         if (plan(ord[i], ord[i] == made)) break;
     if (i == n && ch->have_screen) {
+        /* the screen newly uncovered, each piece with the layer that left
+         * it (in the stack as it was) */
         ost = stack_of(ch, 1, &on, &oord);
-        if ((on && !ost) || lc_uncovered(st, n, &ch->screen, &unew) || lc_uncovered(ost, on, &ch->screen, &uold) ||
-            lc_sub(&unew, &uold))
-            i = n + 1;
-        free_stack(ost, oord, on);
+        if ((on && !ost) || uncovered_by(st, n, ost, on, &ch->screen, &who)) i = n + 1;
     }
     if (i != n) {
         ULONG k;
         for (k = 0; k < n && k < i; k++) { lc_free(&OL(ord[k])->movers); lc_free(&OL(ord[k])->fills); }
-        lc_free(&unew);
-        lc_free(&uold);
+        lc_pieces_free(&who);
+        free_stack(ost, oord, on);
         for (k = 0; k < n; k++) {
             struct OClip *c;
             for (c = OL(ord[k])->fresh; c; c = (struct OClip *)c->cr.Next)
@@ -760,15 +844,36 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
         lc_free(&OL(ord[i])->movers);
         lc_free(&OL(ord[i])->fills);
     }
-    if (unew.n) {
+    if (who.n) {
+        /* OS 3.2 hands the Layer_Info's hook a stand-in for the layer that
+         * left each piece: that layer as it was (its old bounds), simple
+         * refresh, and offsets from its old top left */
         struct place p;
+        struct Layer tmp;
+        struct RastPort trp;
         inf = info_of(ch->li, 0);
         p.bm = (n ? ord[0] : gone)->rp->BitMap;
         p.dx = p.dy = 0;
-        for (i = 0; i < unew.n; i++) backfill(0, inf ? inf->hook : LAYERS_BACKFILL, &p, &unew.r[i]);
+        for (i = 0; i < who.n; i++) {
+            struct Layer *was = oord[who.p[i].obscurer];
+            /* a layer gone or hidden where it was comes itself */
+            if (moved(was)) {
+                tmp = *was;
+                trp = *was->rp;
+                tmp.bounds = OL(was)->oldb;
+                tmp.Flags = (UWORD)((was->Flags & ~(LAYERSMART | LAYERSUPER)) | LAYERSIMPLE);
+                tmp.Scroll_X = tmp.Scroll_Y = 0;
+                tmp.rp = &trp;
+                trp.Layer = &tmp;
+            }
+            /* the stand-in's RastPort names it; a layer itself comes with
+             * a bare one */
+            if (moved(was)) backfill_with(&tmp, &trp, inf ? inf->hook : LAYERS_BACKFILL, &p, &who.p[i].r);
+            else backfill_with(was, was == gone ? was->rp : 0, inf ? inf->hook : LAYERS_BACKFILL, &p, &who.p[i].r);
+        }
     }
-    lc_free(&unew);
-    lc_free(&uold);
+    lc_pieces_free(&who);
+    free_stack(ost, oord, on);
 
     /* the lists */
     for (i = 0; i < n; i++) {
@@ -1038,9 +1143,9 @@ LONG ol_LayerOccluded(struct Layer *l)
 {
     struct Layer *f;
     struct lc_rect b = lr(&l->bounds);
-    LONG r = FALSE;
+    LONG r = OL(l)->hidden ? TRUE : FALSE;     /* hidden counts as occluded on OS 3.2 */
     ObtainSemaphore(&l->LayerInfo->Lock);
-    for (f = l->front; f; f = f->front) {
+    for (f = l->front; f && !r; f = f->front) {
         struct lc_rect fb = lr(&f->bounds);
         if (!OL(f)->hidden && lc_meet(&b, &fb, 0)) { r = TRUE; break; }
     }
@@ -1098,31 +1203,27 @@ void ol_ScrollLayer(struct Layer *l, LONG dx, LONG dy)
     ObtainSemaphore(&l->Lock);
     detach(l);
     if ((l->Flags & LAYERSUPER) && l->SuperBitMap) {
-        LONG sw = (LONG)GetBitMapAttr(l->SuperBitMap, BMA_WIDTH) - l->Width;
-        LONG sh = (LONG)GetBitMapAttr(l->SuperBitMap, BMA_HEIGHT) - l->Height;
+        /* every piece into the super bitmap, then back from the new place
+         * (where the super bitmap reaches): OS 3.2 does not clamp */
         struct OClip sup;
         struct place ps, pd;
-        /* the screen into the super bitmap, then back from the new place */
+        int way;
         sup.kind = K_SUPER;
-        for (c = o->full; c; c = (struct OClip *)c->cr.Next) {
-            struct lc_rect b = lr(&c->cr.bounds);
-            if (c->kind != K_SCREEN) continue;
-            ps = place_of(l, c, 0, 0);
-            pd = place_of(l, &sup, l->bounds.MinX, l->bounds.MinY);
-            copy(&ps, &pd, &b, 0, 0);
-        }
-        if (l->Scroll_X + dx < 0) dx = -l->Scroll_X;
-        if (l->Scroll_Y + dy < 0) dy = -l->Scroll_Y;
-        if (l->Scroll_X + dx > sw) dx = sw - l->Scroll_X;
-        if (l->Scroll_Y + dy > sh) dy = sh - l->Scroll_Y;
-        l->Scroll_X += (WORD)dx;
-        l->Scroll_Y += (WORD)dy;
-        for (c = o->full; c; c = (struct OClip *)c->cr.Next) {
-            struct lc_rect b = lr(&c->cr.bounds);
-            if (c->kind != K_SCREEN) continue;
-            ps = place_of(l, &sup, l->bounds.MinX, l->bounds.MinY);
-            pd = place_of(l, c, 0, 0);
-            copy(&ps, &pd, &b, 0, 0);
+        for (way = 0; way < 2; way++) {
+            struct lc_rect ext;
+            if (way) {
+                l->Scroll_X += (WORD)dx;
+                l->Scroll_Y += (WORD)dy;
+            }
+            ext = super_ext(l);
+            for (c = o->full; c; c = (struct OClip *)c->cr.Next) {
+                struct lc_rect b = lr(&c->cr.bounds);
+                if (c->kind == K_NONE || !lc_meet(&b, &ext, &b)) continue;
+                ps = place_of(l, c, 0, 0);
+                pd = place_of(l, &sup, l->bounds.MinX, l->bounds.MinY);
+                if (way) copy(&pd, &ps, &b, 0, 0);
+                else copy(&ps, &pd, &b, 0, 0);
+            }
         }
     } else {
         l->Scroll_X += (WORD)dx;
@@ -1205,10 +1306,6 @@ void ol_DoHookClipRects(struct Hook *hook, struct RastPort *rp, const struct Rec
         if (!cr->obscured) {
             p.bm = rp->BitMap;
             p.dx = p.dy = 0;
-        } else if (l->Flags & LAYERSUPER) {
-            p.bm = l->SuperBitMap;
-            p.dx = l->Scroll_X - l->bounds.MinX;
-            p.dy = l->Scroll_Y - l->bounds.MinY;
         } else if (cr->BitMap) {
             p.bm = cr->BitMap;
             p.dx = -(LONG)(cr->bounds.MinX & ~15);
@@ -1217,6 +1314,28 @@ void ol_DoHookClipRects(struct Hook *hook, struct RastPort *rp, const struct Rec
             continue;
         }
         backfill(l, hook, &p, &m);
+    }
+    /* OS 3.2 also hands a super bitmap layer's hook the rectangle in the
+     * super bitmap: the part in the layer's window, then the rest */
+    if ((l->Flags & LAYERSUPER) && l->SuperBitMap) {
+        struct place p;
+        struct lc_rect all, win, out[4];
+        uint32_t k, n;
+        p.bm = l->SuperBitMap;
+        p.dx = l->Scroll_X - l->bounds.MinX;
+        p.dy = l->Scroll_Y - l->bounds.MinY;
+        all = super_ext(l);
+        if (lc_meet(&want, &all, &want)) {
+            win = lr(&l->bounds);
+            if (lc_meet(&want, &win, &m)) {
+                backfill(l, hook, &p, &m);
+                n = lc_cut(&want, &m, out);
+            } else {
+                out[0] = want;
+                n = 1;
+            }
+            for (k = 0; k < n; k++) backfill(l, hook, &p, &out[k]);
+        }
     }
     ReleaseSemaphore(&l->Lock);
 }

@@ -56,6 +56,9 @@ void lc_free(struct lc_rects *s);
 void lc_clear(struct lc_rects *s);
 int lc_set(struct lc_rects *s, const struct lc_rect *r);      /* s = r */
 int lc_copy(struct lc_rects *dst, const struct lc_rects *src);
+/* r less m (m inside r): up to four pieces, the bands above and below m
+ * across r, then left and right of m; answers how many */
+uint32_t lc_cut(const struct lc_rect *r, const struct lc_rect *m, struct lc_rect out[4]);
 int lc_sub_rect(struct lc_rects *s, const struct lc_rect *r); /* s -= r */
 int lc_sub_rect_x(struct lc_rects *s, const struct lc_rect *r); /* s -= r, its pieces cut columns first */
 void lc_and_rect(struct lc_rects *s, const struct lc_rect *r);/* s &= r, never allocates */
@@ -98,6 +101,9 @@ void lc_pieces_free(struct lc_pieces *s);
  * for none (nothing is off). A hidden layer is one piece, LC_OFFSCREEN. */
 int lc_layer_pieces(const struct lc_layer *stack, uint32_t n, uint32_t idx, const struct lc_rect *screen,
                     struct lc_pieces *out);
+
+/* Adds a piece. */
+int lc_pieces_add(struct lc_pieces *s, const struct lc_rect *r, int32_t owner);
 
 /* The visible part of stack[idx], as a set. */
 int lc_layer_visible(const struct lc_layer *stack, uint32_t n, uint32_t idx, const struct lc_rect *screen,
