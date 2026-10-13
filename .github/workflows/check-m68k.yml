@@ -17,6 +17,8 @@ on:
       - tests/LayersABITest.c
       - library/graphics/**
       - tests/GfxFaceABITest.c
+      - library/gels/**
+      - tests/GelsABITest.c
 
 permissions:
   contents: read
@@ -43,3 +45,5 @@ jobs:
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_face.sh
       - name: OpenGfx text
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_text.sh
+      - name: OpenGfx gels and the blitter
+        run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_gels.sh
