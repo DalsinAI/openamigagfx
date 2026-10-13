@@ -9,6 +9,7 @@ on:
       - .github/workflows/check-m68k.yml
       - library/core/**
       - library/layers/**
+      - tests/host-ndk/**
       - tests/m68k/**
 
 permissions:
@@ -26,3 +27,5 @@ jobs:
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_core.sh
       - name: OpenLayers core
         run: QEMU_M68K=qemu-m68k HOST_CC=gcc sh tests/m68k/test_layers_core.sh
+      - name: OpenLayers library
+        run: QEMU_M68K=qemu-m68k HOST_CC=gcc sh tests/m68k/test_layers_lib.sh
