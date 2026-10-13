@@ -21,7 +21,7 @@ extern "C" {
 #endif
 
 struct gfx_env {
-    void *ctx;                  /* SysBase on the Amiga; the test's machine elsewhere */
+    void *ctx;                  /* the GfxBase on the Amiga; the test's machine elsewhere */
     struct gfx_base *base;      /* the library base: public GfxBase, then gfx_private */
 
     /* exec memory. flags are exec's MEMF_ (GFX_MEMF_*); free gets the
@@ -67,6 +67,10 @@ struct gfx_env {
 
     /* debugging output; may be 0 */
     void (*log)(void *ctx, const char *s);
+
+    /* a Hook as utility.library's CallHookPkt calls it: A0 hook, A2 obj,
+     * A1 msg (EraseRect's and ScrollRasterBF's layer backfill) */
+    uint32_t (*call_hook)(void *ctx, void *hook, void *obj, void *msg);
 };
 
 /* Each area's private state, by index into gfx_private.area. */
