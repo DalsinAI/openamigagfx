@@ -297,6 +297,54 @@ struct gfx_base {
     uint32_t *hwemul[9];                        /* 508 */
 };                                              /* 544 */
 
+struct gfx_regionrect {                 /* struct RegionRectangle, 16 bytes */
+    struct gfx_regionrect *next, *prev;
+    struct gfx_rectangle bounds;
+};
+
+struct gfx_region {                     /* struct Region, 12 bytes */
+    struct gfx_rectangle bounds;
+    struct gfx_regionrect *rects;
+};
+
+struct gfx_cliprect {                   /* struct ClipRect, 40 bytes */
+    struct gfx_cliprect *next;
+    struct gfx_cliprect *prev;
+    void *lobs;                         /* obscured: the layer in front, or 0 */
+    struct gfx_bitmap *bitmap;          /* a smart refresh piece's own pixels */
+    struct gfx_rectangle bounds;        /* on the screen */
+    void *p1, *p2;
+    int32_t reserved;
+    int32_t flags;
+};
+
+struct gfx_layer {                      /* struct Layer, 160 bytes */
+    struct gfx_layer *front, *back;
+    struct gfx_cliprect *cliprect;
+    struct gfx_rastport *rp;
+    struct gfx_rectangle bounds;
+    uint8_t reserved[4];
+    uint16_t priority;
+    uint16_t flags;
+    struct gfx_bitmap *superbitmap;
+    struct gfx_cliprect *superclip;
+    void *window;
+    int16_t scroll_x, scroll_y;
+    struct gfx_cliprect *cr, *cr2, *crnew;
+    struct gfx_cliprect *supersavecliprects;
+    struct gfx_cliprect *cliprects_;
+    void *layerinfo;
+    struct gfx_semaphore lock;
+    void *backfill;                     /* struct Hook *, or LAYERS_NOBACKFILL (1) */
+    uint32_t reserved1;
+    struct gfx_region *clipregion;
+    struct gfx_region *savecliprects;
+    int16_t width, height;
+    uint8_t reserved2[18];
+    struct gfx_region *damagelist;
+};
+enum { GFX_LAYERSIMPLE = 1, GFX_LAYERSMART = 2, GFX_LAYERSUPER = 4, GFX_LAYERREFRESH = 0x80 };
+
 /* GfxBase's ChipRevBits0, DisplayFlags and MemType values. */
 enum { GFX_GFXF_BIG_BLITS = 1, GFX_GFXF_HR_AGNUS = 1, GFX_GFXF_HR_DENISE = 2, GFX_GFXF_AA_ALICE = 4,
        GFX_GFXF_AA_LISA = 8, GFX_GFXF_AA_MLISA = 16 };
@@ -325,6 +373,16 @@ GFX_OFF(gfx_rastport, font, 52);
 GFX_OFF(gfx_rastport, txspacing, 64);
 GFX_OFF(gfx_rastport, longreserved, 70);
 GFX_OFF(gfx_rastport, wordreserved, 78);
+GFX_SIZE(gfx_region, 12);
+GFX_SIZE(gfx_regionrect, 16);
+GFX_SIZE(gfx_cliprect, 40);
+GFX_SIZE(gfx_layer, 160);
+GFX_OFF(gfx_layer, flags, 30);
+GFX_OFF(gfx_layer, scroll_x, 44);
+GFX_OFF(gfx_layer, lock, 72);
+GFX_OFF(gfx_layer, backfill, 118);
+GFX_OFF(gfx_layer, clipregion, 126);
+GFX_OFF(gfx_layer, damagelist, 156);
 GFX_SIZE(gfx_paletteextra, 68);
 GFX_OFF(gfx_paletteextra, refcnt, 54);
 GFX_SIZE(gfx_colormap, 52);
