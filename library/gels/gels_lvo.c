@@ -80,18 +80,34 @@ static void call_cleanup(struct gels_state *st, struct gl_bltnode *bn)
 static const char blit_name[] = "graphics blitter";
 static const char vertb_name[] = "graphics QBSBlit";
 
+/* The blitter is ours only as graphics.library; opened next to OS 3.2's
+ * as opengfx.library, the OS's graphics.library keeps the blitter and its
+ * interrupt vector, and every blit of ours is the CPU's (as the display
+ * leaves the custom chips alone there, display_lvo.c). */
+static int gels_is_system(const struct gfx_base *gb)
+{
+    static const char want[] = "graphics.library";
+    const char *n = gb->libnode.node.name;
+    unsigned i;
+    if (!n) return 1;
+    for (i = 0; i < sizeof want; i++)
+        if (n[i] != want[i]) return 0;
+    return 1;
+}
+
 int gfx_init_gels(struct gfx_env *env)
 {
     struct gfx_base *gb = env->base;
     struct gels_state *st = (struct gels_state *)env->alloc(env->ctx, sizeof *st, GFX_MEMF_PUBLIC | GFX_MEMF_CLEAR);
+    int sys = gels_is_system(gb);
     if (!st) return 0;
     st->env = env;
     st->call_blit = call_blit;
     st->call_cleanup = call_cleanup;
-    st->has_blitter = 1;
+    st->has_blitter = (uint16_t)sys;
     gels_init(st);
     gfx_private_of(gb)->area[GFX_AREA_GELS] = st;
-    if (BLIT_ENTRY && env->set_int_vector) {
+    if (sys && BLIT_ENTRY && env->set_int_vector) {
         gb->bltsrv.node.type = 2;           /* NT_INTERRUPT */
         gb->bltsrv.node.name = (char *)blit_name;
         gb->bltsrv.data = st;
