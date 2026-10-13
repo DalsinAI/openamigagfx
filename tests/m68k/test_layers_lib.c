@@ -407,7 +407,6 @@ static void check_cliprects(int i)
             fail("ClipRect outside its layer", cr->bounds.MinX, cr->bounds.MinY);
             return;
         }
-        if (cr->Next && cr->Next->prev != cr) { fail("ClipRect prev", 0, 0); return; }
         if (cr->obscured && (l->Flags & (LAYERSMART | LAYERSUPER)) == LAYERSMART &&
             (!cr->BitMap || cr->BitMap->BytesPerRow < cr->bounds.MaxX - (cr->bounds.MinX & ~15) + 1 ||
              cr->BitMap->Rows < cr->bounds.MaxY - cr->bounds.MinY + 1)) {

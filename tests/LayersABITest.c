@@ -163,7 +163,7 @@ static void report_layer(int i)
 
     for (y = 0; y < h; y++) for (x = 0; x < w; x++) map[y][x] = 0xFF;   /* 0xFF: no ClipRect */
     for (cr = l->ClipRect; cr; cr = cr->Next, ncr++) {
-        APTR ob = *(APTR *)(void *)&cr->obscured;
+        APTR ob = (APTR)cr->obscured;
         UBYTE v = ob ? (UBYTE)(1 + (id_of(ob) & 0x3F)) : 0;
         if (cr->BitMap) v |= 0x40;
         for (y = cr->bounds.MinY; y <= cr->bounds.MaxY; y++)
@@ -199,7 +199,7 @@ static void report_layer(int i)
     if (probe)
         for (cr = l->ClipRect; cr; cr = cr->Next)
             out("C %d %d,%d,%d,%d ob=%d bm=%d\n", i, cr->bounds.MinX, cr->bounds.MinY, cr->bounds.MaxX, cr->bounds.MaxY,
-                id_of(*(APTR *)(void *)&cr->obscured), cr->BitMap ? (cr->BitMap == l->SuperBitMap ? 2 : 1) : 0);
+                id_of((APTR)cr->obscured), cr->BitMap ? (cr->BitMap == l->SuperBitMap ? 2 : 1) : 0);
 }
 
 static void report(int step, const char *what, LONG r)

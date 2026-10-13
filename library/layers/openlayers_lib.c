@@ -21,6 +21,7 @@
 #include <exec/libraries.h>
 #include <exec/execbase.h>
 #include <exec/memory.h>
+#include <dos/dos.h>
 #include <graphics/gfxbase.h>
 #include <graphics/clip.h>
 #include <graphics/layers.h>

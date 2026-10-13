@@ -55,11 +55,14 @@
 #include "layers_core.h"
 #include "layers_lib.h"
 
-/* A ClipRect is told obscured by pointing at a layer, as every OS has
- * (lobs); NDK 3.2 calls the field obscured. */
-#define SET_OBSCURED(cr, p) (*(APTR *)(void *)&(cr)->obscured = (APTR)(p))
-#define IS_OBSCURED(cr) (*(APTR *)(void *)&(cr)->obscured != 0)
-typedef char obscured_is_a_pointer[sizeof(((struct ClipRect *)0)->obscured) == sizeof(APTR) ? 1 : -1];
+/* NDK 3.2's ClipRect says obscured with a LONG, zero or not (it was lobs,
+ * the layer in front, before V45). Ours holds the layer in front, as lobs
+ * did, for programs that still read it so. */
+static LONG obscurer(const void *p)
+{
+    LONG v = (LONG)(uintptr_t)p;
+    return v ? v : 1;
+}
 
 enum { K_SCREEN, K_BM, K_SUPER, K_NONE };
 
@@ -264,12 +267,8 @@ static struct OClip *add_clip(struct OClip **head, struct OClip **tail, const st
     if (!c) return 0;
     c->cr.bounds = gr(r);
     c->kind = kind;
-    if (*tail) {
-        c->cr.prev = &(*tail)->cr;
-        (*tail)->cr.Next = &c->cr;
-    } else {
-        *head = c;
-    }
+    if (*tail) (*tail)->cr.Next = &c->cr;
+    else *head = c;
     *tail = c;
     return c;
 }
@@ -289,7 +288,7 @@ static int make_sub(struct Layer *l, struct OClip *list, const struct lc_rects *
             if (!lc_meet(&b, &set->r[i], &m)) continue;
             if (!(s = add_clip(&head, &tail, &m, c->kind))) goto fail;
             s->parent = c;
-            SET_OBSCURED(&s->cr, *(APTR *)(void *)&c->cr.obscured);
+            s->cr.obscured = c->cr.obscured;
             if (c->kind == K_BM) {
                 struct place ps, pd;
                 if (!(s->cr.BitMap = backing(l, &m))) goto fail;
@@ -532,7 +531,7 @@ static int build(struct change *ch, struct lc_layer *st, struct Layer **ord, ULO
         else if (l->Flags & LAYERSMART) kind = K_BM;
         else kind = K_NONE;
         if (!(c = add_clip(&head, &tail, &p.p[i].r, kind))) goto fail;
-        if (kind != K_SCREEN) SET_OBSCURED(&c->cr, ob >= 0 ? (APTR)ord[ob] : (APTR)l);
+        if (kind != K_SCREEN) c->cr.obscured = obscurer(ob >= 0 ? (const void *)ord[ob] : (const void *)l);
         if (kind != K_BM) continue;
         /* an old backing bitmap of the same bounds, where the layer has not
          * moved, is taken over as it is */
@@ -1188,7 +1187,7 @@ void ol_DoHookClipRects(struct Hook *hook, struct RastPort *rp, const struct Rec
         struct lc_rect b = lr(&cr->bounds);
         struct place p;
         if (!lc_meet(&b, &want, &m)) continue;
-        if (!IS_OBSCURED(cr)) {
+        if (!cr->obscured) {
             p.bm = rp->BitMap;
             p.dx = p.dy = 0;
         } else if (l->Flags & LAYERSUPER) {
@@ -1228,7 +1227,6 @@ void ol_SortLayerCR(struct Layer *l, LONG dx, LONG dy)
                     nodes[j]->bounds.MaxX == r[i].x1 && nodes[j]->bounds.MaxY == r[i].y1)
                     break;
             if (j < n) { cr = nodes[j]; nodes[j] = nodes[i]; nodes[i] = cr; }
-            nodes[i]->prev = prev;
             if (prev) prev->Next = nodes[i];
             else l->ClipRect = nodes[i];
             prev = nodes[i];

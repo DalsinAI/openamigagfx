@@ -32,8 +32,8 @@ struct Layer {
 };
 struct ClipRect {
     struct ClipRect *Next;
-    struct ClipRect *prev;
-    APTR obscured;
+    struct ClipRect *reservedlink;
+    LONG obscured;
     struct BitMap *BitMap;
     struct Rectangle bounds;
     void *_p1, *_p2;

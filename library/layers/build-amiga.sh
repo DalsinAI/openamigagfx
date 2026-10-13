@@ -21,7 +21,7 @@ FD=${FD:-"$P/m68k-amigaos/ndk/lib/fd/layers_lib.fd"}
 [ -f "$FD" ] || { echo "no $FD: set FD=" >&2; exit 1; }
 python3 "$GUEST/libraries/common/check_fd.py" "$FD" "$HERE/layers.lvo"
 
-LIBFLAGS="-m68000 -O2 -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
+LIBFLAGS="-m68000 -O2 -fno-strict-aliasing -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
   -fno-lto -fno-builtin -fno-tree-loop-distribute-patterns -Wall -Wextra -Werror
   -Wno-unused-parameter -nostartfiles -nostdlib"
 for name in layers openlayers; do
