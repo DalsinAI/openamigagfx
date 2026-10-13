@@ -239,7 +239,7 @@ static void render_line(int v)
                 col = r << 16 | g << 8 | b;
             }
             hold = col;
-        } else if (planes == 6 && !ham) {
+        } else if (planes == 6 && !ham && !(aga && (con2 & 0x0200))) {   /* AGA's KILLEHB */
             col = M.palette[val & 31];
             if (val & 32) {
                 if (aga) col = (col >> 1) & 0x7F7F7F;
@@ -499,6 +499,8 @@ static void run_scene(int si)
         }
         for (int f = 0; f < nf; f++) {
             frame(f == 0);
+            if (phase == 2 && f == 0)
+                CHECK(replies == (unsigned)S.nvp, "SafeMessage at the vertical blank, DispMessage a field later");
             for (int k = ri0; k < ri0 + rn; k++) {
                 const int16_t *R = RECT[k];
                 if (R[0] != phase || R[1] != f) continue;
@@ -517,6 +519,7 @@ static void run_scene(int si)
             }
         }
         if (phase == 2) {
+            if (nf == 1) frame(true);   /* the field shown: DispMessage at the next blank */
             CHECK(replies == 2u * (unsigned)S.nvp, "ChangeVPBitMap's two messages each");
             for (int i = 0; i < S.nvp; i++) gd_FreeDBufInfo(&E, dbi[i]);
         }

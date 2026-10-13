@@ -26,6 +26,7 @@ struct state {
     uint16_t fmode;                     /* what copinit loads into FMODE */
     uint16_t spritewords;               /* 1, 2 or 4: the sprites' fetch width */
     bool hw;                            /* the display is ours: write the registers */
+    void *dispq;                        /* DBufInfos (dbi_Link2) shown since the last blank: DispMessage next */
 };
 
 static inline gfx_base *base(gfx_env *env) { return env->base; }
