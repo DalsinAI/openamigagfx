@@ -59,11 +59,39 @@ __asm__(".text\n"
         "\trts\n");
 #define BLIT_ENTRY ((void (*)(void))gels_blit_entry)
 #define VERTB_ENTRY ((void (*)(void))gels_vertb_entry)
+
+/* A library call with A6 the base: lvo the negative offset, A1 and D0 its
+ * arguments (exec's OpenLibrary and CloseLibrary; graphics.library's
+ * blitter calls, which take A1 or nothing). D0 the answer. */
+static int32_t lib_call(void *base, int32_t lvo, void *arg_a1, int32_t arg_d0)
+{
+    register int32_t d0 __asm("d0") = arg_d0;
+    register void *a0 __asm("a0") = (char *)base + lvo;
+    register void *a1 __asm("a1") = arg_a1;
+    /* A6 by hand, as it may be the frame pointer */
+    __asm volatile("move.l %%a6,-(%%sp)\n\tmove.l %3,%%a6\n\tjsr (%1)\n\tmove.l (%%sp)+,%%a6"
+                   : "+r"(d0), "+r"(a0), "+r"(a1) : "r"(base) : "d1", "cc", "memory");
+    return d0;
+}
 #else
 static int32_t call_regs(void *fn, struct gl_bltnode *bn) { (void)fn; (void)bn; return 0; }
+static int32_t lib_call(void *base, int32_t lvo, void *arg_a1, int32_t arg_d0)
+{
+    (void)base; (void)lvo; (void)arg_a1; (void)arg_d0;
+    return 0;
+}
 #define BLIT_ENTRY ((void (*)(void))0)
 #define VERTB_ENTRY ((void (*)(void))0)
 #endif
+
+#define LVO_OPENLIBRARY (-552)   /* exec */
+#define LVO_CLOSELIBRARY (-414)
+
+/* The side-by-side build's blitter calls: OS 3.2's graphics.library's. */
+static void sys_blitter(struct gels_state *st, int32_t lvo, struct gl_bltnode *bn)
+{
+    lib_call(st->sys_gfx, lvo, bn, 0);
+}
 
 static int32_t call_blit(struct gels_state *st, struct gl_bltnode *bn)
 {
@@ -81,9 +109,12 @@ static const char blit_name[] = "graphics blitter";
 static const char vertb_name[] = "graphics QBSBlit";
 
 /* The blitter is ours only as graphics.library; opened next to OS 3.2's
- * as opengfx.library, the OS's graphics.library keeps the blitter and its
- * interrupt vector, and every blit of ours is the CPU's (as the display
- * leaves the custom chips alone there, display_lvo.c). */
+ * as opengfx.library, the OS's graphics.library keeps the blitter, its
+ * queue and its interrupt vector, and every blit of ours is the CPU's (as
+ * the display leaves the custom chips alone there, display_lvo.c). Its
+ * blitter is shared, so it is still waited for and owned: OwnBlitter,
+ * DisownBlitter, WaitBlit, QBlit and QBSBlit go to the OS's (sys_blitter),
+ * ours and the ones gels makes around its CPU blits alike. */
 static int gels_is_system(const struct gfx_base *gb)
 {
     static const char want[] = "graphics.library";
@@ -105,6 +136,15 @@ int gfx_init_gels(struct gfx_env *env)
     st->call_blit = call_blit;
     st->call_cleanup = call_cleanup;
     st->has_blitter = (uint16_t)sys;
+    if (!sys) {
+        static const char gfx_name[] = "graphics.library";
+        st->sys_gfx = (void *)(uintptr_t)lib_call(gb->execbase, LVO_OPENLIBRARY, (void *)gfx_name, 39);
+        if (!st->sys_gfx && BLIT_ENTRY) {
+            env->free(env->ctx, st, sizeof *st);
+            return 0;
+        }
+        if (st->sys_gfx) st->sys_blitter = sys_blitter;
+    }
     gels_init(st);
     gfx_private_of(gb)->area[GFX_AREA_GELS] = st;
     if (sys && BLIT_ENTRY && env->set_int_vector) {
@@ -116,7 +156,7 @@ int gfx_init_gels(struct gfx_env *env)
         env->chip_write(env->ctx, 0x09C, 0x0040);                      /* INTREQ: clear BLIT */
         env->chip_write(env->ctx, 0x09A, 0x8040);                      /* INTENA: SET | BLIT */
     }
-    if (VERTB_ENTRY && env->add_int_server) {
+    if (sys && VERTB_ENTRY && env->add_int_server) {
         st->vertb.node.type = 2;
         st->vertb.node.pri = -10;
         st->vertb.node.name = (char *)vertb_name;
@@ -137,6 +177,7 @@ void gfx_exit_gels(struct gfx_env *env)
         env->chip_write(env->ctx, 0x09A, 0x0040);                      /* INTENA: clear BLIT */
         env->set_int_vector(env->ctx, 6, st->old_blit);
     }
+    if (st->sys_gfx) lib_call(env->base->execbase, LVO_CLOSELIBRARY, st->sys_gfx, 0);
     gfx_private_of(env->base)->area[GFX_AREA_GELS] = 0;
     env->free(env->ctx, st, sizeof *st);
 }
