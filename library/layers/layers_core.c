@@ -27,6 +27,18 @@ static uint32_t cut(const struct lc_rect *r, const struct lc_rect *m, struct lc_
     return k;
 }
 
+/* The same, columns first: left and right whole height, then above and
+ * below. */
+static uint32_t cut_x(const struct lc_rect *r, const struct lc_rect *m, struct lc_rect out[4])
+{
+    uint32_t k = 0;
+    if (r->x0 < m->x0) { out[k] = *r; out[k].x1 = m->x0 - 1; k++; }
+    if (m->x1 < r->x1) { out[k] = *r; out[k].x0 = m->x1 + 1; k++; }
+    if (r->y0 < m->y0) { out[k].y0 = r->y0; out[k].y1 = m->y0 - 1; out[k].x0 = m->x0; out[k].x1 = m->x1; k++; }
+    if (m->y1 < r->y1) { out[k].y0 = m->y1 + 1; out[k].y1 = r->y1; out[k].x0 = m->x0; out[k].x1 = m->x1; k++; }
+    return k;
+}
+
 /* Grows an array of items of size sz to hold at least want. */
 static int grow(const struct lc_mem *mem, void **arr, uint32_t *cap, uint32_t n, uint32_t want, uint32_t sz)
 {
@@ -86,7 +98,7 @@ int lc_copy(struct lc_rects *dst, const struct lc_rects *src)
     return 0;
 }
 
-int lc_sub_rect(struct lc_rects *s, const struct lc_rect *r)
+static int sub_rect(struct lc_rects *s, const struct lc_rect *r, uint32_t (*cutter)(const struct lc_rect *, const struct lc_rect *, struct lc_rect *))
 {
     uint32_t i, j, k, hits = 0, n0 = s->n;
     struct lc_rect m, out[4];
@@ -98,7 +110,7 @@ int lc_sub_rect(struct lc_rects *s, const struct lc_rect *r)
      * and the rest go on the end; then the empties are squeezed out */
     for (i = 0; i < n0; i++) {
         if (!lc_meet(&s->r[i], r, &m)) continue;
-        k = cut(&s->r[i], &m, out);
+        k = cutter(&s->r[i], &m, out);
         if (!k) { s->r[i].x0 = 1; s->r[i].x1 = 0; continue; }
         s->r[i] = out[0];
         for (j = 1; j < k; j++) s->r[s->n++] = out[j];
@@ -108,6 +120,9 @@ int lc_sub_rect(struct lc_rects *s, const struct lc_rect *r)
     s->n = j;
     return 0;
 }
+
+int lc_sub_rect(struct lc_rects *s, const struct lc_rect *r) { return sub_rect(s, r, cut); }
+int lc_sub_rect_x(struct lc_rects *s, const struct lc_rect *r) { return sub_rect(s, r, cut_x); }
 
 void lc_and_rect(struct lc_rects *s, const struct lc_rect *r)
 {
@@ -199,29 +214,32 @@ void lc_pieces_free(struct lc_pieces *s)
 }
 
 /* Cuts every visible piece meeting c: the part inside c becomes owner's,
- * the rest stays visible. */
+ * the rest stays visible. Each cut piece is replaced, where it was in the
+ * list, by its visible rest and then the part inside c (OS 3.2's order). */
 static int cut_pieces(struct lc_pieces *s, const struct lc_rect *c, int32_t owner)
 {
-    uint32_t i, j, k, hits = 0, n0 = s->n;
+    uint32_t i, j, k, hits = 0, n0 = s->n, cap;
     struct lc_rect m, out[4];
-    void *a;
+    struct lc_piece *p;
 
     for (i = 0; i < n0; i++) hits += s->p[i].obscurer == LC_VISIBLE && lc_meet(&s->p[i].r, c, 0);
     if (!hits) return 0;
-    a = s->p;
-    if (grow(s->mem, &a, &s->cap, s->n, n0 + 4 * hits, sizeof *s->p)) return -1;
-    s->p = a;
-    for (i = 0; i < n0; i++) {
-        if (s->p[i].obscurer != LC_VISIBLE || !lc_meet(&s->p[i].r, c, &m)) continue;
-        k = cut(&s->p[i].r, &m, out);
-        s->p[i].r = m;
-        s->p[i].obscurer = owner;
-        for (j = 0; j < k; j++) {
-            s->p[s->n].r = out[j];
-            s->p[s->n].obscurer = LC_VISIBLE;
-            s->n++;
+    cap = n0 + 4 * hits;
+    if (!(p = s->mem->alloc(s->mem->ctx, cap * sizeof *p))) return -1;
+    for (i = j = 0; i < n0; i++) {
+        if (s->p[i].obscurer != LC_VISIBLE || !lc_meet(&s->p[i].r, c, &m)) { p[j++] = s->p[i]; continue; }
+        uint32_t nk = cut(&s->p[i].r, &m, out);
+        for (k = 0; k < nk; k++) {
+            p[j].r = out[k];
+            p[j++].obscurer = LC_VISIBLE;
         }
+        p[j].r = m;
+        p[j++].obscurer = owner;
     }
+    s->mem->free(s->mem->ctx, s->p, s->cap * sizeof *s->p);
+    s->p = p;
+    s->n = j;
+    s->cap = cap;
     return 0;
 }
 
@@ -237,6 +255,12 @@ int lc_layer_pieces(const struct lc_layer *stack, uint32_t n, uint32_t idx, cons
     if (grow(out->mem, &a, &out->cap, 0, 1, sizeof *out->p)) return -1;
     out->p = a;
     out->p[0].r = *b;
+    if (stack[idx].flags & LC_HIDDEN) {
+        /* a hidden layer is one piece, none of it on show */
+        out->p[0].obscurer = LC_OFFSCREEN;
+        out->n = 1;
+        return 0;
+    }
     if (screen) {
         /* everything off the screen first: the part on it stays visible */
         struct lc_rect m, rest[4];

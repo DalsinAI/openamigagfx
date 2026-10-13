@@ -102,6 +102,16 @@ static struct SignalSemaphore infolock;
 
 #define OL(l) ((struct OLayer *)(l))
 
+/* OS 3.2 marks a hidden layer in its Flags with this bit */
+#define OL_HIDDEN 0x1000
+
+static void set_hidden(struct Layer *l, UBYTE h)
+{
+    OL(l)->hidden = h;
+    if (h) l->Flags |= OL_HIDDEN;
+    else l->Flags &= ~OL_HIDDEN;
+}
+
 /* ---- memory ------------------------------------------------------------ */
 
 static void *m_alloc(void *ctx, uint32_t size) { (void)ctx; return AllocMem(size, MEMF_PUBLIC); }
@@ -229,7 +239,11 @@ static void backfill(struct Layer *l, struct Hook *hook, const struct place *p, 
                   r->x1 - r->x0 + 1, r->y1 - r->y0 + 1, 0x00, 0xFF, 0);
         return;
     }
-    InitRastPort(&rp);
+    /* as OS 3.2 calls it: a layer's own RastPort, Layer and all, on the
+     * bitmap to fill (a hook draws with Layer cleared, in its own copy);
+     * the Layer_Info's hook a bare one */
+    if (l) rp = *l->rp;
+    else InitRastPort(&rp);
     rp.BitMap = p->bm;
     msg.Layer = l;
     msg.Bounds.MinX = (WORD)(r->x0 + p->dx);
@@ -589,7 +603,8 @@ static int plan(struct Layer *l, int made)
                 struct lc_rect ob;
                 if (c->kind == K_NONE) continue;
                 ob = shift(lr(&c->cr.bounds), ddx, ddy);
-                if (lc_sub_rect(&one, &ob)) goto fail;
+                /* columns first, as OS 3.2 hands the new part to the hook */
+                if (lc_sub_rect_x(&one, &ob)) goto fail;
             }
         if (lc_or(&o->fills, &one)) goto fail;
     }
@@ -668,7 +683,8 @@ static void fill_fresh(struct Layer *l, int made)
             d.MinX = (WORD)(r->x0 - l->bounds.MinX); d.MinY = (WORD)(r->y0 - l->bounds.MinY);
             d.MaxX = (WORD)(r->x1 - l->bounds.MinX); d.MaxY = (WORD)(r->y1 - l->bounds.MinY);
             OrRectRegion(l->DamageList, &d);
-            l->Flags |= LAYERREFRESH;
+            /* OS 3.2 sets Intuition's two bits with it; only they clear them */
+            l->Flags |= LAYERREFRESH | LAYERIREFRESH | LAYERIREFRESH2;
         }
     }
 }
@@ -783,7 +799,7 @@ undo_nothing:
         x->bounds = OL(x)->oldb;
         x->Width = (WORD)(x->bounds.MaxX - x->bounds.MinX + 1);
         x->Height = (WORD)(x->bounds.MaxY - x->bounds.MinY + 1);
-        OL(x)->hidden = OL(x)->oldhidden;
+        set_hidden(x, OL(x)->oldhidden);
         attach(x);
     }
     ch->li->top_layer = ch->nold ? ch->old[0] : 0;
@@ -969,6 +985,7 @@ static LONG restack(struct Layer *l, struct Layer *at, int use_at, int front)
 {
     struct Layer_Info *li = l->LayerInfo;
     struct change ch;
+    if (OL(l)->hidden) return TRUE;     /* OS 3.2 leaves a hidden layer where it is */
     if (begin(li, &ch)) return FALSE;
     unlink_layer(li, l);
     if (!use_at) at = front ? front_spot(li, l) : back_spot(li, l);
@@ -998,7 +1015,7 @@ LONG ol_HideLayer(struct Layer *l)
     struct change ch;
     if (OL(l)->hidden) return TRUE;
     if (begin(l->LayerInfo, &ch)) return FALSE;
-    OL(l)->hidden = 1;
+    set_hidden(l, 1);
     return finish(&ch, 0, 0) ? FALSE : TRUE;
 }
 
@@ -1007,7 +1024,7 @@ LONG ol_ShowLayer(struct Layer *l, struct Layer *in_front_of)
     struct Layer_Info *li = l->LayerInfo;
     struct change ch;
     if (begin(li, &ch)) return FALSE;
-    OL(l)->hidden = 0;
+    set_hidden(l, 0);
     if (in_front_of != l) {
         unlink_layer(li, l);
         if (in_front_of == (struct Layer *)1) link_before(li, l, back_spot(li, l));
@@ -1146,10 +1163,8 @@ void ol_EndUpdate(struct Layer *l, UWORD flag)
     ObtainSemaphore(&l->Lock);
     detach(l);
     l->Flags &= ~LAYERUPDATING;
-    if (flag) {
-        ClearRegion(l->DamageList);
-        l->Flags &= ~LAYERREFRESH;
-    }
+    /* LAYERREFRESH stays: Intuition clears it, as with OS 3.2 */
+    if (flag) ClearRegion(l->DamageList);
     attach(l);
     ReleaseSemaphore(&l->Lock);
 }

@@ -11,6 +11,8 @@ on:
       - library/layers/**
       - tests/host-ndk/**
       - tests/m68k/**
+      - tests/abihost/**
+      - tests/LayersABITest.c
 
 permissions:
   contents: read
@@ -29,3 +31,5 @@ jobs:
         run: QEMU_M68K=qemu-m68k HOST_CC=gcc sh tests/m68k/test_layers_core.sh
       - name: OpenLayers library
         run: QEMU_M68K=qemu-m68k HOST_CC=gcc sh tests/m68k/test_layers_lib.sh
+      - name: LayersABITest on the host
+        run: HOST_CC=gcc sh tests/abihost/run.sh ROUNDS=3 > /dev/null

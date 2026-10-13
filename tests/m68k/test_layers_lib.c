@@ -277,6 +277,8 @@ ULONG ol_call_hook(struct Hook *hook, APTR obj, APTR msg) { return ((hookfn)(voi
 /* A pattern of the layer's (or screen's) own coordinates. */
 static uint8_t pat(LONG x, LONG y, uint32_t salt) { return (uint8_t)(((x * 7) ^ (y * 13) ^ salt) | 1); }
 
+/* A layer's hook gets the layer's RastPort (Layer set, as OS 3.2 gives
+ * it) on the bitmap to fill; the Layer_Info's a bare one. */
 static ULONG fill_hook(struct Hook *h, APTR obj, APTR m)
 {
     struct RastPort *rp = obj;
@@ -285,7 +287,7 @@ static ULONG fill_hook(struct Hook *h, APTR obj, APTR m)
     struct BitMap *bm = rp->BitMap;
     checks++;
     if (msg->Bounds.MinX < 0 || msg->Bounds.MinY < 0 || msg->Bounds.MaxX >= bm->BytesPerRow ||
-        msg->Bounds.MaxY >= bm->Rows || rp->Layer) {
+        msg->Bounds.MaxY >= bm->Rows || rp->Layer != msg->Layer) {
         fail("hook bounds", msg->Bounds.MinX, msg->Bounds.MinY);
         return 0;
     }

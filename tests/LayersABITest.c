@@ -43,7 +43,9 @@
 #include <string.h>
 #include <stdarg.h>
 
+#ifndef REG
 #define REG(r, decl) register decl __asm(#r)
+#endif
 
 struct Library *LayersBase;
 
@@ -77,6 +79,9 @@ static void crc_add(ULONG v)
     for (i = 0; i < 4; i++) { crc ^= (v >> (8 * i)) & 0xFF; crc *= 16777619UL; }
 }
 
+/* a longword as the Amiga reads it, on any host */
+static ULONG be32(const UBYTE *b) { return (ULONG)b[0] << 24 | (ULONG)b[1] << 16 | (ULONG)b[2] << 8 | b[3]; }
+
 static ULONG seed;
 static ULONG rnd(void) { seed = seed * 1103515245UL + 12345UL; return seed >> 8; }
 static LONG rn(LONG n) { return n > 0 ? (LONG)(rnd() % (ULONG)n) : 0; }
@@ -105,7 +110,7 @@ struct hookmsg {
     LONG OffsetX, OffsetY;
 };
 #define MAXCALLS 64
-static char calls[MAXCALLS][64];
+static char calls[MAXCALLS][112];
 static int ncalls, morecalls;
 
 static ULONG hook_fn(REG(a0, struct Hook *h), REG(a2, struct RastPort *rp), REG(a1, struct hookmsg *m))
@@ -116,9 +121,15 @@ static ULONG hook_fn(REG(a0, struct Hook *h), REG(a2, struct RastPort *rp), REG(
     const char *where = rp->BitMap == screen ? "screen" : "other";
     int k;
     for (k = 0; k < nlay; k++) if (sup[k] && rp->BitMap == sup[k]) where = "super";
-    if (ncalls < MAXCALLS)
-        sprintf(calls[ncalls++], "K %d %s %ld %ld %ld %ld %ld %ld", id_of(m->Layer), where, (long)x0, (long)y0,
+    if (ncalls < MAXCALLS) {
+        sprintf(calls[ncalls], "K %d %s %ld %ld %ld %ld %ld %ld", id_of(m->Layer), where, (long)x0, (long)y0,
                 (long)x1, (long)y1, (long)m->OffsetX, (long)m->OffsetY);
+        if (id_of(m->Layer) == 99)    /* not one of ours: what it is */
+            sprintf(calls[ncalls] + strlen(calls[ncalls]), " %d,%d,%d,%d f=%x rp=%d", m->Layer->bounds.MinX,
+                    m->Layer->bounds.MinY, m->Layer->bounds.MaxX, m->Layer->bounds.MaxY, m->Layer->Flags,
+                    rp->Layer ? id_of(rp->Layer) : -1);
+        ncalls++;
+    }
     else
         morecalls++;
     if (x0 > x1 || y0 > y1 || rp->Layer) return 0;
@@ -151,6 +162,8 @@ static void flush_calls(void)
 }
 
 /* ---- what each call leaves ------------------------------------------ */
+
+static void detail(struct Layer *l, struct ClipRect *cr);
 
 static void report_layer(int i)
 {
@@ -197,9 +210,52 @@ static void report_layer(int i)
         l->bounds.MaxX, l->bounds.MaxY, l->Flags, l->Scroll_X, l->Scroll_Y, probe ? ncr : 0, bad,
         (unsigned long)c_cr, (unsigned long)c_dmg, (unsigned long)c_px);
     if (probe)
-        for (cr = l->ClipRect; cr; cr = cr->Next)
+        for (cr = l->ClipRect; cr; cr = cr->Next) {
             out("C %d %d,%d,%d,%d ob=%d bm=%d\n", i, cr->bounds.MinX, cr->bounds.MinY, cr->bounds.MaxX, cr->bounds.MaxY,
                 id_of((APTR)cr->obscured), cr->BitMap ? (cr->BitMap == l->SuperBitMap ? 2 : 1) : 0);
+            if (cr->obscured) detail(l, cr);
+        }
+}
+
+/* a pixel of a bitmap, or -1 outside it */
+static LONG bm_pixel(struct BitMap *bm, LONG x, LONG y)
+{
+    LONG v = 0;
+    int p;
+    if (x < 0 || y < 0 || x >= bm->BytesPerRow * 8 || y >= bm->Rows) return -1;
+    for (p = 0; p < bm->Depth; p++)
+        if (bm->Planes[p][y * bm->BytesPerRow + (x >> 3)] & (0x80 >> (x & 7))) v |= 1L << p;
+    return v;
+}
+
+/* PROBE only, for an obscured ClipRect: what obscured holds (a small
+ * number, the Layer_Info, the layer itself, one of the layers, the
+ * ClipRect or another pointer), its bitmap's shape, where its planes are
+ * in a super bitmap layer's own, and how many of its pixels, read as a
+ * smart refresh ClipRect's are (at x - (MinX & ~15), y - MinY), are the
+ * super bitmap's at the layer's own coordinates */
+static void detail(struct Layer *l, struct ClipRect *cr)
+{
+    ULONG ob = (ULONG)cr->obscured;
+    struct BitMap *bm = cr->BitMap, *sb = l->SuperBitMap;
+    char what[16];
+    LONG x, y, eq = 0, all = 0, sp = -1;
+    if (ob < 0x1000) sprintf(what, "%lu", (unsigned long)ob);
+    else if (ob == (ULONG)li) strcpy(what, "li");
+    else if (ob == (ULONG)l) strcpy(what, "self");
+    else if (ob == (ULONG)cr) strcpy(what, "cr");
+    else if (id_of((APTR)ob) != 99) sprintf(what, "L%d", id_of((APTR)ob));
+    else strcpy(what, "p");
+    if (!bm) { out("D ob=%s\n", what); return; }
+    if (sb && bm != sb && bm->Planes[0] >= sb->Planes[0] && bm->Planes[0] < sb->Planes[0] + sb->BytesPerRow * sb->Rows)
+        sp = (LONG)(bm->Planes[0] - sb->Planes[0]);
+    if (sb && bm != sb)
+        for (y = cr->bounds.MinY; y <= cr->bounds.MaxY; y++)
+            for (x = cr->bounds.MinX; x <= cr->bounds.MaxX; x++, all++)
+                eq += bm_pixel(bm, x - (cr->bounds.MinX & ~15), y - cr->bounds.MinY) ==
+                      bm_pixel(sb, x - l->bounds.MinX + l->Scroll_X, y - l->bounds.MinY + l->Scroll_Y);
+    out("D ob=%s bm=%dx%dx%d f=%d sp=%ld eq=%ld/%ld\n", what, bm->BytesPerRow, bm->Rows, bm->Depth, bm->Flags, (long)sp,
+        (long)eq, (long)all);
 }
 
 static void report(int step, const char *what, LONG r)
@@ -216,7 +272,7 @@ static void report(int step, const char *what, LONG r)
     WaitBlit();
     crc_start();
     for (p = 0; p < DEPTH; p++)
-        for (n = 0; n < (ULONG)screen->BytesPerRow * screen->Rows; n += 4) crc_add(*(ULONG *)(screen->Planes[p] + n));
+        for (n = 0; n < (ULONG)screen->BytesPerRow * screen->Rows; n += 4) crc_add(be32(screen->Planes[p] + n));
     out("B %08lx\n", (unsigned long)crc);
 }
 
@@ -370,7 +426,9 @@ static void one_round(int round)
             break;
         }
         case 12:
-            ScrollLayer(0, l, rn(21) - 10, rn(21) - 10);
+            dx = rn(21) - 10;
+            dy = rn(21) - 10;
+            ScrollLayer(0, l, dx, dy);
             report(step, "scroll", 0);
             break;
         case 13: {

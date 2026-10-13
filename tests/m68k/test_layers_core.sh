@@ -194,6 +194,7 @@ static int inside(const struct lc_rect *r, int32_t x, int32_t y) { return x >= r
 static int32_t want(uint32_t idx, const struct lc_rect *screen, int32_t x, int32_t y)
 {
     uint32_t k;
+    if (st[idx].flags & LC_HIDDEN) return LC_OFFSCREEN;   /* one piece, none on show */
     if (screen && !inside(screen, x, y)) return LC_OFFSCREEN;
     for (k = 0; k < idx; k++)
         if (!(st[k].flags & LC_HIDDEN) && inside(&st[k].bounds, x, y)) return (int32_t)k;

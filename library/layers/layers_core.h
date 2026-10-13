@@ -57,6 +57,7 @@ void lc_clear(struct lc_rects *s);
 int lc_set(struct lc_rects *s, const struct lc_rect *r);      /* s = r */
 int lc_copy(struct lc_rects *dst, const struct lc_rects *src);
 int lc_sub_rect(struct lc_rects *s, const struct lc_rect *r); /* s -= r */
+int lc_sub_rect_x(struct lc_rects *s, const struct lc_rect *r); /* s -= r, its pieces cut columns first */
 void lc_and_rect(struct lc_rects *s, const struct lc_rect *r);/* s &= r, never allocates */
 int lc_or_rect(struct lc_rects *s, const struct lc_rect *r);  /* s |= r */
 int lc_sub(struct lc_rects *s, const struct lc_rects *t);     /* s -= t */
@@ -78,7 +79,7 @@ struct lc_layer {
 
 /* A piece of a layer: visible, behind layer stack[obscurer] (the frontmost
  * shown layer in front of it covering it), or outside the Layer_Info's
- * bounds. */
+ * bounds (all of a hidden layer is one such piece). */
 enum { LC_VISIBLE = -1, LC_OFFSCREEN = -2 };
 struct lc_piece {
     struct lc_rect r;
@@ -94,8 +95,7 @@ void lc_pieces_free(struct lc_pieces *s);
 
 /* stack[0] is the frontmost layer. The pieces of stack[idx] cover its
  * bounds exactly, each pixel once. screen: the Layer_Info's bounds, or 0
- * for none (nothing is off). Whether idx itself is hidden does not
- * matter here. */
+ * for none (nothing is off). A hidden layer is one piece, LC_OFFSCREEN. */
 int lc_layer_pieces(const struct lc_layer *stack, uint32_t n, uint32_t idx, const struct lc_rect *screen,
                     struct lc_pieces *out);
 
