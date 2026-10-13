@@ -7,11 +7,10 @@
  * (gfx_env.h) and -I library/core (gfx_rp.h). gfx_init_text makes the
  * text's env from the library's gfx_env and keeps it, with the ROM fonts,
  * in gfx_private_of(GfxBase)->area[GFX_AREA_TEXT] (the library has no
- * .data or .bss). The drawing is library/core's: Text for one-colour fonts
- * drawn left to right, WritePixel and RectFill for the rest and ClearEOL,
- * each with the layer locked as LockLayerRom does. Where the core does not
- * draw a RastPort (a super bitmap layer, a chunky bitmap: ogfx_rp_takes)
- * nothing is drawn yet (README, "Not yet"). */
+ * .data or .bss). One-colour text drawn left to right goes to library/core's
+ * Text, with the layer locked as LockLayerRom does; the rest of the text and
+ * ClearEOL go through the face's gfx_WritePixel and gfx_RectFill
+ * (gfx_face.h), which take every RastPort, a super bitmap layer included. */
 #include <exec/types.h>
 #include <graphics/gfx.h>
 #include <graphics/clip.h>
@@ -21,6 +20,7 @@
 #include <utility/tagitem.h>
 
 #include "gfx_env.h"
+#include "gfx_face.h"
 #include "gfx_rp.h"
 #include "text_core.h"
 
@@ -85,12 +85,14 @@ static int t_mono_text(void *ctx, struct RastPort *rp, const uint8_t *s, uint32_
     return ogfx_rp_Text(rp, (CONST_STRPTR)s, n);
 }
 
+/* A pixel and a rectangle through the face's WritePixel and RectFill,
+ * which take every RastPort (a super bitmap layer, clipping, the layer's
+ * lock nested in ours), with the pens, DrawMode and Mask set for the call
+ * and put back. */
 static void t_write_pixel(void *ctx, struct RastPort *rp, int32_t x, int32_t y, uint32_t pen, int op)
 {
     BYTE fg = rp->FgPen, mode = rp->DrawMode;
     UBYTE mask = rp->Mask;
-    (void)ctx;
-    if (!ogfx_rp_takes(rp, 0)) return;
     if (op) {
         rp->DrawMode = COMPLEMENT;
         rp->Mask = (UBYTE)(mask & pen);
@@ -98,7 +100,7 @@ static void t_write_pixel(void *ctx, struct RastPort *rp, int32_t x, int32_t y, 
         rp->DrawMode = JAM1;
         rp->FgPen = (BYTE)pen;
     }
-    ogfx_rp_WritePixel(rp, x, y);
+    gfx_WritePixel(ctx, (struct gfx_rastport *)rp, x, y);
     rp->FgPen = fg;
     rp->DrawMode = mode;
     rp->Mask = mask;
@@ -108,24 +110,27 @@ static void t_fill(void *ctx, struct RastPort *rp, int32_t x0, int32_t y0, int32
 {
     BYTE fg = rp->FgPen, mode = rp->DrawMode, sz = rp->AreaPtSz;
     UWORD *pat = rp->AreaPtrn;
-    (void)ctx;
-    if (!ogfx_rp_takes(rp, 0)) return;
     rp->FgPen = (BYTE)pen;
     rp->DrawMode = JAM1;
     rp->AreaPtrn = 0;
     rp->AreaPtSz = 0;
-    ogfx_rp_RectFill(rp, x0, y0, x1, y1);
+    gfx_RectFill(ctx, (struct gfx_rastport *)rp, x0, y0, x1, y1);
     rp->FgPen = fg;
     rp->DrawMode = mode;
     rp->AreaPtrn = pat;
     rp->AreaPtSz = sz;
 }
 
-/* The layer's size, or the bitmap's (ABI test: a super bitmap layer's). */
+/* The super bitmap's size in a super bitmap layer (its RastPort draws in
+ * the super bitmap's coordinates), the layer's in another layer, else the
+ * bitmap's (ABI test). */
 static void t_rp_size(void *ctx, struct RastPort *rp, int32_t *w, int32_t *h)
 {
     (void)ctx;
-    if (rp->Layer) {
+    if (rp->Layer && rp->Layer->Flags & LAYERSUPER && rp->Layer->SuperBitMap) {
+        *w = (int32_t)rp->Layer->SuperBitMap->BytesPerRow * 8;
+        *h = rp->Layer->SuperBitMap->Rows;
+    } else if (rp->Layer) {
         *w = rp->Layer->bounds.MaxX - rp->Layer->bounds.MinX + 1;
         *h = rp->Layer->bounds.MaxY - rp->Layer->bounds.MinY + 1;
     } else if (rp->BitMap) {

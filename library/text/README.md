@@ -14,7 +14,7 @@ The area also has the ROM fonts topaz 8 and topaz 9, redrawn.
 | --- | --- |
 | `text_core.cpp`, `text_core.h` | The calls, in lean C++ with no Amiga headers (`gt_<Call>(const struct gt_env *, the fd's arguments)`). The core keeps nothing in globals. It reaches the font list, Forbid/Permit, memory, tag cloning and drawing through `struct gt_env`. Text with a one-colour font drawn left to right goes to library/core's Text (`ogfx_rp_Text`). The core draws everything else itself, pixel by pixel: colour fonts, fonts drawn right to left, and RastPorts the core's Text does not take. It follows the same measured rules. |
 | `text_types.h` | The NDK 3.2 structures text touches (TextFont, TextFontExtension, ColorTextFont, TextAttr, TTextAttr, TextExtent, RastPort, Node, List, Message, TagItem), with their published names, checked by static_asserts on the 68k. |
-| `text_lvo.c` | The register entries `gfx_lvo_<Call>`, `gfx_init_text` and `gfx_exit_text`, and `gfx_hook_set_font` (InitRastPort's SetFont). Built as C by the Amiga compiler with the NDK and `-I library/graphics -I library/core`. It makes `gt_env` from the library's `gfx_env` and keeps it, with the ROM fonts, in `gfx_private_of(GfxBase)->area[GFX_AREA_TEXT]`. The drawing goes to library/core's Text, WritePixel and RectFill. Calls that draw lock the layer as LockLayerRom does. |
+| `text_lvo.c` | The register entries `gfx_lvo_<Call>`, `gfx_init_text` and `gfx_exit_text`, and `gfx_hook_set_font` (InitRastPort's SetFont). Built as C by the Amiga compiler with the NDK and `-I library/graphics -I library/core`. It makes `gt_env` from the library's `gfx_env` and keeps it, with the ROM fonts, in `gfx_private_of(GfxBase)->area[GFX_AREA_TEXT]`. One-colour text drawn left to right goes to library/core's Text, with the layer locked as LockLayerRom does. The rest of the text, ClearEOL and ClearScreen go through the face's `gfx_WritePixel` and `gfx_RectFill` (`library/graphics/gfx_face.h`), which take every RastPort, super bitmap layers included. |
 | `topaz8.txt`, `mkfont.py`, `topaz_data.cpp`, `topaz_data.h` | The ROM fonts. `topaz8.txt` is OpenGfx's own drawing of an 8 x 8 topaz (baseline row 6), done by hand and not taken from ROM bytes. `mkfont.py` composes the Latin-1 accented letters from a base letter and an accent. It makes topaz 9 (10 x 9, baseline 7) by drawing columns 3 and 4 and row 3 twice. It writes `topaz_data.cpp`, which is constant data only. Characters 127 to 159 share the default glyph (a box). |
 | `graphics.sources` | The files the face's build-amiga.sh builds into graphics.library. |
 | `tests/m68k/test_gfx_text.sh` | Runs the core under qemu-m68k on the 68000, 68020 and 68040 at -O0 and -O2. It checks against `test_gfx_text_model.py`, an independent python3 model made at test time (details below). |
@@ -26,10 +26,10 @@ The model generates random fonts: one-colour, colour, proportional, kerned, righ
 - One-colour text drawn by this core, pixel for pixel against library/core's own Text on a planar bitmap, and the core's TextLength and TextExtent against the model.
 - topaz_data.cpp, which must be exactly what mkfont.py makes from topaz8.txt, and every glyph bit, which must match the drawing.
 - The font list, extensions, Forbid/Permit pairing and the memory being returned.
-- The register entries over a GfxBase and gfx_env like the face's, when `library/graphics/gfx_env.h` is there.
+- The register entries over a GfxBase and gfx_env like the face's, linked with the face's `gfx_face.cpp`. This includes text and ClearEOL in a super bitmap layer, which must match the same text on a bare bitmap pixel for pixel and fill to the super bitmap's edge.
 - With nm, that `text_core.o` and `topaz_data.o` have no .data or .bss, call nothing but libgcc and have no C++ runtime.
 
-Results: m68k-linux-gnu-g++ / gcc 13 with qemu-m68k, all six builds pass (8457 checks each, with the register entries). The Amiga build (GCC 16.2.0-open2, os32-gcc16 stove) and TextABITest have not been run here.
+Results: m68k-linux-gnu-g++ / gcc 13 with qemu-m68k, all six builds pass (8467 checks each, register entries and the face included). The Amiga build (GCC 16.2.0-open2, os32-gcc16 stove) and TextABITest have not been run here.
 
 ## Edge cases
 
@@ -65,13 +65,14 @@ The "Where" column says whether a case is documented in the autodocs, was measur
 | StripFont with no extension | documented | Nothing |
 | TextFit | documented; ABI test for the corners | Characters are taken until the first that does not fit. The box must be no wider than bitwidth and no taller than bitheight, and inside the constraint when one is given. dir −1 counts back from the pointer. No fit answers 0 with an empty extent |
 | FontExtent | ABI test | Covers every glyph (the default one too) and the pen. te_Width is the widest advance (CharSpace + kern). No algorithmic style |
-| ClearEOL / ClearScreen pen | autodoc says "DrawMode 2"; ABI test (`ClearEOL mode n`) | BgPen with JAM2, else pen 0. Uses the RastPort's TxHeight and TxBaseline. The right and bottom edges are the layer's bounds, or else the bitmap's |
+| ClearEOL / ClearScreen pen | autodoc says "DrawMode 2"; ABI test (`ClearEOL mode n`) | BgPen with JAM2, else pen 0. Uses the RastPort's TxHeight and TxBaseline. The right and bottom edges are the super bitmap's in a super bitmap layer, the layer's bounds in another layer, else the bitmap's |
 | ROM fonts | ABI test (`font topaz.font n`) | topaz 8 is 8×8, baseline 6. topaz 9 is 10×9, baseline 7. Both: BoldSmear 1, chars 32–255, FPF_ROMFONT\|FPF_DESIGNED, mn_Length 52, accessors 0, topaz 8 first in the list and DefaultFont |
 | topaz glyphs 127–159 | ours | The default box glyph |
 
 ## Not yet
 
-- Drawing where library/core's `ogfx_rp_takes` refuses (a super bitmap layer, a chunky RTG bitmap). Colour and right-to-left text, ClearEOL and ClearScreen draw nothing there. The core's Text has the same limit for one-colour fonts. This needs a WritePixel and RectFill from the face that take every RastPort.
+- One-colour text in a super bitmap layer goes through the pixel-by-pixel path (correct, but slower than the core's Text).
+- Chunky (RTG) bitmaps: text draws there only as far as the face's WritePixel and RectFill and the core take them.
 - Colour fonts' ctf_ColorFontColors (loading the font's colours) and CT_GREYFONT/CT_ANTIALIAS shading: pens are used as they are.
 - Speed on the pixel-by-pixel path (colour and right-to-left text). It walks the whole string for each 128-column piece of each row, so it is quadratic for very long strings.
 - A hand-tuned topaz 9: today it is a stretch of our topaz 8.
