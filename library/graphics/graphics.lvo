@@ -1,0 +1,177 @@
+# graphics.library's jump table, as OpenGfx builds it: LVO, call, registers.
+# Written from the NDK 3.2 graphics_lib.fd's published order; build-amiga.sh
+# checks it against the stove's graphics_lib.fd (amigachrome-guest
+# libraries/common/check_fd.py) and check_regs.py checks every area's
+# gfx_lvo_<Call> entry against it. OWNERS.md says who writes each.
+-30 BltBitMap a0,d0,d1,a1,d2,d3,d4,d5,d6,d7,a2
+-36 BltTemplate a0,d0,d1,a1,d2,d3,d4,d5
+-42 ClearEOL a1
+-48 ClearScreen a1
+-54 TextLength a1,a0,d0
+-60 Text a1,a0,d0
+-66 SetFont a1,a0
+-72 OpenFont a0
+-78 CloseFont a1
+-84 AskSoftStyle a1
+-90 SetSoftStyle a1,d0,d1
+-96 AddBob a0,a1
+-102 AddVSprite a0,a1
+-108 DoCollision a1
+-114 DrawGList a1,a0
+-120 InitGels a0,a1,a2
+-126 InitMasks a0
+-132 RemIBob a0,a1,a2
+-138 RemVSprite a0
+-144 SetCollision d0,a0,a1
+-150 SortGList a1
+-156 AddAnimOb a0,a1,a2
+-162 Animate a0,a1
+-168 GetGBuffers a0,a1,d0
+-174 InitGMasks a0
+-180 DrawEllipse a1,d0,d1,d2,d3
+-186 AreaEllipse a1,d0,d1,d2,d3
+-192 LoadRGB4 a0,a1,d0
+-198 InitRastPort a1
+-204 InitVPort a0
+-210 MrgCop a1
+-216 MakeVPort a0,a1
+-222 LoadView a1
+-228 WaitBlit
+-234 SetRast a1,d0
+-240 Move a1,d0,d1
+-246 Draw a1,d0,d1
+-252 AreaMove a1,d0,d1
+-258 AreaDraw a1,d0,d1
+-264 AreaEnd a1
+-270 WaitTOF
+-276 QBlit a1
+-282 InitArea a0,a1,d0
+-288 SetRGB4 a0,d0,d1,d2,d3
+-294 QBSBlit a1
+-300 BltClear a1,d0,d1
+-306 RectFill a1,d0,d1,d2,d3
+-312 BltPattern a1,a0,d0,d1,d2,d3,d4
+-318 ReadPixel a1,d0,d1
+-324 WritePixel a1,d0,d1
+-330 Flood a1,d2,d0,d1
+-336 PolyDraw a1,d0,a0
+-342 SetAPen a1,d0
+-348 SetBPen a1,d0
+-354 SetDrMd a1,d0
+-360 InitView a1
+-366 CBump a1
+-372 CMove a1,d0,d1
+-378 CWait a1,d0,d1
+-384 VBeamPos
+-390 InitBitMap a0,d0,d1,d2
+-396 ScrollRaster a1,d0,d1,d2,d3,d4,d5
+-402 WaitBOVP a0
+-408 GetSprite a0,d0
+-414 FreeSprite d0
+-420 ChangeSprite a0,a1,a2
+-426 MoveSprite a0,a1,d0,d1
+-432 LockLayerRom a5
+-438 UnlockLayerRom a5
+-444 SyncSBitMap a0
+-450 CopySBitMap a0
+-456 OwnBlitter
+-462 DisownBlitter
+-468 InitTmpRas a0,a1,d0
+-474 AskFont a1,a0
+-480 AddFont a1
+-486 RemFont a1
+-492 AllocRaster d0,d1
+-498 FreeRaster a0,d0,d1
+-504 AndRectRegion a0,a1
+-510 OrRectRegion a0,a1
+-516 NewRegion
+-522 ClearRectRegion a0,a1
+-528 ClearRegion a0
+-534 DisposeRegion a0
+-540 FreeVPortCopLists a0
+-546 FreeCopList a0
+-552 ClipBlit a0,d0,d1,a1,d2,d3,d4,d5,d6
+-558 XorRectRegion a0,a1
+-564 FreeCprList a0
+-570 GetColorMap d0
+-576 FreeColorMap a0
+-582 GetRGB4 a0,d0
+-588 ScrollVPort a0
+-594 UCopperListInit a0,d0
+-600 FreeGBuffers a0,a1,d0
+-606 BltBitMapRastPort a0,d0,d1,a1,d2,d3,d4,d5,d6
+-612 OrRegionRegion a0,a1
+-618 XorRegionRegion a0,a1
+-624 AndRegionRegion a0,a1
+-630 SetRGB4CM a0,d0,d1,d2,d3
+-636 BltMaskBitMapRastPort a0,d0,d1,a1,d2,d3,d4,d5,d6,a2
+-642 private
+-648 private
+-654 AttemptLockLayerRom a5
+-660 GfxNew d0
+-666 GfxFree a0
+-672 GfxAssociate a0,a1
+-678 BitMapScale a0
+-684 ScalerDiv d0,d1,d2
+-690 TextExtent a1,a0,d0,a2
+-696 TextFit a1,a0,d0,a2,a3,d1,d2,d3
+-702 GfxLookUp a0
+-708 VideoControl a0,a1
+-714 OpenMonitor a1,d0
+-720 CloseMonitor a0
+-726 FindDisplayInfo d0
+-732 NextDisplayInfo d0
+-738 private
+-744 private
+-750 private
+-756 GetDisplayInfoData a0,a1,d0,d1,d2
+-762 FontExtent a0,a1
+-768 ReadPixelLine8 a0,d0,d1,d2,a2,a1
+-774 WritePixelLine8 a0,d0,d1,d2,a2,a1
+-780 ReadPixelArray8 a0,d0,d1,d2,d3,a2,a1
+-786 WritePixelArray8 a0,d0,d1,d2,d3,a2,a1
+-792 GetVPModeID a0
+-798 ModeNotAvailable d0
+-804 WeighTAMatch a0,a1,a2
+-810 EraseRect a1,d0,d1,d2,d3
+-816 ExtendFont a0,a1
+-822 StripFont a0
+-828 CalcIVG a0,a1
+-834 AttachPalExtra a0,a1
+-840 ObtainBestPenA a0,d1,d2,d3,a1
+-846 private
+-852 SetRGB32 a0,d0,d1,d2,d3
+-858 GetAPen a0
+-864 GetBPen a0
+-870 GetDrMd a0
+-876 GetOutlinePen a0
+-882 LoadRGB32 a0,a1
+-888 SetChipRev d0
+-894 SetABPenDrMd a1,d0,d1,d2
+-900 GetRGB32 a0,d0,d1,a1
+-906 private
+-912 private
+-918 AllocBitMap d0,d1,d2,d3,a0
+-924 FreeBitMap a0
+-930 GetExtSpriteA a2,a1
+-936 CoerceMode a0,d0,d1
+-942 ChangeVPBitMap a0,a1,a2
+-948 ReleasePen a0,d0
+-954 ObtainPen a0,d0,d1,d2,d3,d4
+-960 GetBitMapAttr a0,d1
+-966 AllocDBufInfo a0
+-972 FreeDBufInfo a1
+-978 SetOutlinePen a0,d0
+-984 SetWriteMask a0,d0
+-990 SetMaxPen a0,d0
+-996 SetRGB32CM a0,d0,d1,d2,d3
+-1002 ScrollRasterBF a1,d0,d1,d2,d3,d4,d5
+-1008 FindColor a3,d1,d2,d3,d4
+-1014 private
+-1020 AllocSpriteDataA a2,a1
+-1026 ChangeExtSpriteA a0,a1,a2,a3
+-1032 FreeSpriteData a2
+-1038 SetRPAttrsA a0,a1
+-1044 GetRPAttrsA a0,a1
+-1050 BestModeIDA a0
+-1056 WriteChunkyPixels a0,d0,d1,d2,d3,a2,d4
