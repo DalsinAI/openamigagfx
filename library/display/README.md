@@ -38,7 +38,7 @@ MrgCop gathers every visible ViewPort's DspIns, SprIns, ClrIns and UCopIns:
 - DspIns WAITs are frame lines. The other lists' WAITs count from the ViewPort's top.
 - It sorts them stably by beam position and adds the `0xFFDF` wait before line 256.
 - It writes one hardware list per field. A laced View gets a long-frame list and a short-frame list.
-- Lists that are big enough are reused. If the View is on display, a new list is switched to at the next vertical blank before the old one is freed.
+- Lists that are big enough are reused while the View is not on display. A View on display always gets new lists, since the copper may be running the old ones; they are switched to at the next vertical blank, and the old ones are freed after it.
 
 ScrollVPort, ChangeVPBitMap and colour changes (`gfx_hook_vp_colors`) rewrite the gap block in place in each hardware list. They do not need a new MrgCop.
 
@@ -64,6 +64,10 @@ The horizontal position follows the HRM:
 | DyOffset in a laced ViewPort | In laced rows: halved and rounded down, so an odd DyOffset starts on the same frame line as DyOffset − 1. Even rows are in the long frame, odd rows in the short | ours; test |
 | A View with no ViewPorts | MrgCop gives lists that only end the frame | ABI test (VIEW empty) |
 | MrgCop out of memory | MCOP_NO_MEM, with the View's old lists kept | documented |
+| Six planes without EXTRA_HALFBRITE, HAM or dual playfield | On AGA, BPLCON2's KILLEHB, so 64 colours; OCS and ECS have no such bit and show them half-bright | HRM (KILLEHB is AGA's); ABI test |
+| ChangeVPBitMap's messages | dbi_SafeMessage at the next vertical blank (the old bitmap is no longer shown), dbi_DispMessage at the blank after it (a field of the new one has been shown) | autodoc; ABI test for the blanks |
+| CoerceMode with AVOID_FLICKER | The non-interlaced modes are tried first, then the interlaced | autodoc (the flag); ABI test for the order |
+| GfxFree of a node that is not one of GfxNew's (the type, subsystem or library not GfxNew's) | Left alone | ABI test |
 | ScrollVPort on a ViewPort that is not shown | MakeVPort makes it again when it is merged | ABI test |
 | MOVEs in a user copper list before its first WAIT | At the ViewPort's top line | ABI test |
 | CBump past a CopList's end | Another CopList is chained on. With no memory, the last instruction is written over | documented / ours |
@@ -75,7 +79,6 @@ The horizontal position follows the HRM:
 | AllocSpriteDataA defaults | num -1, height from the bitmap, word width 1, posctldata 8-aligned in Chip RAM | ABI test (SPRDATA) |
 | GetExtSpriteA with old-format data and no OutputHeight | NULL: old data does not say how tall it is | ABI test |
 | GfxNew | xln_Library is GfxBase, xln_Init is 0 (OS 3.2 puts a routine there), a MonitorSpec's DisplayInfoDataBase is NewList'd | ABI test (GFXNEW) |
-| GfxFree of a node that is not one of GfxNew's | Left alone | ABI test |
 | VideoControl with an unknown tag | Answers 1 and goes on | ABI test (VC unknown) |
 | NextDisplayInfo of an ID not in the database | The next ID above it | ABI test (NEXT unknown) |
 | ModeNotAvailable of an unknown monitor | DI_AVAIL_NOMONITOR | ABI test (NOTAVAIL) |

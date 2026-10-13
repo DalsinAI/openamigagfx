@@ -198,6 +198,9 @@ uint32_t vp_layout(gfx_env *env, gd_view *view, gd_viewport *vp, layout &L)
     L.con0 = c0 | static_cast<uint16_t>((L.depth & 7) << 12) | (L.depth == 8 ? 0x0010 : 0);
     uint16_t c2 = vp->spritepriorities ? vp->spritepriorities : 0x24;   /* ABI test: 0 */
     if (dpf && (modes & GD_PFBA)) c2 |= 0x0040;
+    /* six planes without EXTRA_HALFBRITE: on AGA, 64 colours (KILLEHB); OCS
+     * and ECS have no such bit, and show them half-bright */
+    if (isaga && L.depth == 6 && !(modes & (GD_HAM | GD_EXTRA_HALFBRITE)) && !dpf) c2 |= 0x0200;
     if (cm && (cm->flags & GD_COLORMAP_TRANSPARENCY)) c2 |= 0x0400;     /* ZDCTEN */
     if (cm && (cm->flags & GD_COLORPLANE_TRANSPARENCY))
         c2 |= 0x0800 | static_cast<uint16_t>((cm->transparencyplane & 7) << 12);   /* ZDBPEN, ZDBPSEL */
@@ -767,9 +770,12 @@ uint32_t gd_MrgCop(gfx_env *env, gd_view *view)
     gd_cprlist *old[2] = { view->lofcprlist, view->shfcprlist };
     gd_cprlist *nw[2] = { nullptr, nullptr };
     bool ok = true;
+    const bool shown = gb->actiview == view;
     for (int f = 0; f < (lace ? 2 : 1) && ok; f++) {
         int n = write_field(seg, nseg, f, rows, nullptr);
-        if (old[f] && old[f]->maxcount >= n) nw[f] = old[f];
+        /* a list the copper may be running is never written over: a new
+         * one, swapped in, and the old freed after the next frame */
+        if (!shown && old[f] && old[f]->maxcount >= n) nw[f] = old[f];
         else if (!(nw[f] = new_cprlist(env, n))) ok = false;
     }
     if (!ok) {
@@ -778,7 +784,6 @@ uint32_t gd_MrgCop(gfx_env *env, gd_view *view)
         release(env, seg, segsize);
         return GD_MCOP_NO_MEM;
     }
-    const bool shown = gb->actiview == view;
     for (int f = 0; f < (lace ? 2 : 1); f++) {
         if (nw[f] == old[f]) env->disable(env->ctx);
         write_field(seg, nseg, f, rows, nw[f]->start);
@@ -969,6 +974,12 @@ void gd_FreeDBufInfo(gfx_env *env, gd_dbufinfo *dbi)
             *pp = dbi->link1;
             break;
         }
+    if (state *s = st(env))
+        for (void **pp = &s->dispq; *pp; pp = &static_cast<gd_dbufinfo *>(*pp)->link2)
+            if (*pp == dbi) {
+                *pp = dbi->link2;
+                break;
+            }
     env->enable(env->ctx);
     release(env, dbi, sizeof(gd_dbufinfo));
 }
@@ -997,12 +1008,27 @@ void gd_vblank(gfx_env *env)
     gb->vbcounter++;
     /* the coming field's list (the LOF bit says which field this is) */
     if (gb->actiview && st(env)) set_cop2(env, field_list(env, (env->chip_read(env->ctx, GD_VPOSR) & 0x8000) != 0));
-    /* ChangeVPBitMap: the new bitmap is shown from this frame on, the old one free */
+    /* ChangeVPBitMap: a field has now shown the bitmaps changed before the
+     * last blank: DispMessage */
+    if (state *s = st(env)) {
+        while (gd_dbufinfo *d = static_cast<gd_dbufinfo *>(s->dispq)) {
+            s->dispq = d->link2;
+            d->link2 = nullptr;
+            if (d->dispmessage.replyport) env->reply_msg(env->ctx, &d->dispmessage);
+        }
+    }
+    /* and the new bitmap is shown from this frame on, the old one free:
+     * SafeMessage now, DispMessage once this field is shown */
     while (gd_dbufinfo *d = static_cast<gd_dbufinfo *>(gb->dblist)) {
         gb->dblist = d->link1;
         d->link1 = nullptr;
         if (d->safemessage.replyport) env->reply_msg(env->ctx, &d->safemessage);
-        if (d->dispmessage.replyport) env->reply_msg(env->ctx, &d->dispmessage);
+        if (state *s = st(env)) {
+            d->link2 = s->dispq;
+            s->dispq = d;
+        } else if (d->dispmessage.replyport) {
+            env->reply_msg(env->ctx, &d->dispmessage);
+        }
     }
     /* WaitTOF */
     gfx_list *q = &gb->tof_waitq;
