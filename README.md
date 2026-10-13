@@ -19,3 +19,16 @@ It is the home for the open graphics.library work (amigachrome-guest `libraries/
 | `tests/GfxCoreABITest.c`, `build-amiga.sh` | The RastPort calls side by side with OS 3.2's graphics.library on Chip RAM bitmaps, byte for byte; `LAYERS` does the same in layers made with OS 3.2's layers.library (smart and simple refresh, clip regions, layers in front), the covered parts included. |
 
 These are the calls OpenGfx 1.4 still hands to graphics.library's own code. WritePixelArray8 and WriteChunkyPixels are how a browser that renders into a chunky buffer gets its page onto an AGA screen.
+
+## OpenLayers
+
+The open layers.library starts here too, next to the graphics.library it draws through: clean-room, MIT, API and ABI compatible with OS 3.2's, every call of its jump table.
+
+| File | What |
+| --- | --- |
+| `library/layers/layers_core.c`, `.h` | The geometry in plain C: sets of disjoint rectangles (subtract, and, or, as a Region's), a layer's bounds cut into pieces each visible, behind the frontmost layer covering it (a ClipRect's `obscured`) or off the Layer_Info's bounds, WhichLayer, and an order for copying rectangles moved by one offset (SortLayerCR). Pure: memory comes from the caller, any core may run it. |
+| `library/layers/layers_lib.c`, `.h` | The calls: Layer_Info, making, deleting, depth, moving, sizing, hiding and showing layers, ClipRect lists in graphics.library's form (an obscured smart refresh piece's pixels in its own bitmap at `x - (MinX & ~15)`), super bitmap layers and ScrollLayer, damage and BeginUpdate/EndUpdate, clip regions, backfill hooks for layers and the Layer_Info, DoHookClipRects, SortLayerCR, SwapBitsRastPortClipRect, locking. One way through for every change of the stack: cut every layer anew, then move the pixels in an order where nothing is read after it was overwritten; out of memory, the stack goes back as it was. |
+| `library/layers/openlayers_lib.c`, `layers.lvo`, `build-amiga.sh` | The library around them (`layers.library` 47.100, and `openlayers.library` for the side-by-side test), the jump table checked against the NDK 3.2 `layers_lib.fd`. |
+| `tests/m68k/test_layers_core.sh` | The core for the 68000, 68020 and 68040 at -O0 and -O2 under qemu-m68k (and the host with `HOST_CC`, under ASan and UBSan), against a grid of pixels. |
+| `tests/m68k/test_layers_lib.sh`, `tests/host-ndk/` | The calls the same way, over a pixel model of exec and graphics.library: random stacks and calls, and after each one every layer's ClipRects, every pixel each layer keeps, its damage and backfill, the bare screen, the locks and, at the end, the memory. |
+| `tests/LayersABITest.c` | The same script of calls through OS 3.2's layers.library and ours on the same bitmap, every layer's ClipRects, damage and pixels (read with graphics.library's ReadPixel) and the whole bitmap compared after each call. |
