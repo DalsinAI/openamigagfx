@@ -63,7 +63,7 @@ def gen_scene(n):
         elif kind == 'ham8': depth = 8
         elif kind == 'dpf': depth = R.randint(2, maxd)
         else: depth = R.randint(1, maxd)
-        if kind == 'n' and depth == 6 and not hires: depth = 5   # 6 planes alone is EHB
+        if kind == 'n' and depth == 6 and not hires and chip != AGA: depth = 5   # 6 planes alone is EHB (AGA: KILLEHB)
         v.update(hires=hires, lace=lace, kind=kind, depth=depth)
         ppx = 1 if hires else 2
         w = R.randint(8, 360) * (2 if hires else 1)

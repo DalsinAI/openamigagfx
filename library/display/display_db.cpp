@@ -244,7 +244,11 @@ void gd_GfxFree(gfx_env *env, gd_extnode *n)
 {
     if (!n) return;
     uint32_t size = extnode_size(n->subtype);
-    if (!size) return;                  /* not one of GfxNew's: left alone (ABI test) */
+    /* not one of GfxNew's (its type, subsystem and library ours, as GfxNew
+     * set them): left alone (ABI test) */
+    if (!size || n->node.type != GD_NT_GRAPHICS || n->subsystem != GD_SS_GRAPHICS ||
+        n->library != static_cast<int32_t>(reinterpret_cast<uintptr_t>(env->base)))
+        return;
     state *s = st(env);
     env->forbid(env->ctx);
     for (int i = 0; i < NHASH; i++)
@@ -286,9 +290,15 @@ gd_extnode *gd_GfxLookUp(gfx_env *env, const void *key)
 {
     state *s = st(env);
     if (!key || !s) return nullptr;
+    gd_extnode *n = nullptr;
+    env->forbid(env->ctx);              /* as GfxFree and GfxAssociate change the chains */
     for (assoc *a = s->hash[hash_of(key)]; a; a = a->next)
-        if (a->key == key) return a->node;
-    return nullptr;
+        if (a->key == key) {
+            n = a->node;
+            break;
+        }
+    env->permit(env->ctx);
+    return n;
 }
 
 /* ---- monitors -------------------------------------------------------------- */
@@ -540,12 +550,17 @@ uint32_t gd_CoerceMode(gfx_env *env, gd_viewport *vp, uint32_t monitorid, uint32
     if (src == GD_INVALID_ID) return GD_INVALID_ID;
     uint32_t key = src & ~GD_MONITOR_ID_MASK;
     uint32_t mon = monitorid & GD_MONITOR_ID_MASK;
-    uint32_t id = mon | key;
-    if (find_mode(id, m) && !avail(env, m)) return id;
-    if (flags & GD_PRESERVE_COLORS) return GD_INVALID_ID;
-    /* the same resolution without HAM, EHB or dual playfield (ours) */
-    id = mon | (key & (GD_HIRES | GD_SUPERHIRES | GD_LACE));
-    if (find_mode(id, m) && !avail(env, m)) return id;
+    uint32_t id;
+    /* AVOID_FLICKER: the non-interlaced modes first (the autodoc's flag) */
+    for (int pass = flags & GD_AVOID_FLICKER && key & GD_LACE ? 0 : 1; pass < 2; pass++) {
+        uint32_t k = pass ? key : key & ~uint32_t(GD_LACE);
+        id = mon | k;
+        if (find_mode(id, m) && !avail(env, m)) return id;
+        if (flags & GD_PRESERVE_COLORS) continue;
+        /* the same resolution without HAM, EHB or dual playfield (ours) */
+        id = mon | (k & (GD_HIRES | GD_SUPERHIRES | GD_LACE));
+        if (find_mode(id, m) && !avail(env, m)) return id;
+    }
     return GD_INVALID_ID;
 }
 

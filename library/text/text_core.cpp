@@ -357,24 +357,24 @@ extern "C" {
 // has JAM2, else in pen 0 (the autodoc's "DrawMode 2": ABI test).
 void gt_ClearEOL(const gt_env *env, RastPort *rp)
 {
-    LONG w, h, y0 = LONG(rp->cp_y) - rp->TxBaseline, y1 = y0 + LONG(rp->TxHeight) - 1, x0 = rp->cp_x;
+    LONG bx0, by0, bx1, by1, y0 = LONG(rp->cp_y) - rp->TxBaseline, y1 = y0 + LONG(rp->TxHeight) - 1, x0 = rp->cp_x;
     ULONG pen = rp->DrawMode & JAM2 ? UBYTE(rp->BgPen) : 0;
-    env->rp_size(env->ctx, rp, &w, &h);
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (y1 > h - 1) y1 = h - 1;
-    if (x0 <= w - 1 && y0 <= y1) env->fill(env->ctx, rp, x0, y0, w - 1, y1, pen);
+    env->rp_bounds(env->ctx, rp, &bx0, &by0, &bx1, &by1);
+    if (x0 < bx0) x0 = bx0;
+    if (y0 < by0) y0 = by0;
+    if (y1 > by1) y1 = by1;
+    if (x0 <= bx1 && y0 <= y1) env->fill(env->ctx, rp, x0, y0, bx1, y1, pen);
 }
 
 // ClearScreen: ClearEOL, then every row below the text's.
 void gt_ClearScreen(const gt_env *env, RastPort *rp)
 {
-    LONG w, h, y0 = LONG(rp->cp_y) - rp->TxBaseline + rp->TxHeight;
+    LONG bx0, by0, bx1, by1, y0 = LONG(rp->cp_y) - rp->TxBaseline + rp->TxHeight;
     ULONG pen = rp->DrawMode & JAM2 ? UBYTE(rp->BgPen) : 0;
     gt_ClearEOL(env, rp);
-    env->rp_size(env->ctx, rp, &w, &h);
-    if (y0 < 0) y0 = 0;
-    if (w > 0 && y0 <= h - 1) env->fill(env->ctx, rp, 0, y0, w - 1, h - 1, pen);
+    env->rp_bounds(env->ctx, rp, &bx0, &by0, &bx1, &by1);
+    if (y0 < by0) y0 = by0;
+    if (bx0 <= bx1 && y0 <= by1) env->fill(env->ctx, rp, bx0, y0, bx1, by1, pen);
 }
 
 int16_t gt_TextLength(const gt_env *env, RastPort *rp, const uint8_t *s, uint32_t n)
@@ -420,13 +420,15 @@ int32_t gt_Text(const gt_env *env, RastPort *rp, const uint8_t *s, uint32_t n)
     return 0;
 }
 
-// SetFont: the font and its sizes into the RastPort; AlgoStyle and
-// TxSpacing stay (ABI test). A null font changes nothing and answers 0.
+// SetFont: the font and its sizes into the RastPort, and no soft style
+// (the autodoc: it "clears the effect of any previous soft styles");
+// TxSpacing stays (ABI test). A null font changes nothing and answers 0.
 int32_t gt_SetFont(const gt_env *env, RastPort *rp, TextFont *tf)
 {
     (void)env;
     if (!tf) return 0;
     rp->Font = tf;
+    rp->AlgoStyle = 0;
     rp->TxHeight = tf->tf_YSize;
     rp->TxWidth = tf->tf_XSize;
     rp->TxBaseline = tf->tf_Baseline;
@@ -500,13 +502,15 @@ void gt_CloseFont(const gt_env *env, TextFont *tf)
 }
 
 // AskSoftStyle: the styles Text can make that the font does not have
-// itself: underline, bold and italic (ABI test whether FSF_EXTENDED is
-// among them on OS 3.2). No font: none.
+// itself: underline, bold and italic; and, as the autodoc says, the style
+// bits that are not defined (0x10, 0x20) too. FSF_EXTENDED, COLORFONT
+// and TAGGED are never soft (ABI test for EXTENDED on OS 3.2). No font:
+// none.
 uint32_t gt_AskSoftStyle(const gt_env *env, RastPort *rp)
 {
     (void)env;
     if (!rp->Font) return 0;
-    return ULONG(~rp->Font->tf_Style) & (FSF_UNDERLINED | FSF_BOLD | FSF_ITALIC);
+    return ULONG(UBYTE(~rp->Font->tf_Style)) & ~ULONG(FSF_EXTENDED | FSF_COLORFONT | FSF_TAGGED);
 }
 
 // SetSoftStyle: the bits of style in enable that AskSoftStyle allows
@@ -595,6 +599,11 @@ uint32_t gt_TextFit(const gt_env *env, RastPort *rp, const uint8_t *s, uint32_t 
         if (is_rev(tf)) {
             x0 -= t.pos;
             x1 -= t.pos;
+        }
+        if (t.pos < 0) {
+            /* TxSpacing turns the path back: the fit fails (the autodoc) */
+            m = Measure();
+            break;
         }
         if (x1 - x0 + 1 > LONG(bitwidth)) break;
         if (c && (x0 < c->te_Extent.MinX || x1 > c->te_Extent.MaxX)) break;

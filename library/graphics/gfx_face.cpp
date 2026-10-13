@@ -777,6 +777,7 @@ void gfx_GetRPAttrsA(gfx_env *e, gfx_rastport *rp, const gfx_tagitem *tags)
 gfx_colormap *gfx_GetColorMap(gfx_env *e, int32_t entries)
 {
     if (entries <= 0) return nullptr; // ABI test
+    if (entries > 0xFFFF) return nullptr; // cm->count is a UWORD: FreeColorMap frees by it
     auto *cm = static_cast<gfx_colormap *>(mem_alloc(e, sizeof(gfx_colormap), GFX_MEMF_PUBLIC | GFX_MEMF_CLEAR));
     if (!cm) return nullptr;
     uint32_t n = uint32_t(entries) * 2;
@@ -1312,10 +1313,15 @@ void gfx_ClipBlit(gfx_env *e, gfx_rastport *src, int32_t sx, int32_t sy, gfx_ras
     if (w <= 0 || h <= 0) return;
     gfx_rectangle r = box(dx, dy, dx + w - 1, dy + h - 1);
     target td, ts;
-    begin(td, e, dst);
     bool same = src->layer && src->layer == dst->layer;
-    if (!same) begin(ts, e, src);
-    else {
+    // two layers: locked in the order of their addresses, so two copies
+    // the opposite ways round never each hold the lock the other waits on
+    bool src_first = !same && src->layer && dst->layer &&
+                     reinterpret_cast<uintptr_t>(src->layer) < reinterpret_cast<uintptr_t>(dst->layer);
+    if (src_first) begin(ts, e, src);
+    begin(td, e, dst);
+    if (!same && !src_first) begin(ts, e, src);
+    else if (same) {
         // one layer, locked once
         ts.e = e;
         ts.rp = ts.use = src;

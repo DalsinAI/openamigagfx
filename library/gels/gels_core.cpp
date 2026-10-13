@@ -341,22 +341,15 @@ bool walk_next(walk &w, place &p)
         p.y1 = cr->bounds.maxy - by;
         if (clamp(p)) return true;
     }
-    // a super bitmap layer: its super bitmap beyond the window, in four
-    // bands (above, below, left, right), in the RastPort's coordinates
-    if (!(l->flags & GFX_LAYERSUPER) || !l->superbitmap) return false;
-    int32_t wx0 = l->scroll_x, wy0 = l->scroll_y;
-    int32_t wx1 = wx0 + l->bounds.maxx - l->bounds.minx, wy1 = wy0 + l->bounds.maxy - l->bounds.miny;
-    while (w.stage < 4) {
-        int s = w.stage++;
-        p.bm = l->superbitmap;
-        p.ox = p.oy = 0;
-        p.x0 = s < 2 ? 0 : s == 2 ? 0 : wx1 + 1;
-        p.x1 = s < 2 ? 0x7FFF : s == 2 ? wx0 - 1 : 0x7FFF;
-        p.y0 = s == 0 ? 0 : s == 1 ? wy1 + 1 : wy0;
-        p.y1 = s == 0 ? wy0 - 1 : s == 1 ? 0x7FFF : wy1;
-        if (clamp(p)) return true;
-    }
-    return false;
+    // a super bitmap layer: its whole super bitmap, in the RastPort's
+    // coordinates, the window's part too, so it stays what the screen
+    // shows (the face draws on it and copies it out the same way)
+    if (!(l->flags & GFX_LAYERSUPER) || !l->superbitmap || w.stage++) return false;
+    p.bm = l->superbitmap;
+    p.ox = p.oy = 0;
+    p.x0 = p.y0 = 0;
+    p.x1 = p.y1 = 0x7FFF;
+    return clamp(p);
 }
 
 void lock_rp(gels_state *st, gfx_rastport *rp)
@@ -556,8 +549,13 @@ void place_vsprites(gels_state *st, gl_gelsinfo *gi, void *vp)
     uint32_t n = 0;
     for (gl_vsprite *v = gi->gelhead->next; v && v != gi->geltail; v = v->next)
         if (v->flags & GL_VSPRITE) n++;
-    if (!n || !gi->nextline || !gi->lastcolor) return;
+    if (!gi->nextline || !gi->lastcolor) return;
     gfx_env *e = E(st);
+    if (!n) {
+        // none left: an empty set, so display drops the sprites it showed
+        gfx_hook_vsprites(e, vp, nullptr, 0);
+        return;
+    }
     uint32_t size = n * static_cast<uint32_t>(sizeof(gels_vsprite_slot));
     gels_vsprite_slot *slots = static_cast<gels_vsprite_slot *>(e->alloc(e->ctx, size, GFX_MEMF_ANY));
     for (int s = 0; s < 8; s++) {
@@ -884,14 +882,33 @@ void gels_BltMaskBitMapRastPort(gels_state *st, gfx_bitmap *srcbm, int32_t sx, i
     int32_t mbpr = sw / 8, sdepth = bm_depth(srcbm), wmask = rp->mask;
     lock_rp(st, rp);
     own(st);
+    // the source is (or may be) the destination: its rows read from a copy
+    // made first, so rows and words written early are never read back as
+    // source (an overlap down or to the right)
+    gfx_layer *ly = static_cast<gfx_layer *>(rp->layer);
+    uint8_t *copy = nullptr;
+    uint32_t cbpr = srcbm->bytesperrow, csize = 0;
+    if (srcbm == rp->bitmap || (ly && ly->superbitmap == srcbm)) {
+        csize = static_cast<uint32_t>(sdepth) * static_cast<uint32_t>(h) * cbpr;
+        wait_blit(st);
+        copy = static_cast<uint8_t *>(E(st)->alloc(E(st)->ctx, csize, GFX_MEMF_ANY));
+        for (int32_t pl = 0; copy && pl < sdepth; pl++)
+            if (plane_ok(srcbm->planes[pl]))
+                for (uint32_t i = 0; i < static_cast<uint32_t>(h) * cbpr; i++)
+                    copy[static_cast<uint32_t>(pl) * static_cast<uint32_t>(h) * cbpr + i] =
+                        srcbm->planes[pl][static_cast<uint32_t>(sy) * cbpr + i];
+    }
     each_piece(rp, dx, dy, w, h, [&](gfx_bitmap *bm, int pl, int32_t bx, int32_t by, int32_t pw, int32_t ph,
                                      int32_t rx, int32_t ry) {
         if (pl >= sdepth || !(wmask >> pl & 1) || !plane_ok(bm->planes[pl])) return;
         uint8_t *s = srcbm->planes[pl];
         src bsrc = !s ? konst(0) : s == reinterpret_cast<uint8_t *>(-1) ? konst(0xFFFF)
-                                   : mem(s + (sy + ry) * srcbm->bytesperrow, srcbm->bytesperrow, sx + rx);
+                 : copy ? mem(copy + (static_cast<uint32_t>(pl) * static_cast<uint32_t>(h) + static_cast<uint32_t>(ry)) * cbpr,
+                              cbpr, sx + rx)
+                        : mem(s + (sy + ry) * srcbm->bytesperrow, srcbm->bytesperrow, sx + rx);
         op(st, row_of(bm, pl, by), bm->bytesperrow, bx, pw, ph, mem(mk + (sy + ry) * mbpr, mbpr, sx + rx), bsrc, mt);
     });
+    if (copy) E(st)->free(E(st)->ctx, copy, csize);
     disown(st);
     unlock_rp(st, rp);
 }
