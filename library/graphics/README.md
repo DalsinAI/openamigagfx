@@ -50,6 +50,7 @@ BltBitMap for a bitmap that is not standard planar (more than 8 planes, or BMF_S
 | GetRPAttrs MaxPen and DrawBounds | The bitmap's highest pen; the RastPort's window (a layer's bounds plus its scroll) | ABI test |
 | Tags | TAG_IGNORE, TAG_SKIP and TAG_MORE are followed; unknown tags are left alone | documented; test |
 | GetColorMap(0) or less | NULL | ABI test |
+| GetColorMap above 65535 | NULL: cm_Count is a UWORD, and FreeColorMap frees by it | ours |
 | A new ColorMap | Type V39, all colours 0, sprite resolutions SPRITERESN_DEFAULT, the other fields 0 | ABI test (GETCM, CMRGB) |
 | SetRGB4/SetRGB4CM | 4 bits stand for 8 by repeating (0xA is 0xAA) | documented |
 | An index past the ColorMap | Set calls do nothing; GetRGB4 answers -1; GetRGB32 stops at the end and writes nothing past it | autodoc for GetRGB4; ABI test for GetRGB32 |

@@ -81,7 +81,7 @@ static void t_free_tags(void *ctx, struct TagItem *tags)
 
 static int t_mono_text(void *ctx, struct RastPort *rp, const uint8_t *s, uint32_t n)
 {
-    (void)ctx;
+    gfx_hook_wait_blit(ctx);            /* the CPU draws: no blit may still be writing */
     return ogfx_rp_Text(rp, (CONST_STRPTR)s, n);
 }
 
@@ -121,23 +121,29 @@ static void t_fill(void *ctx, struct RastPort *rp, int32_t x0, int32_t y0, int32
     rp->AreaPtSz = sz;
 }
 
-/* The super bitmap's size in a super bitmap layer (its RastPort draws in
- * the super bitmap's coordinates), the layer's in another layer, else the
- * bitmap's (ABI test). */
-static void t_rp_size(void *ctx, struct RastPort *rp, int32_t *w, int32_t *h)
+/* The super bitmap's in a super bitmap layer (its RastPort draws in
+ * the super bitmap's coordinates), the layer's in another layer, from its
+ * scroll as the face's window_of has it, else the bitmap's (ABI test). */
+static void t_rp_bounds(void *ctx, struct RastPort *rp, int32_t *x0, int32_t *y0, int32_t *x1, int32_t *y1)
 {
+    int32_t w, h;
     (void)ctx;
+    *x0 = *y0 = 0;
     if (rp->Layer && rp->Layer->Flags & LAYERSUPER && rp->Layer->SuperBitMap) {
-        *w = (int32_t)rp->Layer->SuperBitMap->BytesPerRow * 8;
-        *h = rp->Layer->SuperBitMap->Rows;
+        w = (int32_t)rp->Layer->SuperBitMap->BytesPerRow * 8;
+        h = rp->Layer->SuperBitMap->Rows;
     } else if (rp->Layer) {
-        *w = rp->Layer->bounds.MaxX - rp->Layer->bounds.MinX + 1;
-        *h = rp->Layer->bounds.MaxY - rp->Layer->bounds.MinY + 1;
+        *x0 = rp->Layer->Scroll_X;
+        *y0 = rp->Layer->Scroll_Y;
+        w = rp->Layer->bounds.MaxX - rp->Layer->bounds.MinX + 1;
+        h = rp->Layer->bounds.MaxY - rp->Layer->bounds.MinY + 1;
     } else if (rp->BitMap) {
-        *w = (int32_t)rp->BitMap->BytesPerRow * 8;
-        *h = rp->BitMap->Rows;
+        w = (int32_t)rp->BitMap->BytesPerRow * 8;
+        h = rp->BitMap->Rows;
     } else
-        *w = *h = 0;
+        w = h = 0;
+    *x1 = *x0 + w - 1;
+    *y1 = *y0 + h - 1;
 }
 
 /* LockLayerRom and UnlockLayerRom around a call that draws or reads a
@@ -172,7 +178,7 @@ int gfx_init_text(struct gfx_env *e)
     st->env.mono_text = t_mono_text;
     st->env.write_pixel = t_write_pixel;
     st->env.fill = t_fill;
-    st->env.rp_size = t_rp_size;
+    st->env.rp_bounds = t_rp_bounds;
     st->topaz8 = gt_init_rom_fonts(&st->env, &st->topaz9);
     if (!st->topaz8) {
         e->free(e->ctx, st, sizeof *st);

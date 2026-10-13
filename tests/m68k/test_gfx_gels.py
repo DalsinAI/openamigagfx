@@ -192,12 +192,16 @@ class Model:
             return
         r = self.rps[rp]
         mbpr = sw // 8
-        for (b, bx, by, rx, ry) in list(self.pieces(r, dx, dy, w, h)):
+        pcs = list(self.pieces(r, dx, dy, w, h))
+        # the source as it was before any of it is written (it may be the destination)
+        old = {(p, rx, ry): self.pget(s, p, sx + rx, sy + ry)
+               for (b, bx, by, rx, ry) in pcs for p in range(s.ndepth())}
+        for (b, bx, by, rx, ry) in pcs:
             a = self.bit(mb, (sy + ry) * mbpr, sx + rx)
             for p in range(min(b.ndepth(), s.ndepth())):
                 if not (r['mask'] >> p & 1) or not isinstance(b.planes[p], tuple):
                     continue
-                sb = self.pget(s, p, sx + rx, sy + ry)
+                sb = old[(p, rx, ry)]
                 c = self.pget(b, p, bx, by)
                 x = 1 - (c ^ sb)
                 f = minterm >> (4 + 2 * a + x) & 1
@@ -854,6 +858,15 @@ def round_blits(m):
             mt = r.choice([0xE0, 0xE0, 0x20, r.randrange(256)])
             m.MASKBLT(sbid, r.randint(-6, sbpr * 8), r.randint(-3, srows), 0, r.randint(-10, w),
                       r.randint(-4, rows), r.randint(1, 64), r.randint(1, 20), mt, mb)
+            if m.rps[0]['layer'] is None and r.random() < 0.5:
+                # the RastPort's own bitmap as the source, the rectangle moved
+                # a little down and right: an overlap
+                own = m.rps[0]['bm']
+                ob = m.bms[own]
+                omb = m.BUF((ob.width() // 8) * ob.rows, r.randrange(2), r.randrange(1, 1 << 30))
+                ox, oy = r.randint(0, 20), r.randint(0, 6)
+                m.MASKBLT(own, ox, oy, 0, ox + r.randint(0, 9), oy + r.randint(0, 3), r.randint(1, 48),
+                          r.randint(1, 12), r.choice([0xE0, 0x20]), omb)
         else:
             size = 2 * r.randint(1, 300)
             b = m.BUF(size, r.randrange(2), r.randrange(1, 1 << 30))
