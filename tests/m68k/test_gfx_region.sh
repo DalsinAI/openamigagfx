@@ -203,6 +203,27 @@ int main(void)
         fail_after = -1;
     }
     for (i = 0; i < 3; i++) gfx_rgn_clear(&reg[i], &mem);
+    /* a region as wide as every WORD: its offsets pass 32767 */
+    {
+        struct gfx_rect wide = { -32768, 0, 32767, 0 }, pt = { 0, 0, 0, 0 }, mid = { -10, 0, 20, 0 };
+        gfx_rgn_rect(&reg[0], GFX_RGN_OR, &wide, &mem);
+        gfx_rgn_rect(&reg[0], GFX_RGN_CLEAR, &mid, &mem);
+        gfx_rgn_rect(&reg[0], GFX_RGN_OR, &pt, &mem);
+        checks++;
+        if (!reg[0].rects || !reg[0].rects->next || !reg[0].rects->next->next || reg[0].rects->next->next->next
+            || reg[0].bounds.min_x != -32768 || reg[0].bounds.max_x != 32767
+            || (uint16_t)reg[0].rects->next->next->bounds.min_x != 32789) {
+            printf("FAIL a region as wide as every WORD\n");
+            fails++;
+        }
+        gfx_rgn_rect(&reg[0], GFX_RGN_AND, &pt, &mem);
+        checks++;
+        if (!reg[0].rects || reg[0].rects->next || reg[0].bounds.min_x != 0 || reg[0].bounds.max_x != 0) {
+            printf("FAIL the point in the widest region\n");
+            fails++;
+        }
+        gfx_rgn_clear(&reg[0], &mem);
+    }
     if (live) { printf("FAIL %ld allocations kept\n", live); fails++; }
     printf("%lu checks, %lu failed\n", checks, fails);
     return fails != 0;

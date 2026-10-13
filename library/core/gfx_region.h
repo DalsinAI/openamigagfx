@@ -6,7 +6,8 @@
  * Clean-room, from the autodocs and measurements of OS 3.2
  * (tests/RegionABITest.c). The structures have graphics/regions.h's
  * layout on the 68k: a region is its bounds and a list of rectangles whose
- * coordinates are relative to bounds.MinX and bounds.MinY.
+ * coordinates are relative to bounds.MinX and bounds.MinY, read as 0 to
+ * 65535 so that a region may span every WORD coordinate.
  *
  * A region is kept in bands: rows of equal height, top to bottom, each a
  * run of rectangles left to right that neither overlap nor touch, and two

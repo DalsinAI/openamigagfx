@@ -40,17 +40,18 @@ static uint32_t count(const struct gfx_region *r)
     return n;
 }
 
+/* A rectangle's coordinates are offsets from the region's MinX and MinY,
+ * 0 to 65535: a region may be 65536 wide, so they are read unsigned. */
 static uint32_t boxes(const struct gfx_region *r, struct box *b)
 {
     const struct gfx_rrect *p;
     uint32_t n = 0;
     for (p = r->rects; p; p = p->next) {
-        if (p->bounds.max_x < p->bounds.min_x || p->bounds.max_y < p->bounds.min_y) continue;
-        b[n].x0 = (int32_t)r->bounds.min_x + p->bounds.min_x;
-        b[n].y0 = (int32_t)r->bounds.min_y + p->bounds.min_y;
-        b[n].x1 = (int32_t)r->bounds.min_x + p->bounds.max_x + 1;
-        b[n].y1 = (int32_t)r->bounds.min_y + p->bounds.max_y + 1;
-        n++;
+        b[n].x0 = (int32_t)r->bounds.min_x + (uint16_t)p->bounds.min_x;
+        b[n].y0 = (int32_t)r->bounds.min_y + (uint16_t)p->bounds.min_y;
+        b[n].x1 = (int32_t)r->bounds.min_x + (uint16_t)p->bounds.max_x + 1;
+        b[n].y1 = (int32_t)r->bounds.min_y + (uint16_t)p->bounds.max_y + 1;
+        if (b[n].x1 > b[n].x0 && b[n].y1 > b[n].y0) n++;
     }
     return n;
 }
