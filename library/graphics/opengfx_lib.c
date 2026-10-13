@@ -104,24 +104,24 @@ static void e_chip_write(void *ctx, uint32_t off, uint16_t v)
 static struct gfx_tagitem *e_next_tag(void *ctx, const struct gfx_tagitem **state)
 {
     UTIL(ctx);
-    return (struct gfx_tagitem *)NextTagItem((struct TagItem **)state);
+    return (struct gfx_tagitem *)NextTagItem((void *)state);
 }
 static struct gfx_tagitem *e_find_tag(void *ctx, uint32_t tag, const struct gfx_tagitem *tags)
 {
     UTIL(ctx);
-    return (struct gfx_tagitem *)FindTagItem(tag, (struct TagItem *)tags);
+    return (struct gfx_tagitem *)FindTagItem(tag, (void *)tags);
 }
 static uint32_t e_get_tag_data(void *ctx, uint32_t tag, uint32_t def, const struct gfx_tagitem *tags)
 {
     UTIL(ctx);
-    return GetTagData(tag, def, (struct TagItem *)tags);
+    return GetTagData(tag, def, (void *)tags);
 }
 static struct gfx_tagitem *e_clone_tags(void *ctx, const struct gfx_tagitem *tags)
 {
     UTIL(ctx);
-    return (struct gfx_tagitem *)CloneTagItems((struct TagItem *)tags);
+    return (struct gfx_tagitem *)CloneTagItems((void *)tags);
 }
-static void e_free_tags(void *ctx, struct gfx_tagitem *tags) { UTIL(ctx); FreeTagItems((struct TagItem *)tags); }
+static void e_free_tags(void *ctx, struct gfx_tagitem *tags) { UTIL(ctx); FreeTagItems((void *)tags); }
 static uint32_t e_call_hook(void *ctx, void *hook, void *obj, void *msg)
 {
     UTIL(ctx);
