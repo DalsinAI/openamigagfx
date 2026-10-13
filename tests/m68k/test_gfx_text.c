@@ -473,14 +473,39 @@ static void test_rastport(void)
 
 #ifdef WITH_LVO
 #include "gfx_env.h"
+#include <graphics/clip.h>
+#include <graphics/layers.h>
 struct GfxBase;
+/* the other areas' hooks the face calls (gen_stubs.py's stubs) */
+void gfx_hook_vp_colors(struct gfx_env *env, void *vp, uint32_t first, uint32_t count)
+{
+    (void)env; (void)vp; (void)first; (void)count;
+}
+int32_t gfx_hook_blt_bitmap(struct gfx_env *env, struct gfx_bitmap *src, int32_t sx, int32_t sy,
+                            struct gfx_bitmap *dst, int32_t dx, int32_t dy, int32_t w, int32_t h, uint32_t minterm,
+                            uint32_t mask, uint8_t *temp)
+{
+    (void)env; (void)src; (void)sx; (void)sy; (void)dst; (void)dx; (void)dy; (void)w; (void)h; (void)minterm;
+    (void)mask; (void)temp;
+    return -1;
+}
+void gfx_hook_wait_blit(struct gfx_env *env) { (void)env; }
+void gfx_hook_vsprites(struct gfx_env *env, void *vp, const void *slots, uint32_t n)
+{
+    (void)env; (void)vp; (void)slots; (void)n;
+}
+static long sem_depth;
 WORD gfx_lvo_TextLength(struct RastPort *, CONST_STRPTR, ULONG, struct GfxBase *);
 LONG gfx_lvo_Text(struct RastPort *, CONST_STRPTR, ULONG, struct GfxBase *);
 struct TextFont *gfx_lvo_OpenFont(struct TextAttr *, struct GfxBase *);
 void gfx_lvo_CloseFont(struct TextFont *, struct GfxBase *);
 void gfx_lvo_ClearEOL(struct RastPort *, struct GfxBase *);
 static void *g_alloc(void *ctx, uint32_t size, uint32_t f) { (void)f; return m_alloc(ctx, size); }
-static void g_sem(void *ctx, struct gfx_semaphore *s) { (void)ctx; (void)s; }
+static void g_obtain(void *ctx, struct gfx_semaphore *s) { (void)ctx; (void)s; sem_depth++; }
+static void g_release(void *ctx, struct gfx_semaphore *s) { (void)ctx; (void)s; sem_depth--; }
+static UBYTE splanes[8][W / 8 * H];
+static struct BitMap sbm;
+static int same_planes(UBYTE (*a)[W / 8 * H], UBYTE (*b)[W / 8 * H]) { return !memcmp(a, b, 8 * (W / 8 * H)); }
 static UBYTE gbase[GFX_BASE_POSSIZE];
 static void test_lvo(void)
 {
@@ -497,8 +522,8 @@ static void test_lvo(void)
     e->free = m_free;
     e->forbid = m_forbid;
     e->permit = m_permit;
-    e->sem_obtain = g_sem;
-    e->sem_release = g_sem;
+    e->sem_obtain = g_obtain;
+    e->sem_release = g_release;
     e->clone_tags = (struct gfx_tagitem * (*)(void *, const struct gfx_tagitem *)) m_clone;
     e->free_tags = (void (*)(void *, struct gfx_tagitem *))m_free_tags;
     new_list((struct List *)&b->textfonts);
@@ -532,6 +557,57 @@ static void test_lvo(void)
                 if (v != 0) ok = 0;
             }
         CHECK(ok, "lvo ClearEOL", 0);
+    }
+    /* a super bitmap layer: the core's Text does not take it, so the text
+     * and ClearEOL go through the face's WritePixel and RectFill onto the
+     * super bitmap, the same pixels as on a bare bitmap */
+    {
+        static struct Layer sl;
+        struct RastPort lrp;
+        static const UBYTE fonts_try[3] = {0, 4, 7};
+        int k;
+        memset(&sl, 0, sizeof sl);
+        sl.Flags = LAYERSUPER | LAYERSMART;
+        sl.SuperBitMap = &sbm;
+        sl.bounds.MaxX = 99;
+        sl.bounds.MaxY = 29;
+        sbm = bm;
+        for (p = 0; p < 8; p++) sbm.Planes[p] = splanes[p];
+        for (k = 0; k < 3; k++) {
+            struct TextFont *f = k ? &made[fonts_try[k]].ctf_TF : b->defaultfont;
+            UBYTE s3[3];
+            s3[0] = f->tf_LoChar; s3[1] = (UBYTE)(f->tf_LoChar + 1); s3[2] = (UBYTE)(f->tf_HiChar + 1);
+            for (p = 0; p < 8; p++) memset(splanes[p], 0x5A, sizeof splanes[p]);
+            planar_init();
+            for (p = 0; p < 8; p++) memset(planes[p], 0x5A, sizeof planes[p]);
+            memset(&lrp, 0, sizeof lrp);
+            gfx_hook_set_font(e, (struct gfx_rastport *)&lrp, f);
+            lrp.Mask = 0xFF; lrp.FgPen = 3; lrp.BgPen = 9; lrp.DrawMode = JAM2; lrp.AlgoStyle = 7;
+            lrp.cp_x = 120; lrp.cp_y = 20;
+            rp = lrp;
+            rp.BitMap = &bm;
+            lrp.Layer = &sl;
+            lrp.BitMap = &bm;
+            gfx_lvo_Text(&lrp, (CONST_STRPTR)s3, 3, (struct GfxBase *)b);
+            gfx_lvo_Text(&rp, (CONST_STRPTR)s3, 3, (struct GfxBase *)b);
+            CHECK(lrp.cp_x == rp.cp_x, "super bitmap Text cp_x", k);
+            CHECK(same_planes(splanes, planes), "super bitmap Text pixels", k);
+            CHECK(sem_depth == 0, "super bitmap layer unlocked", k);
+        }
+        /* ClearEOL to the super bitmap's right edge */
+        lrp.cp_x = 300; lrp.cp_y = 20; lrp.DrawMode = JAM2; lrp.BgPen = 0;
+        for (p = 0; p < 8; p++) memset(splanes[p], 0xFF, sizeof splanes[p]);
+        gfx_lvo_ClearEOL(&lrp, (struct GfxBase *)b);
+        {
+            int x, y, ok = 1;
+            for (y = 0; y < H; y++)
+                for (x = 0; x < W; x++) {
+                    int v = 0, y0 = 20 - lrp.TxBaseline, in = x >= 300 && y >= y0 && y <= y0 + lrp.TxHeight - 1;
+                    for (p = 0; p < 8; p++) v |= (splanes[p][y * (W / 8) + x / 8] >> (7 - (x & 7)) & 1) << p;
+                    if (v != (in ? 0 : 0xFF)) ok = 0;
+                }
+            CHECK(ok, "super bitmap ClearEOL", 0);
+        }
     }
     gfx_lvo_CloseFont(t9, (struct GfxBase *)b);
     gfx_exit_text(e);

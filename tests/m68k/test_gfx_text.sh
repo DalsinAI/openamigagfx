@@ -33,7 +33,7 @@ cmp -s "$tmp/topaz_data.cpp" "$text/topaz_data.cpp" || { echo "FAIL topaz_data.c
 
 genv=${GFX_ENV_DIR:-$root/library/graphics}
 lvo=
-if [ -f "$genv/gfx_env.h" ]; then lvo="-DWITH_LVO -I$genv"; else echo "note: no gfx_env.h, register entries not run"; fi
+if [ -f "$genv/gfx_env.h" ] && [ -f "$genv/gfx_face.cpp" ]; then lvo="-DWITH_LVO -I$genv"; else echo "note: no library/graphics (gfx_env.h, gfx_face.cpp), register entries not run"; fi
 
 warn="-Wall -Wextra -Werror"
 inc="-I$here/text-ndk -I$here/../host-ndk -I$core -I$text -I$tmp -include $here/text-ndk/gfxdefs.h"
@@ -60,7 +60,12 @@ for cpu in -m68000 -m68020 -m68040; do
       [ -z "$cxxrt" ] || { echo "FAIL $opt $cpu: $f.o has C++ runtime: $cxxrt"; fail=1; }
     done
     src="$here/test_gfx_text.c $core/gfx_rp.c $core/gfx_core.c"
-    [ -n "$lvo" ] && src="$src $text/text_lvo.c"
+    if [ -n "$lvo" ]; then
+      # the face's drawing, which text_lvo.c calls (gfx_face.h)
+      # shellcheck disable=SC2086
+      "$cxx" $cpu $opt $cxxflags -Wno-unused-parameter -I"$genv" -I"$core" -c "$genv/gfx_face.cpp" -o "$o/face.o"
+      src="$src $text/text_lvo.c $core/gfx_region.c $o/face.o"
+    fi
     # shellcheck disable=SC2086
     "$cc" $cpu $opt -static $warn -Wno-unused-parameter $lvo $inc -o "$o/t" $src "$o/text_core.o" "$o/topaz_data.o" $rt
     q=m${cpu#-m}
