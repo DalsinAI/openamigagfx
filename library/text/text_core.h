@@ -48,12 +48,12 @@ struct gt_env {
      * write_pixel: op 0 sets the pixel to pen; op 1 inverts the planes set
      * in pen (pen 0xFF: all of them, COMPLEMENT).
      * fill: a solid rectangle in pen, x0 <= x1 and y0 <= y1 (ClearEOL).
-     * rp_size: the width and height the RastPort draws into (its layer's,
-     * or its bitmap's). */
+     * rp_bounds: the coordinates the RastPort draws into, inclusive (its
+     * layer's, offset by the layer's scroll, or its bitmap's). */
     int (*mono_text)(void *ctx, struct RastPort *rp, const uint8_t *s, uint32_t n);
     void (*write_pixel)(void *ctx, struct RastPort *rp, int32_t x, int32_t y, uint32_t pen, int op);
     void (*fill)(void *ctx, struct RastPort *rp, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t pen);
-    void (*rp_size)(void *ctx, struct RastPort *rp, int32_t *w, int32_t *h);
+    void (*rp_bounds)(void *ctx, struct RastPort *rp, int32_t *x0, int32_t *y0, int32_t *x1, int32_t *y1);
 };
 
 /* The calls, graphics.library's arguments in the fd's order. */
