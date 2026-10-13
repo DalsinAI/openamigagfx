@@ -126,7 +126,11 @@ void gd_WaitTOF(gfx_env *env)
     env->disable(env->ctx);
     add_tail(&gb->tof_waitq, &w.node);
     env->enable(env->ctx);
-    while (w.task) env->wait(env->ctx, SIGF_SINGLE);
+    /* the blank always signals a waiter it takes, so Wait at least once:
+     * a blank that came before the first look leaves no SIGF_SINGLE behind */
+    do
+        env->wait(env->ctx, SIGF_SINGLE);
+    while (w.task);
 }
 
 void gd_WaitBOVP(gfx_env *env, gd_viewport *vp)
@@ -183,10 +187,10 @@ void gd_FreeSprite(gfx_env *env, int32_t num)
     gfx_base *gb = base(env);
     if (num < 0 || num > 7) return;
     env->disable(env->ctx);
+    set_sprite_ptr(env, num, nullptr);  /* before the sprite is free to claim again */
     gb->spritereserved = static_cast<uint8_t>(gb->spritereserved & ~(1 << num));
     st(env)->sprites[num] = nullptr;
     env->enable(env->ctx);
-    set_sprite_ptr(env, num, nullptr);
 }
 
 void gd_ChangeSprite(gfx_env *env, gd_viewport *vp, gd_simplesprite *s, uint16_t *data)
