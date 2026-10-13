@@ -15,6 +15,8 @@ on:
       - tests/LayersABITest.c
       - library/graphics/**
       - tests/GfxFaceABITest.c
+      - library/display/**
+      - tests/DisplayABITest.c
 
 permissions:
   contents: read
@@ -39,3 +41,5 @@ jobs:
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_region.sh
       - name: OpenGfx graphics.library face
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_face.sh
+      - name: OpenGfx display
+        run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_display.sh
