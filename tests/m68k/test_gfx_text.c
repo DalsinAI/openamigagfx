@@ -112,7 +112,12 @@ static void m_fill(void *ctx, struct RastPort *rp, int32_t x0, int32_t y0, int32
     fill_r[0] = x0; fill_r[1] = y0; fill_r[2] = x1; fill_r[3] = y1;
     fill_pen = pen;
 }
-static void m_size(void *ctx, struct RastPort *rp, int32_t *w, int32_t *h) { (void)ctx; (void)rp; *w = W; *h = H; }
+static int32_t org_x, org_y;   /* a layer's scroll */
+static void m_bounds(void *ctx, struct RastPort *rp, int32_t *x0, int32_t *y0, int32_t *x1, int32_t *y1)
+{
+    (void)ctx; (void)rp;
+    *x0 = org_x; *y0 = org_y; *x1 = org_x + W - 1; *y1 = org_y + H - 1;
+}
 static int core_text(void *ctx, struct RastPort *rp, const uint8_t *s, uint32_t n)
 {
     (void)ctx;
@@ -121,7 +126,7 @@ static int core_text(void *ctx, struct RastPort *rp, const uint8_t *s, uint32_t 
 
 static struct List fonts_list;
 static struct gt_env env = {0, &fonts_list, m_forbid, m_permit, m_alloc, m_free, m_clone, m_free_tags,
-                            0, m_pixel, m_fill, m_size};
+                            0, m_pixel, m_fill, m_bounds};
 
 static void new_list(struct List *l)
 {
@@ -433,10 +438,10 @@ static void test_rastport(void)
     CHECK(gt_TextLength(&env, &rp, (const uint8_t *)"ab", 2) == 0, "TextLength no font", 0);
     rp.AlgoStyle = FSF_ITALIC;
     CHECK(gt_SetFont(&env, &rp, topaz9) == 1 && rp.Font == topaz9 && rp.TxHeight == 9 && rp.TxWidth == 10 &&
-              rp.TxBaseline == 7 && rp.AlgoStyle == FSF_ITALIC, "SetFont", 0);
-    CHECK(gt_AskSoftStyle(&env, &rp) == 7, "AskSoftStyle", 0);
+              rp.TxBaseline == 7 && rp.AlgoStyle == 0, "SetFont", 0);
+    CHECK(gt_AskSoftStyle(&env, &rp) == 0x37, "AskSoftStyle", 0);
     topaz9->tf_Style = FSF_BOLD;
-    CHECK(gt_AskSoftStyle(&env, &rp) == 5, "AskSoftStyle bold font", 0);
+    CHECK(gt_AskSoftStyle(&env, &rp) == 0x35, "AskSoftStyle bold font", 0);
     CHECK(gt_SetSoftStyle(&env, &rp, FSF_UNDERLINED | FSF_BOLD, 0xFF) == (FSF_UNDERLINED | FSF_BOLD) &&
               rp.AlgoStyle == FSF_UNDERLINED, "SetSoftStyle", 0);
     CHECK(gt_SetSoftStyle(&env, &rp, 0, FSF_ITALIC) == (FSF_UNDERLINED | FSF_BOLD) && rp.AlgoStyle == FSF_UNDERLINED,
@@ -469,6 +474,22 @@ static void test_rastport(void)
     rp.cp_x = 0;
     gt_ClearScreen(&env, &rp);
     CHECK(fills == 0, "ClearScreen below", 0);
+    /* a layer scrolled by (100, 50): its coordinates start there */
+    org_x = 100;
+    org_y = 50;
+    rp.cp_x = 130;
+    rp.cp_y = 70;
+    fills = 0;
+    gt_ClearScreen(&env, &rp);
+    CHECK(fills == 2 && fill_r[0] == 100 && fill_r[1] == 72 && fill_r[2] == 100 + W - 1 && fill_r[3] == 50 + H - 1,
+          "ClearScreen scrolled", 0);
+    rp.cp_x = 90;
+    rp.cp_y = 52;
+    fills = 0;
+    gt_ClearEOL(&env, &rp);
+    CHECK(fills == 1 && fill_r[0] == 100 && fill_r[1] == 50 && fill_r[2] == 100 + W - 1 && fill_r[3] == 53,
+          "ClearEOL scrolled", 0);
+    org_x = org_y = 0;
 }
 
 #ifdef WITH_LVO

@@ -223,6 +223,9 @@ def textfit(f, s, idx, n, d, algo, spacing, con, bw, bh):
         mem = chars if d >= 0 else list(reversed(chars))  # in memory order
         e = extent(f, mem, algo, spacing)
         x0, x1 = e[2], e[4]
+        if e[0] < 0:            # TxSpacing turns the path back: the fit fails
+            k = 0
+            break
         if x1 - x0 + 1 > bw:
             break
         if con and (x0 < con[0] or x1 > con[2]):
@@ -339,6 +342,15 @@ def main():
         w('  {%d, %d, (const UBYTE *)"%s", %d, %d,%d, %d, {%s}, %d, %dUL,%dUL, %d, {%s}},\n'
           % (fi, n, ''.join('\\%03o' % c for c in s), idx, algo, spacing, d,
              ','.join(map(str, con)) if con else '0,0,0,0', int(con is not None), bw, bh, cnt,
+             ','.join(map(str, e))))
+        nfit += 1
+    # TxSpacing that turns topaz 8's path back (-9 on 8 wide): no fit
+    for s, d, con in (([97, 98, 99], 1, None), ([97, 98, 99], -1, (-100, -14, 100, 10))):
+        n, idx = len(s), 0 if d > 0 else len(s) - 1
+        cnt, e = textfit(t8, s, idx, n, d, 0, -9, con, 0xFFFF, 0xFFFF)
+        w('  {%d, %d, (const UBYTE *)"%s", %d, %d,%d, %d, {%s}, %d, %dUL,%dUL, %d, {%s}},\n'
+          % (-1, n, ''.join('\\%03o' % c for c in s), idx, 0, -9, d,
+             ','.join(map(str, con)) if con else '0,0,0,0', int(con is not None), 0xFFFF, 0xFFFF, cnt,
              ','.join(map(str, e))))
         nfit += 1
     w('};\n#define NFITS %d\n' % nfit)

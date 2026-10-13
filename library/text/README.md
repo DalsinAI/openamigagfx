@@ -49,8 +49,8 @@ The "Where" column says whether a case is documented in the autodocs, was measur
 | Font drawn right to left (FPF_REVPATH) | ABI test (REVPATH PROBE) | The string lands to the left of the pen, last character leftmost. cp_x moves back by the width. TextLength stays positive. TextExtent's box is shifted left by the width |
 | Text, TextLength or TextExtent with no font | not documented (OS 3.2 reads through the pointer) | Nothing is drawn, the answer is 0, and the extent is empty |
 | SetFont with a null font | autodoc: "discouraged" | Answers 0 and changes nothing |
-| SetFont and AlgoStyle or TxSpacing | ABI test (`SetFont`) | Both are kept. TxHeight, TxWidth and TxBaseline come from the font. Answers 1 |
-| AskSoftStyle | ABI test (`AskSoftStyle tf_Style n`) | ~tf_Style & (UNDERLINED \| BOLD \| ITALIC). FSF_EXTENDED is never soft. No font answers 0 |
+| SetFont and AlgoStyle or TxSpacing | autodoc ("clears the effect of any previous soft styles"); ABI test for TxSpacing (`SetFont`) | AlgoStyle is cleared, TxSpacing kept. TxHeight, TxWidth and TxBaseline come from the font. Answers 1 |
+| AskSoftStyle | autodoc ("Style bits that are not defined are also set"); ABI test (`AskSoftStyle tf_Style n`) | ~tf_Style in a byte, less EXTENDED, COLORFONT and TAGGED: UNDERLINED, BOLD and ITALIC where the font lacks them, and the undefined 0x10 and 0x20. FSF_EXTENDED is never soft. No font answers 0 |
 | SetSoftStyle | documented; ABI test for the answer | AlgoStyle takes the bits of style that are in both enable and AskSoftStyle. Answers AlgoStyle \| tf_Style |
 | AskFont | ABI test | The name and tf_Flags come from the font, YSize from the RastPort's TxHeight, and the style is tf_Style \| AlgoStyle without FSF_TAGGED |
 | OpenFont for a size not in the list | documented ("best matches"); ABI test (`OpenFont topaz n`) | The font with the highest WeighTAMatch among those with that name. No font with the name answers 0 |
@@ -63,9 +63,9 @@ The "Where" column says whether a case is documented in the autodocs, was measur
 | ExtendFont | ABI test (`ExtendFont`) | Tags are copied (CloneTagItems). An existing extension is kept and the new tags are ignored. tf_Style is not touched. Out of memory answers 0 |
 | A tf_Extension that is not an extension | not documented | It is an extension only when tfe_MatchWord is 0xF00D and tfe_BackPtr is the font (the match word is read through the reply port) |
 | StripFont with no extension | documented | Nothing |
-| TextFit | documented; ABI test for the corners | Characters are taken until the first that does not fit. The box must be no wider than bitwidth and no taller than bitheight, and inside the constraint when one is given. dir −1 counts back from the pointer. No fit answers 0 with an empty extent |
+| TextFit | documented; ABI test for the corners | Characters are taken until the first that does not fit. The box must be no wider than bitwidth and no taller than bitheight, and inside the constraint when one is given. dir −1 counts back from the pointer. No fit, or a TxSpacing that turns the path back (the autodoc), answers 0 with an empty extent |
 | FontExtent | ABI test | Covers every glyph (the default one too) and the pen. te_Width is the widest advance (CharSpace + kern). No algorithmic style |
-| ClearEOL / ClearScreen pen | autodoc says "DrawMode 2"; ABI test (`ClearEOL mode n`) | BgPen with JAM2, else pen 0. Uses the RastPort's TxHeight and TxBaseline. The right and bottom edges are the super bitmap's in a super bitmap layer, the layer's bounds in another layer, else the bitmap's |
+| ClearEOL / ClearScreen pen | autodoc says "DrawMode 2"; ABI test (`ClearEOL mode n`) | BgPen with JAM2, else pen 0. Uses the RastPort's TxHeight and TxBaseline. The right and bottom edges are the super bitmap's in a super bitmap layer, the layer's bounds in another layer (from its Scroll_X and Scroll_Y, as the face's drawing has it), else the bitmap's |
 | ROM fonts | ABI test (`font topaz.font n`) | topaz 8 is 8×8, baseline 6. topaz 9 is 10×9, baseline 7. Both: BoldSmear 1, chars 32–255, FPF_ROMFONT\|FPF_DESIGNED, mn_Length 52, accessors 0, topaz 8 first in the list and DefaultFont |
 | topaz glyphs 127–159 | ours | The default box glyph |
 
