@@ -297,14 +297,14 @@ struct gfx_base {
     uint32_t *hwemul[9];                        /* 508 */
 };                                              /* 544 */
 
-struct gfx_regionrect {                 /* struct RegionRectangle, 16 bytes */
-    struct gfx_regionrect *next, *prev;
+struct gfx_rgnrect {                 /* struct RegionRectangle, 16 bytes */
+    struct gfx_rgnrect *next, *prev;
     struct gfx_rectangle bounds;
 };
 
-struct gfx_region {                     /* struct Region, 12 bytes */
+struct gfx_rgn {                     /* struct Region, 12 bytes */
     struct gfx_rectangle bounds;
-    struct gfx_regionrect *rects;
+    struct gfx_rgnrect *rects;
 };
 
 struct gfx_cliprect {                   /* struct ClipRect, 40 bytes */
@@ -337,11 +337,11 @@ struct gfx_layer {                      /* struct Layer, 160 bytes */
     struct gfx_semaphore lock;
     void *backfill;                     /* struct Hook *, or LAYERS_NOBACKFILL (1) */
     uint32_t reserved1;
-    struct gfx_region *clipregion;
-    struct gfx_region *savecliprects;
+    struct gfx_rgn *clipregion;
+    struct gfx_rgn *savecliprects;
     int16_t width, height;
     uint8_t reserved2[18];
-    struct gfx_region *damagelist;
+    struct gfx_rgn *damagelist;
 };
 enum { GFX_LAYERSIMPLE = 1, GFX_LAYERSMART = 2, GFX_LAYERSUPER = 4, GFX_LAYERREFRESH = 0x80 };
 
@@ -373,8 +373,8 @@ GFX_OFF(gfx_rastport, font, 52);
 GFX_OFF(gfx_rastport, txspacing, 64);
 GFX_OFF(gfx_rastport, longreserved, 70);
 GFX_OFF(gfx_rastport, wordreserved, 78);
-GFX_SIZE(gfx_region, 12);
-GFX_SIZE(gfx_regionrect, 16);
+GFX_SIZE(gfx_rgn, 12);
+GFX_SIZE(gfx_rgnrect, 16);
 GFX_SIZE(gfx_cliprect, 40);
 GFX_SIZE(gfx_layer, 160);
 GFX_OFF(gfx_layer, flags, 30);
