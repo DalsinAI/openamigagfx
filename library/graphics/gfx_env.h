@@ -71,6 +71,10 @@ struct gfx_env {
     /* a Hook as utility.library's CallHookPkt calls it: A0 hook, A2 obj,
      * A1 msg (EraseRect's and ScrollRasterBF's layer backfill) */
     uint32_t (*call_hook)(void *ctx, void *hook, void *obj, void *msg);
+
+    /* exec's SetIntVector (answers the old one) and TypeOfMem */
+    struct gfx_interrupt *(*set_int_vector)(void *ctx, int32_t intnum, struct gfx_interrupt *is);
+    uint32_t (*type_of_mem)(void *ctx, const void *p);
 };
 
 /* Each area's private state, by index into gfx_private.area. */
@@ -137,6 +141,10 @@ int32_t gfx_hook_blt_bitmap(struct gfx_env *env, struct gfx_bitmap *src, int32_t
 /* gels: wait for the blitter to finish (WaitBlit) before the CPU touches
  * chip memory the blitter may be writing. Stub: nothing. */
 void gfx_hook_wait_blit(struct gfx_env *env);
+
+/* gels -> display: the VSprites DrawGList placed for vp, n slots of
+ * library/gels/gels_core.h's struct gels_vsprite_slot. Stub: nothing. */
+void gfx_hook_vsprites(struct gfx_env *env, void *vp, const void *slots, uint32_t n);
 
 /* ---- The register entries --------------------------------------------
  *
