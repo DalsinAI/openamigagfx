@@ -226,6 +226,7 @@ int main(void)
         ib.depth = 3;
         ib.bytes_per_row = 12;
         ib.rows = 5;
+        ib.interleaved = 0;
         for (p = 0; p < 8; p++) ib.planes[p] = p < 3 ? il + 4 * p : 0;
         gfx_planar_fill_all(&ib, 5, 0xFF);
         checks++;
@@ -234,6 +235,28 @@ int main(void)
         checks++;
         for (x = 60; x < 64; x++)
             if (il[x] != 0xA5) { if (++fails < 20) printf("FAIL interleaved past the end\n"); break; }
+        /* planes 0 and 1 constant (0, -1): plane 2 alone still keeps to
+         * its part, told by the flag, and by plane 2 and 3 when there */
+        for (p = 0; p < 2; p++) {
+            memset(il, 0xA5, sizeof il);
+            ib.depth = 3 + p;
+            ib.bytes_per_row = 4 * ib.depth;
+            ib.rows = (sizeof il - 4) / ib.bytes_per_row;
+            ib.planes[0] = 0;
+            ib.planes[1] = (uint8_t *)-1;
+            ib.planes[2] = il + 8;
+            ib.planes[3] = p ? il + 12 : 0;
+            ib.interleaved = !p;
+            gfx_planar_fill_all(&ib, 0, 0xFF);
+            checks++;
+            for (x = 0; x < (int)sizeof il; x++) {
+                int part = x < (int)(ib.rows * ib.bytes_per_row) ? (int)(x % ib.bytes_per_row) / 4 : -1;
+                if (il[x] != (part >= 2 ? 0x00 : 0xA5)) {
+                    if (++fails < 20) printf("FAIL interleaved, constant planes 0 and 1 (%lu planes), byte %d\n", (unsigned long)ib.depth, x);
+                    break;
+                }
+            }
+        }
     }
     if (fails) { printf("%lu of %lu checks failed\n", fails, checks); return 1; }
     printf("%lu checks\n", checks);
