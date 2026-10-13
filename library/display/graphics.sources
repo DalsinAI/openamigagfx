@@ -1,0 +1,5 @@
+# OpenGfx graphics.library: the display area's files (library/graphics/build-amiga.sh)
+display_lvo.c
+display_view.cpp
+display_hw.cpp
+display_db.cpp
