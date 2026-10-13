@@ -1,0 +1,40 @@
+# layers.library's jump table, as OpenLayers will build it: LVO, call,
+# registers. To be checked against the NDK 3.2 layers_lib.fd in the stove
+# (amigachrome-guest libraries/common/check_fd.py) before the library shell
+# is written; the shell's vector table follows it line for line.
+-30 InitLayers a0
+-36 CreateUpfrontLayer a0,a1,d0,d1,d2,d3,d4,a2
+-42 CreateBehindLayer a0,a1,d0,d1,d2,d3,d4,a2
+-48 UpfrontLayer a0,a1
+-54 BehindLayer a0,a1
+-60 MoveLayer a0,a1,d0,d1
+-66 SizeLayer a0,a1,d0,d1
+-72 ScrollLayer a0,a1,d0,d1
+-78 BeginUpdate a0
+-84 EndUpdate a0,d0
+-90 DeleteLayer a0,a1
+-96 LockLayer a0,a1
+-102 UnlockLayer a0
+-108 LockLayers a0
+-114 UnlockLayers a0
+-120 LockLayerInfo a0
+-126 SwapBitsRastPortClipRect a0,a1
+-132 WhichLayer a0,d0,d1
+-138 UnlockLayerInfo a0
+-144 NewLayerInfo
+-150 DisposeLayerInfo a0
+-156 FattenLayerInfo a0
+-162 ThinLayerInfo a0
+-168 MoveLayerInFrontOf a0,a1
+-174 InstallClipRegion a0,a1
+-180 MoveSizeLayer a0,d0,d1,d2,d3
+-186 CreateUpfrontHookLayer a0,a1,d0,d1,d2,d3,d4,a3,a2
+-192 CreateBehindHookLayer a0,a1,d0,d1,d2,d3,d4,a3,a2
+-198 InstallLayerHook a0,a1
+-204 InstallLayerInfoHook a0,a1
+-210 SortLayerCR a0,d0,d1
+-216 DoHookClipRects a0,a1,a2
+-222 LayerOccluded a0
+-228 HideLayer a0
+-234 ShowLayer a0,a1
+-240 SetLayerInfoBounds a0,a1
