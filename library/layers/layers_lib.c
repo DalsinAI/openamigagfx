@@ -80,6 +80,7 @@ struct OLayer {
     struct OClip *fresh;        /* finish's new full list */
     struct lc_rects movers;     /* finish's screen copies, where from, in order */
     struct lc_rects fills;      /* finish's pixels nobody has, on the screen */
+    struct lc_rects fills_y;    /* the same, rows first, for a moved simple layer itself */
     struct Rectangle oldb;
     UBYTE hidden, oldhidden;
 };
@@ -586,6 +587,13 @@ fail:
     return -1;
 }
 
+/* Whether a layer's bounds changed since begin. */
+static int moved(struct Layer *l)
+{
+    struct Rectangle *a = &l->bounds, *b = &OL(l)->oldb;
+    return a->MinX != b->MinX || a->MinY != b->MinY || a->MaxX != b->MaxX || a->MaxY != b->MaxY;
+}
+
 /* What finish will do for layer l that needs memory, worked out before any
  * pixel moves: the screen copies of phase b (where each comes from, in an
  * order where none writes over one still to come) and the pixels of phase
@@ -600,9 +608,11 @@ static int plan(struct Layer *l, int made)
 
     lc_init(&o->movers, &mem);
     lc_init(&o->fills, &mem);
+    lc_init(&o->fills_y, &mem);
     lc_init(&one, &mem);
     for (n = o->fresh; n; n = (struct OClip *)n->cr.Next) {
         struct lc_rect nb = lr(&n->cr.bounds);
+        int pass;
         if (n->kind == K_SCREEN && (ddx || ddy))
             for (c = o->full; c; c = (struct OClip *)c->cr.Next) {
                 struct lc_rect ob = shift(lr(&c->cr.bounds), ddx, ddy);
@@ -611,16 +621,22 @@ static int plan(struct Layer *l, int made)
                 if (lc_or_rect(&o->movers, &m)) goto fail;
             }
         if (n->kind == K_NONE || n->kind == K_SUPER || n->parent) continue;
-        if (lc_set(&one, &nb)) goto fail;
-        if (!made)
-            for (c = o->full; c && one.n; c = (struct OClip *)c->cr.Next) {
-                struct lc_rect ob;
-                if (c->kind == K_NONE) continue;
-                ob = shift(lr(&c->cr.bounds), ddx, ddy);
-                /* columns first, as OS 3.2 hands the new part to the hook */
-                if (lc_sub_rect_x(&one, &ob)) goto fail;
-            }
-        if (lc_or(&o->fills, &one)) goto fail;
+        /* a moved or sized layer's new part goes to the hook columns first,
+         * the rest rows first, as OS 3.2 does; a moved simple refresh
+         * layer's goes a second time, to itself, rows first (fills_y) */
+        for (pass = 0; pass < 2; pass++) {
+            int cols = moved(l) && !pass;
+            if (pass && (made || !moved(l) || (l->Flags & (LAYERSMART | LAYERSUPER)))) break;
+            if (lc_set(&one, &nb)) goto fail;
+            if (!made)
+                for (c = o->full; c && one.n; c = (struct OClip *)c->cr.Next) {
+                    struct lc_rect ob;
+                    if (c->kind == K_NONE) continue;
+                    ob = shift(lr(&c->cr.bounds), ddx, ddy);
+                    if ((cols ? lc_sub_rect_x : lc_sub_rect)(&one, &ob)) goto fail;
+                }
+            if (lc_or(pass ? &o->fills_y : &o->fills, &one)) goto fail;
+        }
     }
     lc_sort_for_move(o->movers.r, o->movers.n, ddx, ddy);
     lc_free(&one);
@@ -629,6 +645,7 @@ fail:
     lc_free(&one);
     lc_free(&o->movers);
     lc_free(&o->fills);
+    lc_free(&o->fills_y);
     return -1;
 }
 
@@ -670,12 +687,6 @@ static void transfer(struct Layer *l, int phase)
 }
 
 /* Phase d for layer l: what none of its old pieces had (plan's fills). */
-/* Whether a layer's bounds changed since begin. */
-static int moved(struct Layer *l)
-{
-    struct Rectangle *a = &l->bounds, *b = &OL(l)->oldb;
-    return a->MinX != b->MinX || a->MinY != b->MinY || a->MaxX != b->MaxX || a->MaxY != b->MaxY;
-}
 
 static void fill_fresh(struct Layer *l, int made)
 {
@@ -734,16 +745,41 @@ static void fill_fresh(struct Layer *l, int made)
             /* moved or sized: OS 3.2 hands the hook its stand-in for the
              * layer (a copy with the new bounds, whose RastPort names the
              * copy); a simple refresh layer then gets it itself, with a
-             * bare RastPort (as one uncovered by a restack does) */
+             * bare RastPort, cut rows first (below) */
             tmp = *l;
             trp = *l->rp;
             tmp.rp = &trp;
             trp.Layer = &tmp;
             backfill_with(&tmp, &trp, l->BackFill, &pd, r);
-            if (simple) backfill_with(l, 0, l->BackFill, &pd, r);
         } else {
             backfill_with(l, 0, l->BackFill, &pd, r);
         }
+    }
+    if (simple && o->hidden && !made && moved(l)) {
+        /* a hidden simple refresh layer keeps nothing, but what it grew by
+         * is damage, as on OS 3.2 */
+        struct lc_rect nb = lr(&l->bounds), ob = shift(lr(&o->oldb), l->bounds.MinX - o->oldb.MinX,
+                                                         l->bounds.MinY - o->oldb.MinY), m, out[4];
+        uint32_t k, nk = 1;
+        out[0] = nb;
+        if (lc_meet(&nb, &ob, &m)) nk = lc_cut(&nb, &m, out);
+        for (k = 0; k < nk; k++) {
+            struct Rectangle d;
+            d.MinX = (WORD)(out[k].x0 - l->bounds.MinX); d.MinY = (WORD)(out[k].y0 - l->bounds.MinY);
+            d.MaxX = (WORD)(out[k].x1 - l->bounds.MinX); d.MaxY = (WORD)(out[k].y1 - l->bounds.MinY);
+            OrRectRegion(l->DamageList, &d);
+            l->Flags |= LAYERREFRESH | LAYERIREFRESH | LAYERIREFRESH2;
+        }
+    }
+    for (i = 0; i < o->fills_y.n; i++) {
+        struct lc_rect *r = &o->fills_y.r[i];
+        for (n = o->fresh; n; n = (struct OClip *)n->cr.Next)
+            if (r->x0 >= n->cr.bounds.MinX && r->x0 <= n->cr.bounds.MaxX && r->y0 >= n->cr.bounds.MinY &&
+                r->y0 <= n->cr.bounds.MaxY)
+                break;
+        if (!n) continue;
+        pd = place_of(l, n, l->bounds.MinX, l->bounds.MinY);
+        backfill_with(l, 0, l->BackFill, &pd, r);
     }
 }
 
@@ -822,7 +858,11 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
     }
     if (i != n) {
         ULONG k;
-        for (k = 0; k < n && k < i; k++) { lc_free(&OL(ord[k])->movers); lc_free(&OL(ord[k])->fills); }
+        for (k = 0; k < n && k < i; k++) {
+            lc_free(&OL(ord[k])->movers);
+            lc_free(&OL(ord[k])->fills);
+            lc_free(&OL(ord[k])->fills_y);
+        }
         lc_pieces_free(&who);
         free_stack(ost, oord, on);
         for (k = 0; k < n; k++) {
@@ -839,11 +879,10 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
     /* the pixels */
     for (phase = 'a'; phase <= 'c'; phase++)
         for (i = 0; i < n; i++) transfer(ord[i], phase);
-    for (i = 0; i < n; i++) {
-        fill_fresh(ord[i], ord[i] == made);
-        lc_free(&OL(ord[i])->movers);
-        lc_free(&OL(ord[i])->fills);
-    }
+    /* simple refresh layers' new parts, the screen uncovered, then the
+     * others' new parts: the order OS 3.2 calls the hooks in */
+    for (i = 0; i < n; i++)
+        if (!(ord[i]->Flags & (LAYERSMART | LAYERSUPER))) fill_fresh(ord[i], ord[i] == made);
     if (who.n) {
         /* OS 3.2 hands the Layer_Info's hook a stand-in for the layer that
          * left each piece: that layer as it was (its old bounds), simple
@@ -861,7 +900,10 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
                 tmp = *was;
                 trp = *was->rp;
                 tmp.bounds = OL(was)->oldb;
-                tmp.Flags = (UWORD)((was->Flags & ~(LAYERSMART | LAYERSUPER)) | LAYERSIMPLE);
+                /* (a smart or super bitmap layer's without its refresh bits) */
+                if (was->Flags & (LAYERSMART | LAYERSUPER))
+                    tmp.Flags = (UWORD)((was->Flags & ~(LAYERSMART | LAYERSUPER | LAYERREFRESH | LAYERIREFRESH |
+                                                        LAYERIREFRESH2)) | LAYERSIMPLE);
                 tmp.Scroll_X = tmp.Scroll_Y = 0;
                 tmp.rp = &trp;
                 trp.Layer = &tmp;
@@ -871,6 +913,12 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
             if (moved(was)) backfill_with(&tmp, &trp, inf ? inf->hook : LAYERS_BACKFILL, &p, &who.p[i].r);
             else backfill_with(was, was == gone ? was->rp : 0, inf ? inf->hook : LAYERS_BACKFILL, &p, &who.p[i].r);
         }
+    }
+    for (i = 0; i < n; i++) {
+        if (ord[i]->Flags & (LAYERSMART | LAYERSUPER)) fill_fresh(ord[i], ord[i] == made);
+        lc_free(&OL(ord[i])->movers);
+        lc_free(&OL(ord[i])->fills);
+        lc_free(&OL(ord[i])->fills_y);
     }
     lc_pieces_free(&who);
     free_stack(ost, oord, on);

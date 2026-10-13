@@ -216,8 +216,9 @@ void lc_pieces_free(struct lc_pieces *s)
 }
 
 /* Cuts every visible piece meeting c: the part inside c becomes owner's,
- * the rest stays visible. Each cut piece is replaced, where it was in the
- * list, by its visible rest and then the part inside c (OS 3.2's order). */
+ * the rest stays visible. As OS 3.2 keeps them: the visible pieces first,
+ * each cut one replaced where it was by its visible rest, then the pieces
+ * not on show in the order they came to be. */
 static int cut_pieces(struct lc_pieces *s, const struct lc_rect *c, int32_t owner)
 {
     uint32_t i, j, k, hits = 0, n0 = s->n, cap;
@@ -228,16 +229,24 @@ static int cut_pieces(struct lc_pieces *s, const struct lc_rect *c, int32_t owne
     if (!hits) return 0;
     cap = n0 + 4 * hits;
     if (!(p = s->mem->alloc(s->mem->ctx, cap * sizeof *p))) return -1;
-    for (i = j = 0; i < n0; i++) {
-        if (s->p[i].obscurer != LC_VISIBLE || !lc_meet(&s->p[i].r, c, &m)) { p[j++] = s->p[i]; continue; }
-        uint32_t nk = cut(&s->p[i].r, &m, out);
+    j = 0;
+    for (i = 0; i < n0; i++) {
+        uint32_t nk;
+        if (s->p[i].obscurer != LC_VISIBLE) continue;
+        if (!lc_meet(&s->p[i].r, c, &m)) { p[j++] = s->p[i]; continue; }
+        nk = cut(&s->p[i].r, &m, out);
         for (k = 0; k < nk; k++) {
             p[j].r = out[k];
             p[j++].obscurer = LC_VISIBLE;
         }
-        p[j].r = m;
-        p[j++].obscurer = owner;
     }
+    for (i = 0; i < n0; i++)
+        if (s->p[i].obscurer != LC_VISIBLE) p[j++] = s->p[i];
+    for (i = 0; i < n0; i++)
+        if (s->p[i].obscurer == LC_VISIBLE && lc_meet(&s->p[i].r, c, &m)) {
+            p[j].r = m;
+            p[j++].obscurer = owner;
+        }
     s->mem->free(s->mem->ctx, s->p, s->cap * sizeof *s->p);
     s->p = p;
     s->n = j;
