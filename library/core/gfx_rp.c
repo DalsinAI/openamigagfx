@@ -16,6 +16,7 @@ static void planar_from(struct BitMap *b, struct gfx_planar *bm)
     bm->bytes_per_row = b->BytesPerRow;
     bm->rows = b->Rows;
     bm->depth = b->Depth > 8 ? 8 : b->Depth;
+    bm->interleaved = (b->Flags & BMF_INTERLEAVED) != 0;
 }
 
 static void planar_of(struct RastPort *rp, struct gfx_planar *bm)
