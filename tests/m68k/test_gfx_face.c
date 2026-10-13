@@ -164,6 +164,7 @@ static void print_bm(const char *tag, struct gfx_bitmap *bm, int w, int h)
     p.bytes_per_row = bm->bytesperrow;
     p.rows = bm->rows;
     p.depth = bm->depth;
+    p.interleaved = (bm->flags & GFX_BMF_INTERLEAVED) != 0;
     printf("%s %d %d\n", tag, w, h);
     for (y = 0; y < h; y++) {
         for (x = 0; x < w; x++) row[x] = (char)('0' + gfx_planar_get(&p, x, y));
@@ -180,6 +181,7 @@ static void random_bm(struct gfx_bitmap *bm, int w, int h, int pens, int blobs)
     p.bytes_per_row = bm->bytesperrow;
     p.rows = bm->rows;
     p.depth = bm->depth;
+    p.interleaved = (bm->flags & GFX_BMF_INTERLEAVED) != 0;
     gfx_planar_fill_all(&p, 0, 0xFF);
     for (b = 0; b < blobs; b++) {
         int x0 = (int)rn((uint32_t)w), y0 = (int)rn((uint32_t)h), x1 = x0 + (int)rn(12), y1 = y0 + (int)rn(8);
@@ -536,6 +538,7 @@ static uint32_t bf_entry(struct t_hook *h, void *obj, void *msg)
     /* the hook draws pen 5 */
     for (i = 0; i < 8; i++) p.planes[i] = i < rp->bitmap->depth ? rp->bitmap->planes[i] : 0;
     p.bytes_per_row = rp->bitmap->bytesperrow; p.rows = rp->bitmap->rows; p.depth = rp->bitmap->depth;
+    p.interleaved = (rp->bitmap->flags & GFX_BMF_INTERLEAVED) != 0;
     for (y = m->bounds.miny; y <= m->bounds.maxy; y++)
         for (x = m->bounds.minx; x <= m->bounds.maxx; x++) gfx_planar_put(&p, x, y, 5, 0xFF, GFX_SET);
     return 0;
@@ -654,6 +657,7 @@ static void t_super(void)
             struct gfx_planar p;
             for (i = 0; i < 8; i++) p.planes[i] = i < scr->depth ? scr->planes[i] : 0;
             p.bytes_per_row = scr->bytesperrow; p.rows = scr->rows; p.depth = scr->depth;
+            p.interleaved = (scr->flags & GFX_BMF_INTERLEAVED) != 0;
             gfx_planar_put(&p, l.bounds.minx, l.bounds.miny, 3, 0xFF, GFX_SET);
             gfx_SyncSBitMap(&env, &l);
             printf("SSYNC %ld\n", (long)gfx_ReadPixel(&env, &rp, sx, sy));

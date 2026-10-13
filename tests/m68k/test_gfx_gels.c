@@ -21,6 +21,29 @@ static uint32_t rnd(void) { rng = rng * 1103515245u + 12345u; return rng >> 16; 
 static int failed;
 static void fail(const char *what) { if (failed++ < 10) printf("FAIL %s\n", what); }
 
+/* A page of Fast RAM with a page no one may touch after it (Linux's
+ * old_mmap and mprotect, through trap #0 as the 68000 runtime has no
+ * libc): a buffer that ends there faults when a read runs past its end. */
+static long sys1(long n, long a, long b, long c)
+{
+    register long d0 __asm__("d0") = n, d1 __asm__("d1") = a, d2 __asm__("d2") = b, d3 __asm__("d3") = c;
+    __asm__ volatile ("trap #0" : "+d"(d0) : "d"(d1), "d"(d2), "d"(d3) : "memory");
+    return d0;
+}
+static uint8_t *guarded(uint32_t size)
+{
+    static uint8_t *page;
+    if (!page) {
+        long args[6] = { 0, 8192, 3, 0x22, -1, 0 };    /* PROT_READ|WRITE, MAP_PRIVATE|ANONYMOUS */
+        long a = sys1(90, (long)args, 0, 0);
+        if (a < 0 && a > -4096) { fail("mmap"); return 0; }
+        page = (uint8_t *)a;
+        if (sys1(125, (long)(page + 4096), 4096, 0)) fail("mprotect");
+    }
+    if (size > 4096) { fail("guarded buffer too big"); size = 4096; }
+    return page + 4096 - size;
+}
+
 static void *bump(uint32_t size, int chip)
 {
     uint32_t *top = chip ? &chiptop : &fasttop, at = (*top + 3) & ~3u;
@@ -143,18 +166,32 @@ static void chip_write(void *ctx, uint32_t off, uint16_t v)
 static void tick(void) { if (bbusy && --countdown <= 0) finish_blit(); deliver(); }
 static void settle(void) { int n = 0; while (bbusy && n++ < 100000) tick(); deliver(); }
 
+/* MEMF_ANY gets Chip RAM every other time, as when Fast RAM runs short */
+static int any_chip;
 static void *e_alloc(void *ctx, uint32_t size, uint32_t flags)
 {
     void *p;
     uint32_t i;
     (void)ctx;
     if (alloc_count++ == alloc_fail_at) return 0;
-    p = bump(size, flags & GFX_MEMF_CHIP);
+    if (!(flags & (GFX_MEMF_CHIP | GFX_MEMF_FAST))) any_chip ^= 1;
+    p = bump(size, (flags & GFX_MEMF_CHIP) || (!(flags & GFX_MEMF_FAST) && any_chip));
     if (flags & GFX_MEMF_CLEAR) for (i = 0; i < size; i++) ((uint8_t *)p)[i] = 0;
     allocs++;
     return p;
 }
-static void e_free(void *ctx, void *p, uint32_t size) { (void)ctx; (void)p; (void)size; allocs--; }
+/* nothing may be freed that a blit in progress reads or writes */
+static void e_free(void *ctx, void *p, uint32_t size)
+{
+    static const uint16_t ptr[4] = { 0x50, 0x4C, 0x48, 0x54 };    /* A, B, C, D */
+    uint32_t a = (uint32_t)(uintptr_t)p;
+    int k;
+    (void)ctx;
+    for (k = 0; bbusy && k < 4; k++)
+        if (regs[0x40 / 2] & (0x800 >> k) && ptr_of(ptr[k]) >= a && ptr_of(ptr[k]) < a + size)
+            fail("freed while the blitter uses it");
+    allocs--;
+}
 static void e_nop(void *ctx) { (void)ctx; }
 static void e_disable(void *ctx) { (void)ctx; disabled++; }
 static void e_enable(void *ctx) { (void)ctx; if (--disabled < 0) fail("Enable without Disable"); deliver(); }
@@ -286,6 +323,55 @@ static uint8_t *plane_spec(void)
 void gfx_lvo_OwnBlitter(struct gfx_base *gb);
 void gfx_lvo_DisownBlitter(struct gfx_base *gb);
 void gfx_lvo_WaitBlit(struct gfx_base *gb);
+
+/* OS 3.2's graphics.library, as the side-by-side build sees it: its
+ * blitter calls, logged by letter */
+static char syslog[32];
+static int syslen;
+static struct gl_bltnode *sys_bn;
+static void fake_sys(struct gels_state *s, int32_t lvo, struct gl_bltnode *bn)
+{
+    char c = lvo == GELS_SYS_OWNBLITTER ? 'O' : lvo == GELS_SYS_DISOWNBLITTER ? 'D' : lvo == GELS_SYS_WAITBLIT ? 'W'
+           : lvo == GELS_SYS_QBLIT ? 'Q' : lvo == GELS_SYS_QBSBLIT ? 'S' : '?';
+    (void)s;
+    if ((c == 'Q' || c == 'S') != (bn != 0) || (bn && bn != sys_bn)) fail("sys_blitter's node");
+    if (syslen < (int)sizeof syslog - 1) syslog[syslen++] = c;
+    syslog[syslen] = 0;
+}
+static int streq(const char *a, const char *b) { while (*a && *a == *b) a++, b++; return *a == *b; }
+static void side_by_side(void)
+{
+    static struct gfx_bitmap sb;
+    static struct gfx_rastport srp;
+    static const uint8_t tmpl[4] = { 0xFF, 0xF0, 0x0F, 0xFF };
+    static struct gl_bltnode bn;
+    uint8_t *pl = bump(8, 1);
+    int k;
+    for (k = 0; k < 8; k++) pl[k] = 0;
+    sb.bytesperrow = 4; sb.rows = 2; sb.flags = 0; sb.depth = 1; sb.planes[0] = pl;
+    srp.bitmap = &sb; srp.layer = 0; srp.mask = 0xFF; srp.fgpen = 1; srp.bgpen = 0; srp.drawmode = 0;
+    st.has_blitter = 0;
+    st.sys_blitter = fake_sys;
+    syslen = 0;
+    /* a CPU blit: inside the OS's OwnBlitter, after its WaitBlit */
+    gels_BltTemplate(&st, tmpl, 0, 2, &srp, 0, 0, 16, 2);
+    if (!streq(syslog, "OWD")) fail("side by side: BltTemplate not inside the OS's OwnBlitter and WaitBlit");
+    if (pl[0] != 0xFF || pl[1] != 0xF0 || pl[4] != 0x0F || pl[5] != 0xFF) fail("side by side: BltTemplate's pixels");
+    /* the calls themselves: the OS's, our queue and lock untouched */
+    syslen = 0;
+    sys_bn = &bn;
+    gels_QBlit(&st, &bn);
+    gels_QBSBlit(&st, &bn);
+    gfx_lvo_OwnBlitter(&gb.pub);
+    gfx_lvo_DisownBlitter(&gb.pub);
+    gfx_lvo_WaitBlit(&gb.pub);
+    gfx_hook_wait_blit(&gb.priv.env);
+    if (!streq(syslog, "QSODWW")) fail("side by side: the blitter calls not the OS's");
+    if (gb.pub.blthd || gb.pub.bsblthd || gb.pub.blitlock) fail("side by side: our own queue used");
+    st.sys_blitter = 0;
+    st.has_blitter = 1;
+}
+
 static void blocked_disown(void);
 static int block_other;
 static void blocked_disown(void) { cur_task = &tasks_id[block_other]; gels_DisownBlitter(&st); }
@@ -330,6 +416,7 @@ int main(void)
             if (gb.pub.blitowner != cur_task) fail("gfx_lvo_OwnBlitter");
             gfx_lvo_DisownBlitter(&gb.pub);
             gfx_lvo_WaitBlit(&gb.pub);
+            side_by_side();
             if (disabled) fail("left Disable()d");
             if (sem_depth) fail("layer lock left held");
             if (gb.pub.blitlock) fail("blitter left owned");
@@ -339,6 +426,12 @@ int main(void)
             int id = next(); uint32_t size = (uint32_t)next(); int chip = next(); uint32_t seed = (uint32_t)next();
             if (id >= NB) { fail("too many buffers"); return 1; }
             buf[id].p = bump(size, chip); buf[id].size = size; fill(id, seed);
+            break;
+        }
+        case 71: { /* GBUF id size seed: in Fast RAM, ending at the guard page */
+            int id = next(); uint32_t size = (uint32_t)next(); uint32_t seed = (uint32_t)next();
+            if (id >= NB) { fail("too many buffers"); return 1; }
+            buf[id].p = guarded(size); buf[id].size = size; fill(id, seed);
             break;
         }
         case 2: { /* BITMAP id bpr rows flags depth planes[8] */

@@ -27,6 +27,8 @@ struct gfx_planar {
     uint32_t bytes_per_row;
     uint32_t rows;
     uint32_t depth;            /* 1 to 8 */
+    uint32_t interleaved;      /* the BitMap's BMF_INTERLEAVED: each row is the
+                                * planes' parts, bytes_per_row / depth each */
 };
 
 /* A chunky bitmap, one byte a pixel (CLUT): the RTG screens a pen means

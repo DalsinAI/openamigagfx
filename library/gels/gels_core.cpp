@@ -60,6 +60,10 @@ bool busy(gels_state *st)
 }
 void wait_blit(gels_state *st)
 {
+    if (st->sys_blitter) {
+        st->sys_blitter(st, GELS_SYS_WAITBLIT, nullptr);
+        return;
+    }
     while (busy(st)) {
     }
 }
@@ -266,13 +270,24 @@ template <typename F> uint32_t mt_where_a(F f)
 
 // ---- where a RastPort's drawing lands --------------------------------------
 inline bool plane_ok(const uint8_t *p) { return p && p != reinterpret_cast<const uint8_t *>(-1); }
-int32_t bm_width(const gfx_bitmap *bm)
+// Each plane's part of a row: BytesPerRow, or an interleaved bitmap's
+// share of it, where its first two real planes (a constant plane, 0 or
+// -1, is not one) are that far apart for each plane between them, or
+// where it has fewer than two real planes.
+uint32_t plane_bytes(const gfx_bitmap *bm)
 {
     uint32_t bpr = bm->bytesperrow;
-    if ((bm->flags & GFX_BMF_INTERLEAVED) && bm->depth > 1 && bm->planes[1] == bm->planes[0] + bpr / bm->depth)
-        bpr /= bm->depth;
-    return static_cast<int32_t>(bpr * 8);
+    if (!(bm->flags & GFX_BMF_INTERLEAVED) || bm->depth < 2) return bpr;
+    uint32_t part = bpr / bm->depth;
+    int first = -1, n = bm->depth > 8 ? 8 : bm->depth;
+    for (int p = 0; p < n; p++) {
+        if (!plane_ok(bm->planes[p])) continue;
+        if (first < 0) first = p;
+        else return bm->planes[p] == bm->planes[first] + static_cast<uint32_t>(p - first) * part ? part : bpr;
+    }
+    return part;
 }
+int32_t bm_width(const gfx_bitmap *bm) { return static_cast<int32_t>(plane_bytes(bm) * 8); }
 int bm_depth(const gfx_bitmap *bm) { return bm->depth > 8 ? 8 : bm->depth; }
 
 // A place: a bitmap, the offset from the RastPort's coordinates to its
@@ -686,6 +701,10 @@ void gels_OwnBlitter(gels_state *st)
 {
     gfx_env *e = E(st);
     gfx_base *b = B(st);
+    if (st->sys_blitter) {
+        st->sys_blitter(st, GELS_SYS_OWNBLITTER, nullptr);
+        return;
+    }
     e->disable(e->ctx);
     void *me = e->find_task(e->ctx);
     if (b->blitlock && b->blitowner == me) {
@@ -716,6 +735,10 @@ void gels_DisownBlitter(gels_state *st)
 {
     gfx_env *e = E(st);
     gfx_base *b = B(st);
+    if (st->sys_blitter) {
+        st->sys_blitter(st, GELS_SYS_DISOWNBLITTER, nullptr);
+        return;
+    }
     e->disable(e->ctx);
     if (b->blitnest > 0) b->blitnest--;
     else {
@@ -732,6 +755,10 @@ void gels_QBlit(gels_state *st, gl_bltnode *bn)
 {
     gfx_env *e = E(st);
     gfx_base *b = B(st);
+    if (st->sys_blitter) {
+        st->sys_blitter(st, GELS_SYS_QBLIT, bn);
+        return;
+    }
     e->disable(e->ctx);
     bn->n = nullptr;
     if (b->blttl) static_cast<gl_bltnode *>(b->blttl)->n = bn;
@@ -745,6 +772,10 @@ void gels_QBSBlit(gels_state *st, gl_bltnode *bn)
 {
     gfx_env *e = E(st);
     gfx_base *b = B(st);
+    if (st->sys_blitter) {
+        st->sys_blitter(st, GELS_SYS_QBSBLIT, bn);
+        return;
+    }
     e->disable(e->ctx);
     bn->n = nullptr;
     if (b->bsblttl) static_cast<gl_bltnode *>(b->bsblttl)->n = bn;
@@ -892,11 +923,15 @@ void gels_BltMaskBitMapRastPort(gels_state *st, gfx_bitmap *srcbm, int32_t sx, i
         csize = static_cast<uint32_t>(sdepth) * static_cast<uint32_t>(h) * cbpr;
         wait_blit(st);
         copy = static_cast<uint8_t *>(E(st)->alloc(E(st)->ctx, csize, GFX_MEMF_ANY));
+        // each row's own plane part only: an interleaved bitmap's next
+        // planes follow it in the row, and its last row ends the block
+        uint32_t part = plane_bytes(srcbm);
         for (int32_t pl = 0; copy && pl < sdepth; pl++)
             if (plane_ok(srcbm->planes[pl]))
-                for (uint32_t i = 0; i < static_cast<uint32_t>(h) * cbpr; i++)
-                    copy[static_cast<uint32_t>(pl) * static_cast<uint32_t>(h) * cbpr + i] =
-                        srcbm->planes[pl][static_cast<uint32_t>(sy) * cbpr + i];
+                for (uint32_t r = 0; r < static_cast<uint32_t>(h); r++)
+                    for (uint32_t i = 0; i < part; i++)
+                        copy[(static_cast<uint32_t>(pl) * static_cast<uint32_t>(h) + r) * cbpr + i] =
+                            srcbm->planes[pl][(static_cast<uint32_t>(sy) + r) * cbpr + i];
     }
     each_piece(rp, dx, dy, w, h, [&](gfx_bitmap *bm, int pl, int32_t bx, int32_t by, int32_t pw, int32_t ph,
                                      int32_t rx, int32_t ry) {
@@ -908,7 +943,10 @@ void gels_BltMaskBitMapRastPort(gels_state *st, gfx_bitmap *srcbm, int32_t sx, i
                         : mem(s + (sy + ry) * srcbm->bytesperrow, srcbm->bytesperrow, sx + rx);
         op(st, row_of(bm, pl, by), bm->bytesperrow, bx, pw, ph, mem(mk + (sy + ry) * mbpr, mbpr, sx + rx), bsrc, mt);
     });
-    if (copy) E(st)->free(E(st)->ctx, copy, csize);
+    if (copy) {
+        wait_blit(st);      // the last blit may still be reading it (Chip RAM)
+        E(st)->free(E(st)->ctx, copy, csize);
+    }
     disown(st);
     unlock_rp(st, rp);
 }
