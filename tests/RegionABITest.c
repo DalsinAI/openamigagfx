@@ -4,10 +4,15 @@
  * MIT.
  *
  * Each call is made on an OS 3.2 region (NewRegion, OrRectRegion...) and
- * on ours with the same arguments; then the answers, the bounds and the
- * rectangle lists are compared. A difference prints both lists and says
- * whether the area differs too, or only how it is cut into rectangles.
- * The fixed cases print OS 3.2's list whatever happens, to show its shape.
+ * on ours with the same arguments; then the answers and the areas the two
+ * regions cover are compared. A difference prints both lists. How the area
+ * is cut into rectangles, their order and the bounds are not compared:
+ * OS 3.2 never merges rectangles, puts the newest first, keeps an empty
+ * rectangle given to OrRectRegion in its list and leaves bounds that are
+ * not the area's, where ours keeps bands (measured at 6a4988c). They are
+ * counted, and the fixed cases print both lists to show the shapes.
+ * XorRegionRegion of a region with itself is not made: OS 3.2 fills the
+ * region with garbage (measured), where ours empties it.
  *   RegionABITest [SEED=n] [ROUNDS=n]
  * Answers 0 when nothing differs, 5 when something does. */
 #include <exec/types.h>
@@ -34,7 +39,7 @@ static const struct gfx_rgn_mem mem = { m_alloc, m_free, 0 };
 #define NREG 3
 static struct Region *os[NREG];
 static struct gfx_region ours[NREG];
-static ULONG calls, diffs, area_diffs;
+static ULONG calls, diffs;
 static ULONG seed = 0x2E64;
 static ULONG rnd(void) { seed = seed * 1103515245UL + 12345UL; return seed >> 8; }
 
@@ -65,31 +70,31 @@ static void show(const char *who, const struct Rectangle *b, const struct Region
     Printf("\n");
 }
 
+static ULONG cuts;
+
 static void compare(const char *what, int i, LONG ra, LONG rb, int verbose)
 {
     const struct Region *a = os[i];
-    const struct RegionRectangle *p = a->RegionRectangle, *pq;
+    const struct RegionRectangle *p = a->RegionRectangle, *pq = (const struct RegionRectangle *)ours[i].rects;
     const struct gfx_rrect *q = ours[i].rects;
-    int same = (ra != 0) == (rb != 0) && !memcmp(&a->bounds, &ours[i].bounds, sizeof a->bounds);
+    int same = (ra != 0) == (rb != 0), cut;
     calls++;
-    for (; same && p && q; p = p->Next, q = q->next)
-        same = !memcmp(&p->bounds, &q->bounds, sizeof p->bounds);
-    if (p || q) same = 0;
+    paint(grid[0], &a->bounds, a->RegionRectangle);
+    paint(grid[1], (const struct Rectangle *)&ours[i].bounds, pq);
+    if (memcmp(grid[0], grid[1], sizeof grid[0])) same = 0;
+    cut = memcmp(&a->bounds, &ours[i].bounds, sizeof a->bounds) != 0;
+    for (; !cut && p && q; p = p->Next, q = q->next)
+        cut = memcmp(&p->bounds, &q->bounds, sizeof p->bounds) != 0;
+    if (p || q) cut = 1;
+    if (cut) cuts++;
     if (same && !verbose) return;
-    pq = (const struct RegionRectangle *)ours[i].rects;
     if (!same) {
-        int area;
-        paint(grid[0], &a->bounds, a->RegionRectangle);
-        paint(grid[1], (const struct Rectangle *)&ours[i].bounds, pq);
-        area = memcmp(grid[0], grid[1], sizeof grid[0]) != 0;
         diffs++;
-        if (area) area_diffs++;
-        Printf("DIFF %s (region %ld): %s, answers %ld %ld\n", (LONG)what, (LONG)i,
-               (LONG)(area ? "area differs" : "same area, cut differently"), ra, rb);
+        Printf("DIFF %s (region %ld): answers %ld %ld\n", (LONG)what, (LONG)i, ra, rb);
     } else
-        Printf("CASE %s: same\n", (LONG)what);
+        Printf("CASE %s: same area%s\n", (LONG)what, (LONG)(cut ? ", cut differently" : ", same list"));
     show("OS  ", &a->bounds, a->RegionRectangle);
-    if (!same) show("ours", (const struct Rectangle *)&ours[i].bounds, pq);
+    if (!same || cut) show("ours", (const struct Rectangle *)&ours[i].bounds, pq);
 }
 
 static void rect(struct Rectangle *r, WORD x0, WORD y0, WORD x1, WORD y1)
@@ -150,7 +155,7 @@ static void cases(void)
     rect(&r, 0, 0, 9, 9);       rect_call("Or a", 1, 0, &r, 1);
     rect(&r, 5, 5, 14, 14);     rect_call("Or b", 2, 0, &r, 1);
     region_call("OrRegionRegion", 2, 0, 1, 1);
-    region_call("XorRegionRegion with itself", 2, 2, 2, 1);
+    region_call("XorRegionRegion", 2, 2, 1, 1);
     rect(&r, 5, 5, 14, 14);     rect_call("Or b again", 2, 0, &r, 1);
     region_call("AndRegionRegion", 2, 1, 1, 1);
     region_call("OrRegionRegion with itself", 2, 0, 2, 1);
@@ -197,8 +202,10 @@ int main(void)
         if (op < 4) {
             random_rect(&r);
             rect_call(names[op], d, op, &r, 0);
-        } else if (op < 7)
+        } else if (op < 7) {
+            if (op == 6 && s == d) s = (d + 1) % NREG;
             region_call(names[op], d, op - 4, s, 0);
+        }
         else if (rnd() % 4 == 0)
             clear(d, names[op], 0);
     }
@@ -206,6 +213,6 @@ int main(void)
         DisposeRegion(os[i]);
         gfx_rgn_clear(&ours[i], &mem);
     }
-    Printf("%lu calls, %lu differ (%lu in area)\n", calls, diffs, area_diffs);
+    Printf("%lu calls, %lu differ, %lu cut differently\n", calls, diffs, cuts);
     return diffs ? 5 : 0;
 }
