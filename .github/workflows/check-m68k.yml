@@ -33,3 +33,5 @@ jobs:
         run: QEMU_M68K=qemu-m68k HOST_CC=gcc sh tests/m68k/test_layers_lib.sh
       - name: LayersABITest on the host
         run: HOST_CC=gcc sh tests/abihost/run.sh ROUNDS=3 > /dev/null
+      - name: OpenGfx regions
+        run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_region.sh
