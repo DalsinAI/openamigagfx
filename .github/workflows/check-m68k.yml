@@ -9,10 +9,18 @@ on:
       - .github/workflows/check-m68k.yml
       - library/core/**
       - library/layers/**
+      - library/text/**
+      - tests/TextABITest.c
       - tests/host-ndk/**
       - tests/m68k/**
       - tests/abihost/**
       - tests/LayersABITest.c
+      - library/graphics/**
+      - tests/GfxFaceABITest.c
+      - library/gels/**
+      - tests/GelsABITest.c
+      - library/display/**
+      - tests/DisplayABITest.c
 
 permissions:
   contents: read
@@ -24,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: m68k cross GCC and qemu-m68k
-        run: sudo apt-get update && sudo apt-get install -y gcc-m68k-linux-gnu qemu-user
+        run: sudo apt-get update && sudo apt-get install -y gcc-m68k-linux-gnu g++-m68k-linux-gnu qemu-user
       - name: OpenGfx core
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_core.sh
       - name: OpenLayers core
@@ -35,3 +43,11 @@ jobs:
         run: HOST_CC=gcc sh tests/abihost/run.sh ROUNDS=3 > /dev/null
       - name: OpenGfx regions
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_region.sh
+      - name: OpenGfx graphics.library face
+        run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_face.sh
+      - name: OpenGfx text
+        run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_text.sh
+      - name: OpenGfx gels and the blitter
+        run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_gels.sh
+      - name: OpenGfx display
+        run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_display.sh
