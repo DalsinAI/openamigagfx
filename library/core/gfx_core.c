@@ -69,15 +69,29 @@ void gfx_planar_span(const struct gfx_planar *bm, int32_t x0, int32_t x1, int32_
     }
 }
 
+/* Each plane's part of a row: bytes_per_row, or for an interleaved bitmap
+ * (BMF_INTERLEAVED) the planes' share of it. Told by the flag, or seen in
+ * any two real planes less than a row apart, so a constant plane (0 or -1)
+ * among them does not hide it. */
+static uint32_t plane_row(const struct gfx_planar *bm)
+{
+    uint32_t p, q;
+
+    if (bm->depth < 2) return bm->bytes_per_row;
+    if (bm->interleaved) return bm->bytes_per_row / bm->depth;
+    for (p = 0; p < bm->depth; p++)
+        for (q = p + 1; PLANE_OK(bm->planes[p]) && q < bm->depth; q++)
+            if (PLANE_OK(bm->planes[q]) && bm->planes[q] > bm->planes[p] &&
+                (uint32_t)(bm->planes[q] - bm->planes[p]) < bm->bytes_per_row)
+                return (uint32_t)(bm->planes[q] - bm->planes[p]) / (q - p);
+    return bm->bytes_per_row;
+}
+
 void gfx_planar_fill_all(const struct gfx_planar *bm, uint32_t pen, uint32_t mask)
 {
-    uint32_t p, y, n = bm->bytes_per_row * bm->rows, w = bm->bytes_per_row;
+    uint32_t p, y, n = bm->bytes_per_row * bm->rows, w = plane_row(bm);
 
-    /* interleaved (BMF_INTERLEAVED): the planes a part of one row apart,
-     * bytes_per_row their rows together; each plane's part of each row */
-    if (bm->depth > 1 && PLANE_OK(bm->planes[0]) && PLANE_OK(bm->planes[1]) &&
-        bm->planes[1] > bm->planes[0] && (uint32_t)(bm->planes[1] - bm->planes[0]) < bm->bytes_per_row)
-        w = (uint32_t)(bm->planes[1] - bm->planes[0]);
+    /* interleaved: each plane's part of each row, never the next plane's */
     for (p = 0; p < bm->depth; p++)
         if (mask >> p & 1 && PLANE_OK(bm->planes[p])) {
             if (w == bm->bytes_per_row)

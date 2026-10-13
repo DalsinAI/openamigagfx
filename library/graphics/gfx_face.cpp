@@ -104,6 +104,7 @@ void planar_of(const gfx_bitmap *b, gfx_planar *p)
     p->bytes_per_row = b->bytesperrow;
     p->rows = b->rows;
     p->depth = b->depth > 8 ? 8 : b->depth;
+    p->interleaved = (b->flags & GFX_BMF_INTERLEAVED) != 0;
 }
 
 // A copy of w x h from (sx, sy) of s to (dx, dy) of d, cut to both.
