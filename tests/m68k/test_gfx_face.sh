@@ -99,8 +99,9 @@ def dist(i, r, g, b):
     R, G, B = cm[i]
     return (R - r) ** 2 + (G - g) ** 2 + (B - b) ** 2
 
+npens = 0
 def take_free():
-    for i in range(len(cm) - 1, -1, -1):
+    for i in range(npens - 1, -1, -1):
         if pens[i] == 0: return i
     return -1
 
@@ -223,14 +224,18 @@ while pos < len(lines):
             if first < len(cm): want.append((first, min(cnt, len(cm) - first)))
         vpc = take_vpc()
         if vpc != want: err("%s: hook %s want %s" % (l, vpc, want))
-    elif t in ("APE", "APE2"):
+    elif t == "APE":
         if f[1] != "0": err(l)
-        if t == "APE": pens = [0] * len(cm); refs = [0] * len(cm)
+        d = int(f[2]); npens = len(cm) if d == 0 else min(len(cm), 1 << d)   # the ViewPort's depth
+        if int(f[3]) != npens: err("%s: want %d pens" % (l, npens))
+        pens = [0] * len(cm); refs = [0] * len(cm)
+    elif t == "APE2":
+        if f[1] != "0": err(l)
     elif t == "OP":
         want_pen, r, g, b, fl, res = map(int, f[1:])
         vpc = take_vpc(); pen = -1; setc = False
         w = take_free() if want_pen == -1 else want_pen
-        if 0 <= w < len(cm):
+        if 0 <= w < npens:
             if pens[w] == 0:
                 pens[w] = 2 if fl & 1 else 1; refs[w] = 0 if fl & 1 else 1; pen = w
                 if not fl & 2: cm[w] = (r, g, b); setc = True
@@ -240,7 +245,7 @@ while pos < len(lines):
         if vpc != ([(pen, 1)] if setc else []): err("%s: hook %s" % (l, vpc))
     elif t == "RP":
         i = int(f[1])
-        if i < len(cm):
+        if i < npens:
             if pens[i] == 1:
                 refs[i] -= 1
                 if refs[i] == 0: pens[i] = 0
@@ -250,7 +255,7 @@ while pos < len(lines):
         vpc = take_vpc()
         tol = 0 if pr < 0 else 8 + 2 * pr
         best, bd = -1, None
-        for i in range(len(cm)):
+        for i in range(npens):
             if pens[i] == 1:
                 d = dist(i, r, g, b)
                 if bd is None or d < bd: best, bd = i, d

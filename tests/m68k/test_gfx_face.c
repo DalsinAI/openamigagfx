@@ -326,7 +326,10 @@ static void t_rastport(void)
     arena_reset("rastport");
 }
 
-struct t_vp { void *next; struct gfx_colormap *cm; };
+/* a ViewPort as far as RasInfo (offset 36), and a RasInfo as far as BitMap */
+struct t_rasinfo { void *next; struct gfx_bitmap *bm; int16_t rx, ry; };
+struct t_vp { void *next; struct gfx_colormap *cm; void *ins[4]; int16_t dw, dh, dx, dy; uint16_t modes;
+              uint8_t sprpri, extmodes; struct t_rasinfo *rasinfo; };
 
 static void t_colors(void)
 {
@@ -334,9 +337,10 @@ static void t_colors(void)
     for (r = 0; r < ROUNDS / 2; r++) {
         int32_t n = 1 + (int32_t)rn(40);
         struct gfx_colormap *cm = gfx_GetColorMap(&env, n);
-        struct t_vp vp = {0, cm};
+        struct t_vp vp = {0};
         uint32_t tab[3 * 50 + 8];
         uint16_t c4[48];
+        vp.cm = cm;
         printf("CM %ld %u %u %u\n", (long)n, cm->count, cm->type, cm->colortable && cm->lowcolorbits);
         for (k = 0; k < ROUNDS; k++) {
             uint32_t op = rn(8), i = rn((uint32_t)n + 3), a = rnd(), b = rnd(), c = rnd();
@@ -384,7 +388,16 @@ static void t_colors(void)
             }
         }
         /* pens */
-        printf("APE %ld\n", (long)gfx_AttachPalExtra(&env, cm, &vp));
+        {   /* the ViewPort's depth, or no bitmap: the pens it shares */
+            static struct gfx_bitmap pbm;
+            static struct t_rasinfo ri;
+            uint32_t pd = rn(3) ? 0 : 1 + rn(8);
+            pbm.depth = (uint8_t)pd;
+            ri.bm = &pbm;
+            vp.rasinfo = pd ? &ri : 0;
+            printf("APE %ld %lu", (long)gfx_AttachPalExtra(&env, cm, &vp), (unsigned long)pd);
+            printf(" %u\n", cm->palextra ? (unsigned)cm->palextra->sharablecolors : 0u);
+        }
         printf("APE2 %ld\n", (long)gfx_AttachPalExtra(&env, cm, &vp));
         for (k = 0; k < ROUNDS * 2; k++) {
             uint32_t op = rn(6), i = rn((uint32_t)n + 2), a = rnd() & 0xFF000000u, b = rnd() & 0xFF000000u,
