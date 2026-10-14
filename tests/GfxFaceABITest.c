@@ -56,6 +56,15 @@ static ULONG out_len;
 static void out(const char *fmt, ...)
 {
     va_list ap;
+    if (probe) {
+        /* recording: each line goes out as it is made, so a crash still
+         * shows how far the script got */
+        va_start(ap, fmt);
+        vprintf(fmt, ap);
+        va_end(ap);
+        fflush(stdout);
+        return;
+    }
     if (out_len > OUTSIZE - 512) return;
     va_start(ap, fmt);
     out_len += vsprintf(out_buf + out_len, fmt, ap);
@@ -251,6 +260,7 @@ static void print_screen_pe(const char *tag, struct Screen *s)
     if (pe) printf(" sharable=%u nfree=%u nshared=%u first=%u\n", pe->pe_SharableColors, pe->pe_NFree, pe->pe_NShared,
                    pe->pe_FirstFree);
     else printf(" nopalextra\n");
+    fflush(stdout);
 }
 
 /* Screens of each depth through intuition and the system's graphics, and
@@ -456,8 +466,7 @@ int main(int argc, char **argv)
     if (screens) s_screens();
     run();
     if (!our_base) {
-        fwrite(out_buf, 1, out_len, stdout);
-        printf("OS 3.2's answers: %lu bytes\n", (unsigned long)out_len);
+        printf("OS 3.2's answers: done\n");
         goto done;
     }
     memcpy(os_out, out_buf, out_len);
