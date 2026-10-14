@@ -227,7 +227,8 @@ while pos < len(lines):
     elif t == "APE":
         if f[1] != "0": err(l)
         d = int(f[2]); npens = len(cm) if d == 0 else min(len(cm), 1 << d)   # the ViewPort's depth
-        if int(f[3]) != npens: err("%s: want %d pens" % (l, npens))
+        # pe_SharableColors is the highest pen it shares, not a count
+        if int(f[3]) != npens - 1: err("%s: want %d pens" % (l, npens))
         pens = [0] * len(cm); refs = [0] * len(cm)
     elif t == "APE2":
         if f[1] != "0": err(l)
