@@ -197,9 +197,9 @@ static void s_colormap(void)
 }
 
 /* How many pens a PalExtra shares (pe_SharableColors), for a ViewPort of
- * each mode and depth, on maps of each size. Each line also has the pen
- * ObtainPen(-1) hands out first, and whether the map's last pen and the
- * pen at pe_SharableColors can be had by number. */
+ * each mode and depth, on maps of each size. Each line also says whether
+ * the pen numbered pe_SharableColors and the one past it can be had, the
+ * pen ObtainPen(-1) hands out after that, and NFree then. */
 static void share_case(const char *tag, UWORD modes, int depth, int count, int novp)
 {
     struct ViewPort vp;
@@ -207,7 +207,7 @@ static void share_case(const char *tag, UWORD modes, int depth, int count, int n
     struct BitMap bm;
     struct ColorMap *cm = GetColorMap(count);
     struct PaletteExtra *pe = 0;
-    LONG first, last, at;
+    LONG first, past, at;
     if (!cm) { out("SHARE %s count=%d nomap\n", tag, count); return; }
     InitVPort(&vp);
     memset(&ri, 0, sizeof ri);
@@ -224,10 +224,13 @@ static void share_case(const char *tag, UWORD modes, int depth, int count, int n
     }
     out("SHARE %s count=%d sharable=%u nfree=%u nshared=%u first=%u", tag, count, pe->pe_SharableColors,
         pe->pe_NFree, pe->pe_NShared, pe->pe_FirstFree);
+    /* only pens inside the map: past its end OS 3.2 may write anywhere */
+    at = pe->pe_SharableColors < count ? ObtainPen(cm, pe->pe_SharableColors, 0, 0, 0, PEN_EXCLUSIVE | PEN_NO_SETCOLOR)
+                                       : -2;
+    past = pe->pe_SharableColors + 1 < count
+               ? ObtainPen(cm, (ULONG)pe->pe_SharableColors + 1, 0, 0, 0, PEN_EXCLUSIVE | PEN_NO_SETCOLOR) : -2;
     first = ObtainPen(cm, -1, 0, 0, 0, 0);
-    last = ObtainPen(cm, count - 1, 0, 0, 0, PEN_NO_SETCOLOR);
-    at = ObtainPen(cm, pe->pe_SharableColors, 0, 0, 0, PEN_NO_SETCOLOR);
-    out(" pen=%ld last=%ld at=%ld\n", first, last, at);
+    out(" at=%ld past=%ld then=%ld nfree=%u\n", at, past, first, pe->pe_NFree);
     FreeColorMap(cm);
 }
 
@@ -237,20 +240,20 @@ static void s_sharable(void)
     int d;
     share_case("novp", 0, 4, 256, 1);
     share_case("depth0", 0, 0, 256, 0);
-    /* a map the depth's size, a map of 32 (GetColorMap's usual), a map of 256 (SA_FullPalette) */
+    /* a map the depth's size, a map of 32 (GetColorMap's usual) and a map
+     * of 256 (SA_FullPalette). Never a map smaller than the depth shows:
+     * OS 3.2.3 then writes past it (d6 on a map of 32 jumped to an odd
+     * address, lab t3-sharable, 14 Oct 2026). */
     for (d = 1; d <= 8; d++) {
         sprintf(tag, "d%d", d);
         share_case(tag, 0, d, 1 << d, 0);
-        if (d != 5) share_case(tag, 0, d, 32, 0);
+        if (d < 5) share_case(tag, 0, d, 32, 0);
         if (d != 8) share_case(tag, 0, d, 256, 0);
     }
-    share_case("ehb6", EXTRA_HALFBRITE, 6, 32, 0);
     share_case("ehb6", EXTRA_HALFBRITE, 6, 64, 0);
     share_case("ehb6", EXTRA_HALFBRITE, 6, 256, 0);
-    share_case("ham6", HAM, 6, 16, 0);
-    share_case("ham6", HAM, 6, 32, 0);
+    share_case("ham6", HAM, 6, 64, 0);
     share_case("ham6", HAM, 6, 256, 0);
-    share_case("ham8", HAM, 8, 64, 0);
     share_case("ham8", HAM, 8, 256, 0);
 }
 
