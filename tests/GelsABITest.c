@@ -340,8 +340,8 @@ static void s_collision(void)
 
 static char alog[512];
 static int alen;
-static WORD a_comp(struct AnimComp *c) { alen += sprintf(alog + alen, " C%d", c->XTrans); return 0; }
-static WORD a_ob(struct AnimOb *o) { alen += sprintf(alog + alen, " O%d", o->AnX); return 0; }
+static WORD __STDARGS__ a_comp(struct AnimComp *c) { alen += sprintf(alog + alen, " C%d", c->XTrans); return 0; }
+static WORD __STDARGS__ a_ob(struct AnimOb *o) { alen += sprintf(alog + alen, " O%d", o->AnX); return 0; }
 
 static void s_anim(void)
 {
@@ -357,7 +357,7 @@ static void s_anim(void)
     ob.AnY = -(3 << 6) - 5;
     ob.XVel = 70; ob.YVel = -9; ob.XAccel = -3; ob.YAccel = 4;
     ob.RingXTrans = 5; ob.RingYTrans = -2;
-    ob.AnimORoutine = (WORD (*)())a_ob;
+    ob.AnimORoutine = a_ob;   /* __STDARGS__ as gels.h's pointer (GCC 16: no cast between the two) */
     for (i = 0; i < 3; i++) {
         tbob_make(&t[i], 1, 3, 1, 1, 0, SAVEBACK, 20 + i);
         c[i].AnimBob = &t[i].bob;
@@ -366,7 +366,7 @@ static void s_anim(void)
         c[i].TimeSet = (WORD)(i + 1);
         c[i].XTrans = (WORD)(i * 2 - 1);
         c[i].YTrans = (WORD)i;
-        c[i].AnimCRoutine = (WORD (*)())a_comp;
+        c[i].AnimCRoutine = a_comp;
     }
     c[0].NextSeq = &c[1]; c[1].NextSeq = &c[0]; c[1].PrevSeq = &c[0]; c[0].PrevSeq = &c[1];
     c[1].Flags = RINGTRIGGER;
@@ -541,8 +541,9 @@ static void s_queue(void)
         q[i].id = i;
         q[i].again = i;
         q[i].dest = dest + 8 * i;
-        q[i].bn.function = (int (*)())q_fn;
-        q[i].bn.cleanup = (int (*)())q_cleanup;
+        /* the OS calls them with A0 and A1: through void (*)(void), GCC 16's way to cast between function types */
+        q[i].bn.function = (int (*)())(void (*)(void))q_fn;
+        q[i].bn.cleanup = (int (*)())(void (*)(void))q_cleanup;
         q[i].bn.stat = i == 1 ? 0 : CLEANUP;
     }
     qlen = 0; qlog[0] = 0;

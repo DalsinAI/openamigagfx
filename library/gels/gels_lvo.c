@@ -59,6 +59,7 @@ __asm__(".text\n"
         "\trts\n");
 #define BLIT_ENTRY ((void (*)(void))gels_blit_entry)
 #define VERTB_ENTRY ((void (*)(void))gels_vertb_entry)
+#define GELS_HAVE_ENTRIES 1   /* (a test of the entries' addresses is always true here: GCC 16 says so) */
 
 /* A library call with A6 the base: lvo the negative offset, A1 and D0 its
  * arguments (exec's OpenLibrary and CloseLibrary; graphics.library's
@@ -82,6 +83,7 @@ static int32_t lib_call(void *base, int32_t lvo, void *arg_a1, int32_t arg_d0)
 }
 #define BLIT_ENTRY ((void (*)(void))0)
 #define VERTB_ENTRY ((void (*)(void))0)
+#define GELS_HAVE_ENTRIES 0
 #endif
 
 #define LVO_OPENLIBRARY (-552)   /* exec */
@@ -139,7 +141,7 @@ int gfx_init_gels(struct gfx_env *env)
     if (!sys) {
         static const char gfx_name[] = "graphics.library";
         st->sys_gfx = (void *)(uintptr_t)lib_call(gb->execbase, LVO_OPENLIBRARY, (void *)gfx_name, 39);
-        if (!st->sys_gfx && BLIT_ENTRY) {
+        if (!st->sys_gfx && GELS_HAVE_ENTRIES) {
             env->free(env->ctx, st, sizeof *st);
             return 0;
         }
@@ -147,7 +149,7 @@ int gfx_init_gels(struct gfx_env *env)
     }
     gels_init(st);
     gfx_private_of(gb)->area[GFX_AREA_GELS] = st;
-    if (sys && BLIT_ENTRY && env->set_int_vector) {
+    if (sys && GELS_HAVE_ENTRIES && env->set_int_vector) {
         gb->bltsrv.node.type = 2;           /* NT_INTERRUPT */
         gb->bltsrv.node.name = (char *)blit_name;
         gb->bltsrv.data = st;
@@ -156,7 +158,7 @@ int gfx_init_gels(struct gfx_env *env)
         env->chip_write(env->ctx, 0x09C, 0x0040);                      /* INTREQ: clear BLIT */
         env->chip_write(env->ctx, 0x09A, 0x8040);                      /* INTENA: SET | BLIT */
     }
-    if (sys && VERTB_ENTRY && env->add_int_server) {
+    if (sys && GELS_HAVE_ENTRIES && env->add_int_server) {
         st->vertb.node.type = 2;
         st->vertb.node.pri = -10;
         st->vertb.node.name = (char *)vertb_name;
@@ -173,7 +175,7 @@ void gfx_exit_gels(struct gfx_env *env)
     if (!st) return;
     gels_WaitBlit(st);
     if (st->vertb.code && env->rem_int_server) env->rem_int_server(env->ctx, 5, &st->vertb);
-    if (env->base->bltsrv.code == BLIT_ENTRY && BLIT_ENTRY && env->set_int_vector) {
+    if (GELS_HAVE_ENTRIES && env->base->bltsrv.code == BLIT_ENTRY && env->set_int_vector) {
         env->chip_write(env->ctx, 0x09A, 0x0040);                      /* INTENA: clear BLIT */
         env->set_int_vector(env->ctx, 6, st->old_blit);
     }

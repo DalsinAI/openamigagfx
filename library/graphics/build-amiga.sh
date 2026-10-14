@@ -35,7 +35,7 @@ CXXFLAGS="-std=gnu++23 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-as
   -fno-unwind-tables -nostdlib++ -ffreestanding"
 
 # the sources: the face's and core's, then each area's list
-SRCS="$HERE/face_lvo.c $HERE/gfx_face.cpp $LIB/core/gfx_core.c $LIB/core/gfx_rp.c $LIB/core/gfx_region.c"
+SRCS="$HERE/face_lvo.c $HERE/gfx_face.cpp $HERE/gfx_arith.c $LIB/core/gfx_core.c $LIB/core/gfx_rp.c $LIB/core/gfx_region.c"
 for area in display text gels; do
   list="$LIB/$area/graphics.sources"
   [ -f "$list" ] || { echo "$area: no graphics.sources yet, stubbed"; continue; }
