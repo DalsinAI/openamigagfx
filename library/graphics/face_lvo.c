@@ -224,6 +224,47 @@ void gfx_lvo_ScrollRaster(GFX_REG(a1, struct gfx_rastport *rp),
     gfx_ScrollRaster(gfx_env_of(gb), rp, dx, dy, x0, y0, x1, y1);
 }
 
+/* LockLayerRom, UnlockLayerRom and AttemptLockLayerRom take the layer in
+ * A5, which m68k-amigaos GCC keeps for its frame pointer. With
+ * -fomit-frame-pointer, GCC 16 reads an A5 register parameter as the
+ * eliminated frame's address: these three got an address on their caller's
+ * stack in place of the layer, and locked a "semaphore" there (OS 3.2's
+ * workbench.library then waited for good). So on the Amiga each is a stub
+ * in assembly that passes A5 and A6 on the stack to a C body. The register
+ * definitions stay for the other builds, and for check_regs.py. */
+#if defined(__amigaos__) || defined(AMIGA)
+void gfx_a5_LockLayerRom(struct gfx_layer *layer, struct gfx_base *gb);
+void gfx_a5_UnlockLayerRom(struct gfx_layer *layer, struct gfx_base *gb);
+int32_t gfx_a5_AttemptLockLayerRom(struct gfx_layer *layer, struct gfx_base *gb);
+
+void gfx_a5_LockLayerRom(struct gfx_layer *layer, struct gfx_base *gb)
+{
+    gfx_LockLayerRom(gfx_env_of(gb), layer);
+}
+
+void gfx_a5_UnlockLayerRom(struct gfx_layer *layer, struct gfx_base *gb)
+{
+    gfx_UnlockLayerRom(gfx_env_of(gb), layer);
+}
+
+int32_t gfx_a5_AttemptLockLayerRom(struct gfx_layer *layer, struct gfx_base *gb)
+{
+    return gfx_AttemptLockLayerRom(gfx_env_of(gb), layer);
+}
+
+#define GFX_A5_STUB(call) \
+    "\t.globl\t_gfx_lvo_" call "\n" \
+    "_gfx_lvo_" call ":\n" \
+    "\tmove.l\ta6,-(sp)\n" \
+    "\tmove.l\ta5,-(sp)\n" \
+    "\tjsr\t_gfx_a5_" call "\n" \
+    "\taddq.l\t#8,sp\n" \
+    "\trts\n"
+__asm__("\t.text\n\t.even\n"
+        GFX_A5_STUB("LockLayerRom")
+        GFX_A5_STUB("UnlockLayerRom")
+        GFX_A5_STUB("AttemptLockLayerRom"));
+#else
 void gfx_lvo_LockLayerRom(GFX_REG(a5, struct gfx_layer *layer),
     GFX_REG(a6, struct gfx_base *gb))
 {
@@ -235,6 +276,13 @@ void gfx_lvo_UnlockLayerRom(GFX_REG(a5, struct gfx_layer *layer),
 {
     gfx_UnlockLayerRom(gfx_env_of(gb), layer);
 }
+
+int32_t gfx_lvo_AttemptLockLayerRom(GFX_REG(a5, struct gfx_layer *layer),
+    GFX_REG(a6, struct gfx_base *gb))
+{
+    return gfx_AttemptLockLayerRom(gfx_env_of(gb), layer);
+}
+#endif
 
 void gfx_lvo_SyncSBitMap(GFX_REG(a0, struct gfx_layer *layer),
     GFX_REG(a6, struct gfx_base *gb))
@@ -399,12 +447,6 @@ uint32_t gfx_lvo_private_642(void) { return 0; }
 
 /* private -648: a private slot of OS 3.2's; answers 0 */
 uint32_t gfx_lvo_private_648(void) { return 0; }
-
-int32_t gfx_lvo_AttemptLockLayerRom(GFX_REG(a5, struct gfx_layer *layer),
-    GFX_REG(a6, struct gfx_base *gb))
-{
-    return gfx_AttemptLockLayerRom(gfx_env_of(gb), layer);
-}
 
 void gfx_lvo_BitMapScale(GFX_REG(a0, struct gfx_bitscaleargs *bsa),
     GFX_REG(a6, struct gfx_base *gb))
