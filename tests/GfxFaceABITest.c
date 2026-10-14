@@ -20,7 +20,8 @@
  * it also opens a screen of each depth through intuition (the system's
  * graphics.library, not opengfx's) and prints its PaletteExtra, and the
  * Workbench's.
- *   GfxFaceABITest [PROBE] [SCREENS] [LIB=dir]
+ * ONLY=SHARE runs the pen-sharing lines alone.
+ *   GfxFaceABITest [PROBE] [SCREENS] [ONLY=SHARE] [LIB=dir]
  * Answers 0 when nothing differs, 5 when something does. */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -48,6 +49,7 @@
 struct GfxBase *GfxBase;
 struct IntuitionBase *IntuitionBase;
 static int probe;
+static const char *only;   /* ONLY=SHARE: one part of the script */
 
 #define OUTSIZE (256 * 1024)
 static char *out_buf;
@@ -102,7 +104,9 @@ static void s_bitmaps(void)
     static const ULONG cases[][4] = {
         {320, 200, 3, 0}, {321, 17, 2, BMF_CLEAR}, {1, 1, 1, 0}, {640, 256, 4, BMF_DISPLAYABLE},
         {100, 10, 5, BMF_DISPLAYABLE | BMF_CLEAR}, {320, 200, 3, BMF_INTERLEAVED},
-        {320, 200, 3, BMF_INTERLEAVED | BMF_DISPLAYABLE}, {33, 5, 1, BMF_INTERLEAVED}, {16, 16, 0, 0},
+        {320, 200, 3, BMF_INTERLEAVED | BMF_DISPLAYABLE}, {33, 5, 1, BMF_INTERLEAVED},
+        /* no depth 0: OS 3.2.3's AllocBitMap(16, 16, 0, 0, 0) jumps to an
+         * odd address (lab t3-sharable, 14 Oct 2026) */
         {16, 16, 8, 0}, {16, 16, 9, 0}, {0, 16, 2, 0}, {16, 0, 2, 0}, {17, 3, 2, BMF_MINPLANES},
     };
     int i, p;
@@ -408,6 +412,10 @@ static void s_rpattrs(void)
 static void run(void)
 {
     out_len = 0;
+    if (only) {
+        if (!strcmp(only, "SHARE")) s_sharable();
+        return;
+    }
     s_initrp();
     s_bitmaps();
     s_colormap();
@@ -437,6 +445,7 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "PROBE")) probe = 1;
         else if (!strcmp(argv[i], "SCREENS")) screens = 1;
+        else if (!strncmp(argv[i], "ONLY=", 5)) only = argv[i] + 5;
         else if (!strncmp(argv[i], "LIB=", 4)) dir = argv[i] + 4;
     }
     out_buf = AllocMem(OUTSIZE, MEMF_PUBLIC);
