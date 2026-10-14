@@ -225,10 +225,10 @@ static void share_case(const char *tag, UWORD modes, int depth, int count, int n
     out("SHARE %s count=%d sharable=%u nfree=%u nshared=%u first=%u", tag, count, pe->pe_SharableColors,
         pe->pe_NFree, pe->pe_NShared, pe->pe_FirstFree);
     /* only pens inside the map: past its end OS 3.2 may write anywhere */
-    at = pe->pe_SharableColors < count ? ObtainPen(cm, pe->pe_SharableColors, 0, 0, 0, PEN_EXCLUSIVE | PEN_NO_SETCOLOR)
+    at = pe->pe_SharableColors < count ? (LONG)ObtainPen(cm, pe->pe_SharableColors, 0, 0, 0, PEN_EXCLUSIVE | PEN_NO_SETCOLOR)
                                        : -2;
     past = pe->pe_SharableColors + 1 < count
-               ? ObtainPen(cm, (ULONG)pe->pe_SharableColors + 1, 0, 0, 0, PEN_EXCLUSIVE | PEN_NO_SETCOLOR) : -2;
+               ? (LONG)ObtainPen(cm, (ULONG)pe->pe_SharableColors + 1, 0, 0, 0, PEN_EXCLUSIVE | PEN_NO_SETCOLOR) : -2;
     first = ObtainPen(cm, -1, 0, 0, 0, 0);
     out(" at=%ld past=%ld then=%ld nfree=%u\n", at, past, first, pe->pe_NFree);
     FreeColorMap(cm);
