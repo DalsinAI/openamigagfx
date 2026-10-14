@@ -337,9 +337,10 @@ static void t_colors(void)
     for (r = 0; r < ROUNDS / 2; r++) {
         int32_t n = 1 + (int32_t)rn(40);
         struct gfx_colormap *cm = gfx_GetColorMap(&env, n);
-        struct t_vp vp = {0, cm};
+        struct t_vp vp = {0};
         uint32_t tab[3 * 50 + 8];
         uint16_t c4[48];
+        vp.cm = cm;
         printf("CM %ld %u %u %u\n", (long)n, cm->count, cm->type, cm->colortable && cm->lowcolorbits);
         for (k = 0; k < ROUNDS; k++) {
             uint32_t op = rn(8), i = rn((uint32_t)n + 3), a = rnd(), b = rnd(), c = rnd();
