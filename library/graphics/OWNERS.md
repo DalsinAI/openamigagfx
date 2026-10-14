@@ -15,7 +15,7 @@ OpenGfx's graphics.library is four areas built into one library: gfx-face (`libr
 | Fields | Set by |
 | --- | --- |
 | LibNode, ExecBase, UtilBase, gb_LayersBase (0), the lists TextFonts, BlitWaitQ, TOF_WaitQ, MonitorList (NewList'd), MemType, Flags | gfx-face, before any area's init |
-| ActiView, copinit, LOFlist, SHFlist, vbsrv, timsrv, DisplayFlags, ChipRevBits0, the display rows and columns, MicrosPerLine, monitors, SpriteReserved, SimpleSprites, the sprite and fetch fields, MonitorList's entries, DisplayInfoDataBase, ActiViewCprSemaphore, VBCounter | gfx-display |
+| ActiView, copinit, LOFlist, SHFlist, vbsrv, timsrv, DisplayFlags, ChipRevBits0, the display rows and columns, MicrosPerLine, monitors, SpriteReserved, SimpleSprites, the sprite and fetch fields, MonitorList's entries, DisplayInfoDataBase, LastChanceMemory, ActiViewCprSemaphore, MonitorListSemaphore, HashTableSemaphore, VBCounter | gfx-display |
 | TextFonts' entries, DefaultFont | gfx-text |
 | blthd, blttl, bsblthd, bsblttl, bltsrv, BlitLock, BlitNest, BlitWaitQ's entries, BlitOwner | gfx-gels |
 

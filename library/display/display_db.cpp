@@ -685,6 +685,12 @@ int gd_init(gfx_env *env, int own_hw)
     gb->simplesprites = reinterpret_cast<void **>(s->sprites);
     gb->hash_table = reinterpret_cast<int16_t *>(s->hash);
     gb->displayinfodatabase = s->modeids;
+    for (int i = 0; i < NSEMS; i++)
+        if (env->sem_init) env->sem_init(env->ctx, &s->sems[i]);
+    gb->lastchancememory = &s->sems[SEM_LASTCHANCE];
+    gb->actiewcprsemaphore = &s->sems[SEM_ACTIVIEWCPR];
+    gb->monitorlistsemaphore = &s->sems[SEM_MONITORLIST];
+    gb->hashtablesemaphore = &s->sems[SEM_HASHTABLE];
     for (int i = 0; i < NMODES; i++) s->modeids[i] = monids[i / NKEYS] | keys[i % NKEYS].key;
 
     /* the chips: Agnus says PAL or NTSC */
@@ -747,6 +753,7 @@ void gd_exit(gfx_env *env)
     gb->simplesprites = nullptr;
     gb->hash_table = nullptr;
     gb->displayinfodatabase = nullptr;
+    gb->lastchancememory = gb->actiewcprsemaphore = gb->monitorlistsemaphore = gb->hashtablesemaphore = nullptr;
     gb->default_monitor = gb->natural_monitor = gb->current_monitor = nullptr;
     release(env, s->copinit, sizeof(gd_copinit));
     gfx_private_of(gb)->area[GFX_AREA_DISPLAY] = nullptr;
