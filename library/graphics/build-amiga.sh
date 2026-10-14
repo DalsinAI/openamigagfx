@@ -19,6 +19,7 @@ P="$STOVE/prefix"
 CC=${CC:-"$P/bin/m68k-amigaos-gcc"}
 CXX=${CXX:-"$P/bin/m68k-amigaos-g++"}
 NM=${NM:-"$P/bin/m68k-amigaos-nm"}
+OBJDUMP=${OBJDUMP:-"$P/bin/m68k-amigaos-objdump"}
 OUT=${OUT:-"$HERE/build-amiga"}
 GUEST=${GUEST:?set GUEST to an amigachrome-guest checkout}
 mkdir -p "$OUT/libs" "$OUT/tests" "$OUT/obj"
@@ -75,6 +76,12 @@ for name in graphics opengfx; do
   [ -z "$data" ] || { echo "data or bss in $name.library: $data" >&2; exit 1; }
   bad=$("$NM" "$OUT/libs/$name.library" | grep -E '__cxa_|__gxx_personality|_ZTI|_ZTS|_GLOBAL__sub_I_|_ZGV|_Znw|_Zdl' || true)
   [ -z "$bad" ] || { echo "C++ runtime in $name.library: $bad" >&2; exit 1; }
+  # the A5 LVOs (face_lvo.c): each stub pushes A6, then A5 itself
+  for call in LockLayerRom UnlockLayerRom AttemptLockLayerRom; do
+    "$OBJDUMP" -d "$OUT/libs/$name.library" |
+      awk -v l="<_gfx_lvo_$call>:" '$2 == l { n = 2; next } n { s = s " " $2; n-- } END { exit s != " 2f0e 2f0d" }' ||
+      { echo "$name.library: gfx_lvo_$call does not start by pushing A6 and A5" >&2; exit 1; }
+  done
 done
 
 "$CC" -m68000 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
