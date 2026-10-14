@@ -94,6 +94,7 @@ The horizontal position follows the HRM:
 | Alice's chip ID 0x23 | PAL | ABI test |
 | WaitBOVP while the beam wraps into the next frame | Returns | ours |
 | GfxBase's NormalDisplayRows, MicrosPerLine and similar fields | OS 3.2's values | ABI test (GFXBASE) |
+| GfxBase's LastChanceMemory, ActiViewCprSemaphore, MonitorListSemaphore and HashTableSemaphore | Each points at a SignalSemaphore of its own, initialised in the display's state. A monitor driver run by LoadMonDrvs takes MonitorListSemaphore; when it was NULL, ObtainSemaphore read low memory as a semaphore owned by another task and the driver waited for ever | NDK `graphics/gfxbase.h` (the fields); test |
 | opengfx.library opened next to OS 3.2 | Every call works, but no custom chip register is written (`gd_init`'s `own_hw`) | ours; test |
 
 ## The tests

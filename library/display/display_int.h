@@ -16,6 +16,12 @@ struct assoc {                          /* GfxAssociate's pairs */
     gd_extnode *node;
 };
 enum { NHASH = 32, NMONITORS = 3, NKEYS = 30, NMODES = NMONITORS * NKEYS };
+/* GfxBase's semaphore pointers, each to one of state::sems. Programs outside
+ * graphics take them (a monitor driver run by LoadMonDrvs takes
+ * MonitorListSemaphore before it adds its MonitorSpec), so none may be NULL:
+ * ObtainSemaphore(NULL) reads low memory as a semaphore that some other task
+ * owns, and waits for ever. */
+enum { SEM_LASTCHANCE, SEM_ACTIVIEWCPR, SEM_MONITORLIST, SEM_HASHTABLE, NSEMS };
 
 struct state {
     gd_copinit *copinit;                /* chip RAM; also GfxBase->copinit */
@@ -27,6 +33,7 @@ struct state {
     uint16_t spritewords;               /* 1, 2 or 4: the sprites' fetch width */
     bool hw;                            /* the display is ours: write the registers */
     void *dispq;                        /* DBufInfos (dbi_Link2) shown since the last blank: DispMessage next */
+    gfx_semaphore sems[NSEMS];          /* the SignalSemaphores GfxBase points at (SEM_ below) */
 };
 
 static inline gfx_base *base(gfx_env *env) { return env->base; }

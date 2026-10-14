@@ -281,6 +281,16 @@ static void e_permit(void *) { forb--; }
 static void e_disable(void *) { dis++; }
 static void e_enable(void *) { dis--; }
 static void e_sem(void *, gfx_semaphore *) {}
+/* the semaphores InitSemaphore'd, so a GfxBase pointer to one can be checked */
+static gfx_semaphore *inited[16];
+static int ninited;
+static void e_sem_init(void *, gfx_semaphore *s) { if (ninited < 16) inited[ninited++] = s; }
+static bool was_inited(gfx_semaphore *s)
+{
+    for (int i = 0; i < ninited; i++)
+        if (inited[i] == s) return true;
+    return false;
+}
 static int32_t e_sem_attempt(void *, gfx_semaphore *) { return 1; }
 static int task;
 static void *e_find_task(void *) { return &task; }
@@ -328,11 +338,21 @@ static void boot(int chip, bool pal, int own_hw = 1)
     E.base = GB;
     E.alloc = m_alloc; E.free = m_free; E.avail = m_avail;
     E.forbid = e_forbid; E.permit = e_permit; E.disable = e_disable; E.enable = e_enable;
-    E.sem_init = e_sem; E.sem_obtain = e_sem; E.sem_obtain_shared = e_sem; E.sem_attempt = e_sem_attempt; E.sem_release = e_sem;
+    ninited = 0;
+    E.sem_init = e_sem_init; E.sem_obtain = e_sem; E.sem_obtain_shared = e_sem; E.sem_attempt = e_sem_attempt; E.sem_release = e_sem;
     E.find_task = e_find_task; E.wait = e_wait; E.signal = e_signal; E.reply_msg = e_reply;
     E.chip_read = e_read; E.chip_write = e_write;
     gfx_private_of(GB)->env = E;
     CHECK(gd_init(&E, own_hw) == 1, "gd_init");
+    /* a monitor driver takes MonitorListSemaphore, and other programs the
+     * rest: each must be a semaphore of its own, initialised */
+    gfx_semaphore *sems[4] = { GB->lastchancememory, GB->actiewcprsemaphore, GB->monitorlistsemaphore,
+                               GB->hashtablesemaphore };
+    for (int i = 0; i < 4; i++) {
+        bool own = true;
+        for (int j = 0; j < i; j++) own = own && sems[j] != sems[i];
+        CHECK(sems[i] && was_inited(sems[i]) && own, "GfxBase's semaphores");
+    }
     uint8_t want = chip == 0 ? 0 : chip == 1 ? (GFX_GFXF_HR_AGNUS | GFX_GFXF_HR_DENISE)
                                              : (GFX_GFXF_HR_AGNUS | GFX_GFXF_HR_DENISE | GFX_GFXF_AA_ALICE | GFX_GFXF_AA_LISA);
     CHECK(GB->chiprevbits0 == want, "SetChipRev found the chips");
