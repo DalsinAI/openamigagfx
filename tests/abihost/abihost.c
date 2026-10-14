@@ -16,6 +16,9 @@
 #include "shim.h"
 #include "layers_lib.h"
 
+/* the library's state, as the library base holds it (graphics is the host model here) */
+static struct ol_base tob;
+
 /* ---- exec and dos -------------------------------------------------- */
 
 APTR AllocMem(ULONG size, ULONG flags)
@@ -37,7 +40,7 @@ struct Library *OpenLibrary(const char *name, ULONG version)
 {
     static int done;
     (void)name; (void)version;
-    if (!done) { ol_init(); done = 1; }
+    if (!done) { ol_init(&tob, 0); done = 1; }
     return &lib;
 }
 void CloseLibrary(struct Library *l) { (void)l; }
@@ -266,39 +269,45 @@ LONG ReadPixel(struct RastPort *rp, LONG x, LONG y)
 
 /* ---- layers.library, as LayersABITest calls it --------------------- */
 
-struct Layer_Info *NewLayerInfo(void) { return ol_NewLayerInfo(); }
-void DisposeLayerInfo(struct Layer_Info *li) { ol_DisposeLayerInfo(li); }
-struct Hook *InstallLayerInfoHook(struct Layer_Info *li, struct Hook *h) { return ol_InstallLayerInfoHook(li, h); }
+struct Layer_Info *NewLayerInfo(void) { return ol_NewLayerInfo(&tob); }
+void DisposeLayerInfo(struct Layer_Info *li) { ol_DisposeLayerInfo(&tob, li); }
+struct Hook *InstallLayerInfoHook(struct Layer_Info *li, struct Hook *h)
+{
+    return ol_InstallLayerInfoHook(&tob, li, h);
+}
 struct Layer *CreateUpfrontHookLayer(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1, LONG y1,
                                      LONG flags, struct Hook *h, struct BitMap *sbm)
 {
-    return ol_CreateUpfrontHookLayer(li, bm, x0, y0, x1, y1, flags, h, sbm);
+    return ol_CreateUpfrontHookLayer(&tob, li, bm, x0, y0, x1, y1, flags, h, sbm);
 }
 struct Layer *CreateBehindHookLayer(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1, LONG y1,
                                     LONG flags, struct Hook *h, struct BitMap *sbm)
 {
-    return ol_CreateBehindHookLayer(li, bm, x0, y0, x1, y1, flags, h, sbm);
+    return ol_CreateBehindHookLayer(&tob, li, bm, x0, y0, x1, y1, flags, h, sbm);
 }
-LONG DeleteLayer(LONG d, struct Layer *l) { (void)d; return ol_DeleteLayer(l); }
-LONG UpfrontLayer(LONG d, struct Layer *l) { (void)d; return ol_UpfrontLayer(l); }
-LONG BehindLayer(LONG d, struct Layer *l) { (void)d; return ol_BehindLayer(l); }
-LONG MoveLayer(LONG d, struct Layer *l, LONG dx, LONG dy) { (void)d; return ol_MoveLayer(l, dx, dy); }
-LONG SizeLayer(LONG d, struct Layer *l, LONG dx, LONG dy) { (void)d; return ol_SizeLayer(l, dx, dy); }
-LONG MoveSizeLayer(struct Layer *l, LONG dx, LONG dy, LONG dw, LONG dh) { return ol_MoveSizeLayer(l, dx, dy, dw, dh); }
-LONG MoveLayerInFrontOf(struct Layer *l, struct Layer *o) { return ol_MoveLayerInFrontOf(l, o); }
-LONG ShowLayer(struct Layer *l, struct Layer *o) { return ol_ShowLayer(l, o); }
-LONG HideLayer(struct Layer *l) { return ol_HideLayer(l); }
-struct Region *InstallClipRegion(struct Layer *l, struct Region *r) { return ol_InstallClipRegion(l, r); }
-LONG BeginUpdate(struct Layer *l) { return ol_BeginUpdate(l); }
-void EndUpdate(struct Layer *l, UWORD flag) { ol_EndUpdate(l, flag); }
-void ScrollLayer(LONG d, struct Layer *l, LONG dx, LONG dy) { (void)d; ol_ScrollLayer(l, dx, dy); }
-struct Layer *WhichLayer(struct Layer_Info *li, LONG x, LONG y) { return ol_WhichLayer(li, x, y); }
-LONG LayerOccluded(struct Layer *l) { return ol_LayerOccluded(l); }
-void LockLayer(LONG d, struct Layer *l) { (void)d; ol_LockLayer(l); }
-void UnlockLayer(struct Layer *l) { ol_UnlockLayer(l); }
-void LockLayers(struct Layer_Info *li) { ol_LockLayers(li); }
-void UnlockLayers(struct Layer_Info *li) { ol_UnlockLayers(li); }
-void DoHookClipRects(struct Hook *h, struct RastPort *rp, struct Rectangle *r) { ol_DoHookClipRects(h, rp, r); }
-void SortLayerCR(struct Layer *l, LONG dx, LONG dy) { ol_SortLayerCR(l, dx, dy); }
-void SwapBitsRastPortClipRect(struct RastPort *rp, struct ClipRect *cr) { ol_SwapBitsRastPortClipRect(rp, cr); }
+LONG DeleteLayer(LONG d, struct Layer *l) { (void)d; return ol_DeleteLayer(&tob, l); }
+LONG UpfrontLayer(LONG d, struct Layer *l) { (void)d; return ol_UpfrontLayer(&tob, l); }
+LONG BehindLayer(LONG d, struct Layer *l) { (void)d; return ol_BehindLayer(&tob, l); }
+LONG MoveLayer(LONG d, struct Layer *l, LONG dx, LONG dy) { (void)d; return ol_MoveLayer(&tob, l, dx, dy); }
+LONG SizeLayer(LONG d, struct Layer *l, LONG dx, LONG dy) { (void)d; return ol_SizeLayer(&tob, l, dx, dy); }
+LONG MoveSizeLayer(struct Layer *l, LONG dx, LONG dy, LONG dw, LONG dh)
+{
+    return ol_MoveSizeLayer(&tob, l, dx, dy, dw, dh);
+}
+LONG MoveLayerInFrontOf(struct Layer *l, struct Layer *o) { return ol_MoveLayerInFrontOf(&tob, l, o); }
+LONG ShowLayer(struct Layer *l, struct Layer *o) { return ol_ShowLayer(&tob, l, o); }
+LONG HideLayer(struct Layer *l) { return ol_HideLayer(&tob, l); }
+struct Region *InstallClipRegion(struct Layer *l, struct Region *r) { return ol_InstallClipRegion(&tob, l, r); }
+LONG BeginUpdate(struct Layer *l) { return ol_BeginUpdate(&tob, l); }
+void EndUpdate(struct Layer *l, UWORD flag) { ol_EndUpdate(&tob, l, flag); }
+void ScrollLayer(LONG d, struct Layer *l, LONG dx, LONG dy) { (void)d; ol_ScrollLayer(&tob, l, dx, dy); }
+struct Layer *WhichLayer(struct Layer_Info *li, LONG x, LONG y) { return ol_WhichLayer(&tob, li, x, y); }
+LONG LayerOccluded(struct Layer *l) { return ol_LayerOccluded(&tob, l); }
+void LockLayer(LONG d, struct Layer *l) { (void)d; ol_LockLayer(&tob, l); }
+void UnlockLayer(struct Layer *l) { ol_UnlockLayer(&tob, l); }
+void LockLayers(struct Layer_Info *li) { ol_LockLayers(&tob, li); }
+void UnlockLayers(struct Layer_Info *li) { ol_UnlockLayers(&tob, li); }
+void DoHookClipRects(struct Hook *h, struct RastPort *rp, struct Rectangle *r) { ol_DoHookClipRects(&tob, h, rp, r); }
+void SortLayerCR(struct Layer *l, LONG dx, LONG dy) { ol_SortLayerCR(&tob, l, dx, dy); }
+void SwapBitsRastPortClipRect(struct RastPort *rp, struct ClipRect *cr) { ol_SwapBitsRastPortClipRect(&tob, rp, cr); }
 

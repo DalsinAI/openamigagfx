@@ -30,6 +30,7 @@
 #include <proto/exec.h>
 
 #include "layers_lib.h"
+#include "ol_sysbase.h"
 
 #define REG(r, decl) register decl __asm(#r)
 
@@ -39,13 +40,13 @@
 #define LIB_VERSION  47
 #define LIB_REVISION 100                /* 47.100 and up: OpenLayers */
 
+/* Everything the library keeps is here (or on the stack): no writable
+ * globals, so it can run from ROM. Each call reaches it through A6. */
 struct OLBase {
     struct Library lib;
     BPTR seglist;
+    struct ol_base ol;          /* graphics.library's base, the Layer_Infos' extra state */
 };
-
-struct ExecBase *SysBase;
-struct GfxBase *GfxBase;
 
 /* Run as a program, the library does nothing. This must stay the first code
  * in the file (-fno-toplevel-reorder). */
@@ -80,9 +81,11 @@ ULONG ol_call_hook(struct Hook *hook, APTR obj, APTR msg)
 static struct Library *lib_init(REG(d0, struct OLBase *base), REG(a0, BPTR seglist),
                                 REG(a6, struct ExecBase *sys))
 {
-    SysBase = sys;
-    if (!(GfxBase = (struct GfxBase *)OpenLibrary((CONST_STRPTR)gfx_name, 39))) return 0;
-    ol_init();
+    struct GfxBase *gfx;
+
+    (void)sys;
+    if (!(gfx = (struct GfxBase *)OpenLibrary((CONST_STRPTR)gfx_name, 39))) return 0;
+    ol_init(&base->ol, gfx);
     base->seglist = seglist;
     base->lib.lib_Node.ln_Type = NT_LIBRARY;
     base->lib.lib_Node.ln_Name = (char *)lib_name;
@@ -123,7 +126,7 @@ static BPTR lib_expunge(REG(a6, struct OLBase *base))
     }
     seglist = base->seglist;
     Remove(&base->lib.lib_Node);
-    CloseLibrary((struct Library *)GfxBase);
+    CloseLibrary((struct Library *)base->ol.gfx);
     FreeMem((UBYTE *)base - base->lib.lib_NegSize, base->lib.lib_NegSize + base->lib.lib_PosSize);
     return seglist;
 }
@@ -135,130 +138,136 @@ static ULONG lib_null(void)
 
 /* ---- The calls, in their documented registers ------------------------ */
 
-static void L_InitLayers(REG(a0, struct Layer_Info *li)) { ol_InitLayers(li); }
+/* Each takes the library base in A6, as every library call does, and hands
+ * the calls its state. */
+#define OB REG(a6, struct OLBase *base)
+
+static void L_InitLayers(REG(a0, struct Layer_Info *li), OB) { ol_InitLayers(&base->ol, li); }
 
 static struct Layer *L_CreateUpfrontLayer(REG(a0, struct Layer_Info *li), REG(a1, struct BitMap *bm),
                                           REG(d0, LONG x0), REG(d1, LONG y0), REG(d2, LONG x1), REG(d3, LONG y1),
-                                          REG(d4, LONG flags), REG(a2, struct BitMap *sbm))
+                                          REG(d4, LONG flags), REG(a2, struct BitMap *sbm), OB)
 {
-    return ol_CreateUpfrontLayer(li, bm, x0, y0, x1, y1, flags, sbm);
+    return ol_CreateUpfrontLayer(&base->ol, li, bm, x0, y0, x1, y1, flags, sbm);
 }
 
 static struct Layer *L_CreateBehindLayer(REG(a0, struct Layer_Info *li), REG(a1, struct BitMap *bm),
                                          REG(d0, LONG x0), REG(d1, LONG y0), REG(d2, LONG x1), REG(d3, LONG y1),
-                                         REG(d4, LONG flags), REG(a2, struct BitMap *sbm))
+                                         REG(d4, LONG flags), REG(a2, struct BitMap *sbm), OB)
 {
-    return ol_CreateBehindLayer(li, bm, x0, y0, x1, y1, flags, sbm);
+    return ol_CreateBehindLayer(&base->ol, li, bm, x0, y0, x1, y1, flags, sbm);
 }
 
-static LONG L_UpfrontLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l)) { return ol_UpfrontLayer(l); }
-static LONG L_BehindLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l)) { return ol_BehindLayer(l); }
+static LONG L_UpfrontLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l), OB) { return ol_UpfrontLayer(&base->ol, l); }
+static LONG L_BehindLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l), OB) { return ol_BehindLayer(&base->ol, l); }
 
-static LONG L_MoveLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l), REG(d0, LONG dx), REG(d1, LONG dy))
+static LONG L_MoveLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l), REG(d0, LONG dx), REG(d1, LONG dy), OB)
 {
-    return ol_MoveLayer(l, dx, dy);
+    return ol_MoveLayer(&base->ol, l, dx, dy);
 }
 
-static LONG L_SizeLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l), REG(d0, LONG dx), REG(d1, LONG dy))
+static LONG L_SizeLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l), REG(d0, LONG dx), REG(d1, LONG dy), OB)
 {
-    return ol_SizeLayer(l, dx, dy);
+    return ol_SizeLayer(&base->ol, l, dx, dy);
 }
 
-static void L_ScrollLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l), REG(d0, LONG dx), REG(d1, LONG dy))
+static void L_ScrollLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l), REG(d0, LONG dx), REG(d1, LONG dy), OB)
 {
-    ol_ScrollLayer(l, dx, dy);
+    ol_ScrollLayer(&base->ol, l, dx, dy);
 }
 
-static LONG L_BeginUpdate(REG(a0, struct Layer *l)) { return ol_BeginUpdate(l); }
-static void L_EndUpdate(REG(a0, struct Layer *l), REG(d0, UWORD flag)) { ol_EndUpdate(l, flag); }
-static LONG L_DeleteLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l)) { return ol_DeleteLayer(l); }
-static void L_LockLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l)) { ol_LockLayer(l); }
-static void L_UnlockLayer(REG(a0, struct Layer *l)) { ol_UnlockLayer(l); }
-static void L_LockLayers(REG(a0, struct Layer_Info *li)) { ol_LockLayers(li); }
-static void L_UnlockLayers(REG(a0, struct Layer_Info *li)) { ol_UnlockLayers(li); }
-static void L_LockLayerInfo(REG(a0, struct Layer_Info *li)) { ol_LockLayerInfo(li); }
+static LONG L_BeginUpdate(REG(a0, struct Layer *l), OB) { return ol_BeginUpdate(&base->ol, l); }
+static void L_EndUpdate(REG(a0, struct Layer *l), REG(d0, UWORD flag), OB) { ol_EndUpdate(&base->ol, l, flag); }
+static LONG L_DeleteLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l), OB) { return ol_DeleteLayer(&base->ol, l); }
+static void L_LockLayer(REG(a0, LONG dummy), REG(a1, struct Layer *l), OB) { ol_LockLayer(&base->ol, l); }
+static void L_UnlockLayer(REG(a0, struct Layer *l), OB) { ol_UnlockLayer(&base->ol, l); }
+static void L_LockLayers(REG(a0, struct Layer_Info *li), OB) { ol_LockLayers(&base->ol, li); }
+static void L_UnlockLayers(REG(a0, struct Layer_Info *li), OB) { ol_UnlockLayers(&base->ol, li); }
+static void L_LockLayerInfo(REG(a0, struct Layer_Info *li), OB) { ol_LockLayerInfo(&base->ol, li); }
 
-static void L_SwapBitsRastPortClipRect(REG(a0, struct RastPort *rp), REG(a1, struct ClipRect *cr))
+static void L_SwapBitsRastPortClipRect(REG(a0, struct RastPort *rp), REG(a1, struct ClipRect *cr), OB)
 {
-    ol_SwapBitsRastPortClipRect(rp, cr);
+    ol_SwapBitsRastPortClipRect(&base->ol, rp, cr);
 }
 
-static struct Layer *L_WhichLayer(REG(a0, struct Layer_Info *li), REG(d0, LONG x), REG(d1, LONG y))
+static struct Layer *L_WhichLayer(REG(a0, struct Layer_Info *li), REG(d0, LONG x), REG(d1, LONG y), OB)
 {
-    return ol_WhichLayer(li, x, y);
+    return ol_WhichLayer(&base->ol, li, x, y);
 }
 
-static void L_UnlockLayerInfo(REG(a0, struct Layer_Info *li)) { ol_UnlockLayerInfo(li); }
-static struct Layer_Info *L_NewLayerInfo(void) { return ol_NewLayerInfo(); }
-static void L_DisposeLayerInfo(REG(a0, struct Layer_Info *li)) { ol_DisposeLayerInfo(li); }
-static LONG L_FattenLayerInfo(REG(a0, struct Layer_Info *li)) { return ol_FattenLayerInfo(li); }
-static void L_ThinLayerInfo(REG(a0, struct Layer_Info *li)) { ol_ThinLayerInfo(li); }
+static void L_UnlockLayerInfo(REG(a0, struct Layer_Info *li), OB) { ol_UnlockLayerInfo(&base->ol, li); }
+static struct Layer_Info *L_NewLayerInfo(OB) { return ol_NewLayerInfo(&base->ol); }
+static void L_DisposeLayerInfo(REG(a0, struct Layer_Info *li), OB) { ol_DisposeLayerInfo(&base->ol, li); }
+static LONG L_FattenLayerInfo(REG(a0, struct Layer_Info *li), OB) { return ol_FattenLayerInfo(&base->ol, li); }
+static void L_ThinLayerInfo(REG(a0, struct Layer_Info *li), OB) { ol_ThinLayerInfo(&base->ol, li); }
 
-static LONG L_MoveLayerInFrontOf(REG(a0, struct Layer *l), REG(a1, struct Layer *other))
+static LONG L_MoveLayerInFrontOf(REG(a0, struct Layer *l), REG(a1, struct Layer *other), OB)
 {
-    return ol_MoveLayerInFrontOf(l, other);
+    return ol_MoveLayerInFrontOf(&base->ol, l, other);
 }
 
-static struct Region *L_InstallClipRegion(REG(a0, struct Layer *l), REG(a1, struct Region *region))
+static struct Region *L_InstallClipRegion(REG(a0, struct Layer *l), REG(a1, struct Region *region), OB)
 {
-    return ol_InstallClipRegion(l, region);
+    return ol_InstallClipRegion(&base->ol, l, region);
 }
 
 static LONG L_MoveSizeLayer(REG(a0, struct Layer *l), REG(d0, LONG dx), REG(d1, LONG dy), REG(d2, LONG dw),
-                            REG(d3, LONG dh))
+                            REG(d3, LONG dh), OB)
 {
-    return ol_MoveSizeLayer(l, dx, dy, dw, dh);
+    return ol_MoveSizeLayer(&base->ol, l, dx, dy, dw, dh);
 }
 
 static struct Layer *L_CreateUpfrontHookLayer(REG(a0, struct Layer_Info *li), REG(a1, struct BitMap *bm),
                                               REG(d0, LONG x0), REG(d1, LONG y0), REG(d2, LONG x1),
                                               REG(d3, LONG y1), REG(d4, LONG flags), REG(a3, struct Hook *hook),
-                                              REG(a2, struct BitMap *sbm))
+                                              REG(a2, struct BitMap *sbm), OB)
 {
-    return ol_CreateUpfrontHookLayer(li, bm, x0, y0, x1, y1, flags, hook, sbm);
+    return ol_CreateUpfrontHookLayer(&base->ol, li, bm, x0, y0, x1, y1, flags, hook, sbm);
 }
 
 static struct Layer *L_CreateBehindHookLayer(REG(a0, struct Layer_Info *li), REG(a1, struct BitMap *bm),
                                              REG(d0, LONG x0), REG(d1, LONG y0), REG(d2, LONG x1),
                                              REG(d3, LONG y1), REG(d4, LONG flags), REG(a3, struct Hook *hook),
-                                             REG(a2, struct BitMap *sbm))
+                                             REG(a2, struct BitMap *sbm), OB)
 {
-    return ol_CreateBehindHookLayer(li, bm, x0, y0, x1, y1, flags, hook, sbm);
+    return ol_CreateBehindHookLayer(&base->ol, li, bm, x0, y0, x1, y1, flags, hook, sbm);
 }
 
-static struct Hook *L_InstallLayerHook(REG(a0, struct Layer *l), REG(a1, struct Hook *hook))
+static struct Hook *L_InstallLayerHook(REG(a0, struct Layer *l), REG(a1, struct Hook *hook), OB)
 {
-    return ol_InstallLayerHook(l, hook);
+    return ol_InstallLayerHook(&base->ol, l, hook);
 }
 
-static struct Hook *L_InstallLayerInfoHook(REG(a0, struct Layer_Info *li), REG(a1, struct Hook *hook))
+static struct Hook *L_InstallLayerInfoHook(REG(a0, struct Layer_Info *li), REG(a1, struct Hook *hook), OB)
 {
-    return ol_InstallLayerInfoHook(li, hook);
+    return ol_InstallLayerInfoHook(&base->ol, li, hook);
 }
 
-static void L_SortLayerCR(REG(a0, struct Layer *l), REG(d0, LONG dx), REG(d1, LONG dy))
+static void L_SortLayerCR(REG(a0, struct Layer *l), REG(d0, LONG dx), REG(d1, LONG dy), OB)
 {
-    ol_SortLayerCR(l, dx, dy);
+    ol_SortLayerCR(&base->ol, l, dx, dy);
 }
 
 static void L_DoHookClipRects(REG(a0, struct Hook *hook), REG(a1, struct RastPort *rp),
-                              REG(a2, const struct Rectangle *rect))
+                              REG(a2, const struct Rectangle *rect), OB)
 {
-    ol_DoHookClipRects(hook, rp, rect);
+    ol_DoHookClipRects(&base->ol, hook, rp, rect);
 }
 
-static LONG L_LayerOccluded(REG(a0, struct Layer *l)) { return ol_LayerOccluded(l); }
-static LONG L_HideLayer(REG(a0, struct Layer *l)) { return ol_HideLayer(l); }
+static LONG L_LayerOccluded(REG(a0, struct Layer *l), OB) { return ol_LayerOccluded(&base->ol, l); }
+static LONG L_HideLayer(REG(a0, struct Layer *l), OB) { return ol_HideLayer(&base->ol, l); }
 
-static LONG L_ShowLayer(REG(a0, struct Layer *l), REG(a1, struct Layer *in_front_of))
+static LONG L_ShowLayer(REG(a0, struct Layer *l), REG(a1, struct Layer *in_front_of), OB)
 {
-    return ol_ShowLayer(l, in_front_of);
+    return ol_ShowLayer(&base->ol, l, in_front_of);
 }
 
-static LONG L_SetLayerInfoBounds(REG(a0, struct Layer_Info *li), REG(a1, const struct Rectangle *bounds))
+static LONG L_SetLayerInfoBounds(REG(a0, struct Layer_Info *li), REG(a1, const struct Rectangle *bounds), OB)
 {
-    return ol_SetLayerInfoBounds(li, bounds);
+    return ol_SetLayerInfoBounds(&base->ol, li, bounds);
 }
+
+#undef OB
 
 /* layers.library's LVO order; layers.lvo says the same, line for line. */
 static const APTR lib_vectors[] = {

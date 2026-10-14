@@ -36,6 +36,9 @@
 #include "layers_lib.h"
 #include "layers_core.h"
 
+/* the library's state, as the library base holds it (graphics is the model here) */
+static struct ol_base tob;
+
 /* Under qemu-m68k the host NDK has the Amiga's layout: check it. */
 #ifdef __mc68000__
 #define AT(t, f, o) typedef char at_##t##_##f[offsetof(struct t, f) == (o) ? 1 : -1]
@@ -520,8 +523,8 @@ static void make_layer(void)
     }
     doing = "create";
     scribble_and_shoot();
-    l = rnd() % 2 ? ol_CreateUpfrontHookLayer(li, screen, x0, y0, x1, y1, flags, h, sbm)
-                  : ol_CreateBehindHookLayer(li, screen, x0, y0, x1, y1, flags, h, sbm);
+    l = rnd() % 2 ? ol_CreateUpfrontHookLayer(&tob, li, screen, x0, y0, x1, y1, flags, h, sbm)
+                  : ol_CreateBehindHookLayer(&tob, li, screen, x0, y0, x1, y1, flags, h, sbm);
     if (!l) { if (sbm) FreeBitMap(sbm); return; }
     lay[nlay] = l;
     lhook[nlay] = h;
@@ -548,7 +551,7 @@ static void delete_layer(int i)
     int k;
     doing = "delete";
     scribble_and_shoot();
-    if (!ol_DeleteLayer(lay[i])) { fail("DeleteLayer failed", 0, 0); return; }
+    if (!ol_DeleteLayer(&tob, lay[i])) { fail("DeleteLayer failed", 0, 0); return; }
     if (supers[i]) FreeBitMap(supers[i]);
     for (k = i; k + 1 < nlay; k++) {
         lay[k] = lay[k + 1]; lhook[k] = lhook[k + 1]; hidden[k] = hidden[k + 1]; supers[k] = supers[k + 1];
@@ -584,8 +587,8 @@ static void draw_through(int i, const struct Region *region, int damage_only)
         }
     /* back to the full list, then what was drawn must be there and the
      * rest as it was */
-    if (damage_only) ol_EndUpdate(l, FALSE);
-    else ol_InstallClipRegion(l, 0);
+    if (damage_only) ol_EndUpdate(&tob, l, FALSE);
+    else ol_InstallClipRegion(&tob, l, 0);
     checks++;
     for (v = 0; v < h; v++)
         for (u = 0; u < w; u++) {
@@ -602,42 +605,42 @@ static void one_round(int round)
 {
     int step, i;
     nlay = 0;
-    li = ol_NewLayerInfo();
+    li = ol_NewLayerInfo(&tob);
     if (!li) { fail("NewLayerInfo", 0, 0); return; }
     ihook = rnd() % 2 ? LAYERS_BACKFILL : &hooks[2];
-    ol_InstallLayerInfoHook(li, ihook);
+    ol_InstallLayerInfoHook(&tob, li, ihook);
     for (step = 0; step < 40; step++) {
         int op = (int)(rnd() % 14);
         if (nlay == 0 || (op == 0 && nlay < MAXL)) { make_layer(); continue; }
         i = (int)(rnd() % (uint32_t)nlay);
         scribble_and_shoot();
         switch (op) {
-        case 1: doing = "upfront"; ol_UpfrontLayer(lay[i]); break;
-        case 2: doing = "behind"; ol_BehindLayer(lay[i]); break;
+        case 1: doing = "upfront"; ol_UpfrontLayer(&tob, lay[i]); break;
+        case 2: doing = "behind"; ol_BehindLayer(&tob, lay[i]); break;
         case 3: case 4: {
             LONG dx = (LONG)(rnd() % 41) - 20, dy = (LONG)(rnd() % 31) - 15;
             doing = "move";
-            ol_MoveLayer(lay[i], dx, dy);
+            ol_MoveLayer(&tob, lay[i], dx, dy);
             break;
         }
         case 5: {
             LONG dx = (LONG)(rnd() % 41) - 20, dy = (LONG)(rnd() % 31) - 15;
             doing = "size";
-            ol_SizeLayer(lay[i], dx, dy);
+            ol_SizeLayer(&tob, lay[i], dx, dy);
             break;
         }
         case 6: {
             LONG dx = (LONG)(rnd() % 21) - 10, dy = (LONG)(rnd() % 21) - 10, dw = (LONG)(rnd() % 21) - 10,
                  dh = (LONG)(rnd() % 21) - 10;
             doing = "movesize";
-            ol_MoveSizeLayer(lay[i], dx, dy, dw, dh);
+            ol_MoveSizeLayer(&tob, lay[i], dx, dy, dw, dh);
             break;
         }
-        case 7: doing = "infrontof"; ol_MoveLayerInFrontOf(lay[i], lay[rnd() % (uint32_t)nlay]); break;
+        case 7: doing = "infrontof"; ol_MoveLayerInFrontOf(&tob, lay[i], lay[rnd() % (uint32_t)nlay]); break;
         case 8:
             doing = hidden[i] ? "show" : "hide";
-            if (hidden[i]) { ol_ShowLayer(lay[i], 0); hidden[i] = 0; }
-            else { ol_HideLayer(lay[i]); hidden[i] = 1; }
+            if (hidden[i]) { ol_ShowLayer(&tob, lay[i], 0); hidden[i] = 0; }
+            else { ol_HideLayer(&tob, lay[i]); hidden[i] = 1; }
             break;
         case 9: delete_layer(i); continue;
         case 10: {
@@ -651,7 +654,7 @@ static void one_round(int round)
                 r.MaxX = (WORD)(r.MinX + rnd() % 40); r.MaxY = (WORD)(r.MinY + rnd() % 30);
                 OrRectRegion(rg, &r);
             }
-            ol_InstallClipRegion(lay[i], rg);
+            ol_InstallClipRegion(&tob, lay[i], rg);
             draw_through(i, rg, 0);
             DisposeRegion(rg);
             check_locks();
@@ -659,9 +662,9 @@ static void one_round(int round)
         }
         case 11:
             doing = "update";
-            if (ol_BeginUpdate(lay[i])) draw_through(i, 0, 1);
-            else ol_EndUpdate(lay[i], FALSE);
-            if (rnd() % 2) { ol_BeginUpdate(lay[i]); ol_EndUpdate(lay[i], TRUE); }
+            if (ol_BeginUpdate(&tob, lay[i])) draw_through(i, 0, 1);
+            else ol_EndUpdate(&tob, lay[i], FALSE);
+            if (rnd() % 2) { ol_BeginUpdate(&tob, lay[i]); ol_EndUpdate(&tob, lay[i], TRUE); }
             checks++;
             if (lay[i]->DamageList->RegionRectangle && !(lay[i]->Flags & LAYERREFRESH) && 0) fail("damage without LAYERREFRESH", 0, 0);
             check_locks();
@@ -685,7 +688,7 @@ static void one_round(int round)
                         if (before[i].have[v][u] && sx >= 0 && sy >= 0 && sx < SW * 2 && sy < SH * 2)
                             sup[sy][sx] = before[i].v[v][u];
                     }
-                ol_ScrollLayer(l, dx, dy);
+                ol_ScrollLayer(&tob, l, dx, dy);
                 checks++;
                 for (v = 0; v < h; v++)
                     for (u = 0; u < w; u++) {
@@ -703,7 +706,7 @@ static void one_round(int round)
                 LONG x = (LONG)(rnd() % SW), y = (LONG)(rnd() % SH);
                 int k = shown_at(x, y, 999);
                 checks++;
-                if (ol_WhichLayer(li, x, y) != (k < 0 ? 0 : lay[k])) fail("WhichLayer", x, y);
+                if (ol_WhichLayer(&tob, li, x, y) != (k < 0 ? 0 : lay[k])) fail("WhichLayer", x, y);
             }
             continue;
         default: {
@@ -718,7 +721,7 @@ static void one_round(int round)
                     want = 1;
             }
             checks++;
-            if (!ol_LayerOccluded(lay[i]) != !want) fail("LayerOccluded", want, 0);
+            if (!ol_LayerOccluded(&tob, lay[i]) != !want) fail("LayerOccluded", want, 0);
             continue;
         }
         }
@@ -743,7 +746,7 @@ static void one_round(int round)
         doing = "move without memory";
         scribble_and_shoot();
         fail_alloc = 1 + rnd() % 6;
-        ok = (int)ol_MoveLayer(lay[0], 7, 3);
+        ok = (int)ol_MoveLayer(&tob, lay[0], 7, 3);
         fail_alloc = 0;
         if (!ok) {
             checks++;
@@ -753,14 +756,14 @@ static void one_round(int round)
         check_locks();
     }
     while (nlay) delete_layer(0);
-    ol_DisposeLayerInfo(li);
+    ol_DisposeLayerInfo(&tob, li);
     (void)round;
 }
 
 int main(void)
 {
     int round;
-    ol_init();
+    ol_init(&tob, 0);
     hooks[0].h_Entry = (ULONG (*)(void))(void *)fill_hook; hooks[0].h_Data = (APTR)(uintptr_t)11;
     hooks[1].h_Entry = (ULONG (*)(void))(void *)fill_hook; hooks[1].h_Data = (APTR)(uintptr_t)42;
     hooks[2].h_Entry = (ULONG (*)(void))(void *)fill_hook; hooks[2].h_Data = (APTR)(uintptr_t)99;
