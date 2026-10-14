@@ -14,9 +14,13 @@
  * ObtainPen hands out first, what a precision lets ObtainBestPen share,
  * FindColor's distance), ScalerDiv's rounding and BitMapScale's pixels,
  * Flood (connectivity, the outline pen, a short TmpRas), DrawEllipse in
- * COMPLEMENT and INVERSVID, GetRPAttrs' MaxPen and DrawBounds.
- * With PROBE it prints OS 3.2's lines only, to record them.
- *   GfxFaceABITest [PROBE] [LIB=dir]
+ * COMPLEMENT and INVERSVID, GetRPAttrs' MaxPen and DrawBounds, and how
+ * many pens AttachPalExtra shares for a ViewPort of each mode and depth.
+ * With PROBE it prints OS 3.2's lines only, to record them. With SCREENS
+ * it also opens a screen of each depth through intuition (the system's
+ * graphics.library, not opengfx's) and prints its PaletteExtra, and the
+ * Workbench's.
+ *   GfxFaceABITest [PROBE] [SCREENS] [LIB=dir]
  * Answers 0 when nothing differs, 5 when something does. */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -25,11 +29,14 @@
 #include <graphics/rastport.h>
 #include <graphics/rpattr.h>
 #include <graphics/view.h>
+#include <graphics/modeid.h>
 #include <graphics/scale.h>
 #include <graphics/gfxmacros.h>   /* SetDrPt and the other RastPort macros */
 #include <utility/tagitem.h>
+#include <intuition/screens.h>
 #include <dos/dos.h>
 #include <proto/exec.h>
+#include <proto/intuition.h>
 #include <proto/dos.h>
 #include <proto/graphics.h>
 #include <stdio.h>
@@ -39,6 +46,7 @@
 #include <stddef.h>
 
 struct GfxBase *GfxBase;
+struct IntuitionBase *IntuitionBase;
 static int probe;
 
 #define OUTSIZE (256 * 1024)
@@ -175,6 +183,109 @@ static void s_colormap(void)
     FreeColorMap(cm);
 }
 
+/* How many pens a PalExtra shares (pe_SharableColors), for a ViewPort of
+ * each mode and depth, on maps of each size. Each line also has the pen
+ * ObtainPen(-1) hands out first, and whether the map's last pen and the
+ * pen at pe_SharableColors can be had by number. */
+static void share_case(const char *tag, UWORD modes, int depth, int count, int novp)
+{
+    struct ViewPort vp;
+    struct RasInfo ri;
+    struct BitMap bm;
+    struct ColorMap *cm = GetColorMap(count);
+    struct PaletteExtra *pe = 0;
+    LONG first, last, at;
+    if (!cm) { out("SHARE %s count=%d nomap\n", tag, count); return; }
+    InitVPort(&vp);
+    memset(&ri, 0, sizeof ri);
+    InitBitMap(&bm, depth, 320, 1);
+    ri.BitMap = &bm;
+    vp.DWidth = 320; vp.DHeight = 1;
+    vp.Modes = modes;
+    vp.RasInfo = &ri;
+    vp.ColorMap = cm;
+    if (AttachPalExtra(cm, novp ? 0 : &vp) || !(pe = cm->PalExtra)) {
+        out("SHARE %s count=%d nopalextra\n", tag, count);
+        FreeColorMap(cm);
+        return;
+    }
+    out("SHARE %s count=%d sharable=%u nfree=%u nshared=%u first=%u", tag, count, pe->pe_SharableColors,
+        pe->pe_NFree, pe->pe_NShared, pe->pe_FirstFree);
+    first = ObtainPen(cm, -1, 0, 0, 0, 0);
+    last = ObtainPen(cm, count - 1, 0, 0, 0, PEN_NO_SETCOLOR);
+    at = ObtainPen(cm, pe->pe_SharableColors, 0, 0, 0, PEN_NO_SETCOLOR);
+    out(" pen=%ld last=%ld at=%ld\n", first, last, at);
+    FreeColorMap(cm);
+}
+
+static void s_sharable(void)
+{
+    char tag[24];
+    int d;
+    share_case("novp", 0, 4, 256, 1);
+    share_case("depth0", 0, 0, 256, 0);
+    /* a map the depth's size, a map of 32 (GetColorMap's usual), a map of 256 (SA_FullPalette) */
+    for (d = 1; d <= 8; d++) {
+        sprintf(tag, "d%d", d);
+        share_case(tag, 0, d, 1 << d, 0);
+        if (d != 5) share_case(tag, 0, d, 32, 0);
+        if (d != 8) share_case(tag, 0, d, 256, 0);
+    }
+    share_case("ehb6", EXTRA_HALFBRITE, 6, 32, 0);
+    share_case("ehb6", EXTRA_HALFBRITE, 6, 64, 0);
+    share_case("ehb6", EXTRA_HALFBRITE, 6, 256, 0);
+    share_case("ham6", HAM, 6, 16, 0);
+    share_case("ham6", HAM, 6, 32, 0);
+    share_case("ham6", HAM, 6, 256, 0);
+    share_case("ham8", HAM, 8, 64, 0);
+    share_case("ham8", HAM, 8, 256, 0);
+}
+
+static void print_screen_pe(const char *tag, struct Screen *s)
+{
+    struct ColorMap *cm = s->ViewPort.ColorMap;
+    struct PaletteExtra *pe = cm ? cm->PalExtra : 0;
+    struct BitMap *bm = s->ViewPort.RasInfo ? s->ViewPort.RasInfo->BitMap : 0;
+    printf("SCREEN %s depth=%d bmdepth=%d modes=%x modeid=%lx count=%d", tag, s->BitMap.Depth, bm ? bm->Depth : -1,
+           s->ViewPort.Modes, GetVPModeID(&s->ViewPort), cm ? cm->Count : -1);
+    if (pe) printf(" sharable=%u nfree=%u nshared=%u first=%u\n", pe->pe_SharableColors, pe->pe_NFree, pe->pe_NShared,
+                   pe->pe_FirstFree);
+    else printf(" nopalextra\n");
+}
+
+/* Screens of each depth through intuition and the system's graphics, and
+ * the Workbench: the numbers an application sees. */
+static void s_screens(void)
+{
+    static const struct { const char *tag; int depth; ULONG id; } sc[] = {
+        {"d1", 1, HIRES_KEY}, {"d2", 2, HIRES_KEY}, {"d3", 3, HIRES_KEY}, {"d4", 4, HIRES_KEY},
+        {"d5", 5, LORES_KEY}, {"d6", 6, LORES_KEY}, {"d7", 7, LORES_KEY}, {"d8", 8, LORES_KEY},
+        {"ehb6", 6, EXTRAHALFBRITE_KEY}, {"ham6", 6, HAM_KEY}, {"ham8", 8, HAM_KEY | LORES_KEY},
+    };
+    struct Screen *wb;
+    char tag[40];
+    int i, full;
+    if (!(IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library", 39))) {
+        printf("SCREEN nointuition\n");
+        return;
+    }
+    if ((wb = LockPubScreen(0))) {
+        print_screen_pe("workbench", wb);
+        UnlockPubScreen(0, wb);
+    }
+    for (i = 0; i < (int)(sizeof sc / sizeof sc[0]); i++)
+        for (full = 0; full < 2; full++) {
+            struct Screen *s;
+            sprintf(tag, "%s%s", sc[i].tag, full ? "-full" : "");
+            s = OpenScreenTags(0, SA_Depth, sc[i].depth, SA_DisplayID, sc[i].id, SA_Quiet, TRUE, SA_Behind, TRUE,
+                               SA_ShowTitle, FALSE, SA_FullPalette, full, TAG_DONE);
+            if (!s) { printf("SCREEN %s noscreen\n", tag); continue; }
+            print_screen_pe(tag, s);
+            CloseScreen(s);
+        }
+    CloseLibrary((struct Library *)IntuitionBase);
+}
+
 static void s_scale(void)
 {
     static const UWORD f[][3] = {{10, 3, 2}, {10, 2, 3}, {7, 1, 2}, {5, 1, 2}, {1, 1, 3}, {0, 5, 3}, {100, 7, 9}, {16383, 16383, 1}};
@@ -290,6 +401,7 @@ static void run(void)
     s_initrp();
     s_bitmaps();
     s_colormap();
+    s_sharable();
     s_scale();
     s_flood();
     s_ellipse();
@@ -309,11 +421,12 @@ int main(int argc, char **argv)
     static char path[256];
     char *dir = 0, *os_out = 0;
     struct GfxBase *os_base = 0, *our_base = 0;
-    int i, rc = 0;
+    int i, rc = 0, screens = 0;
     ULONG os_len = 0, diffs = 0, lines = 0;
 
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "PROBE")) probe = 1;
+        else if (!strcmp(argv[i], "SCREENS")) screens = 1;
         else if (!strncmp(argv[i], "LIB=", 4)) dir = argv[i] + 4;
     }
     out_buf = AllocMem(OUTSIZE, MEMF_PUBLIC);
@@ -340,6 +453,7 @@ int main(int argc, char **argv)
     if (our_base) printf("ours: %s", (char *)our_base->LibNode.lib_IdString);
 
     GfxBase = os_base;
+    if (screens) s_screens();
     run();
     if (!our_base) {
         fwrite(out_buf, 1, out_len, stdout);

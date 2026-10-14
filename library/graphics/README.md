@@ -15,7 +15,7 @@
 | `check_regs.py` | Checks every area's `gfx_lvo_` definitions against graphics.lvo (the registers, in order) and OWNERS.md (the owning directory). |
 | `build-amiga.sh` | The os32-gcc16 stove (GCC 16.2.0-open2). Runs the fd and register checks, then builds `graphics.library` (the replacement), `opengfx.library` (the same code under its own name) and `GfxFaceABITest`, with nm checks: nothing undefined, no data or bss, no C++ runtime. |
 | `tests/m68k/test_gfx_face.sh` | The face and the core under qemu-m68k on the 68000, 68020 and 68040 at -O0 and -O2. Every line is checked against an independent python3 model. It also runs check_regs and gen_stubs, and nm checks on the face. |
-| `tests/GfxFaceABITest.c` | One script run through OS 3.2's graphics.library and then through opengfx.library, line by line. `PROBE` records OS 3.2's answers for the corners marked "ABI test" below. |
+| `tests/GfxFaceABITest.c` | One script run through OS 3.2's graphics.library and then through opengfx.library, line by line. `PROBE` records OS 3.2's answers for the corners marked "ABI test" below. `SCREENS` also prints the PaletteExtra of a screen of each depth, and the Workbench's. |
 
 ## How drawing goes
 
