@@ -52,10 +52,14 @@
 #include <graphics/regions.h>
 #include <utility/hooks.h>
 #include <proto/exec.h>
+/* graphics.library's base is the library's (struct ol_base), never a
+ * global: every function here that calls graphics has olb in scope */
+#define GRAPHICS_BASE_NAME (olb->gfx)
 #include <proto/graphics.h>
 
 #include "layers_core.h"
 #include "layers_lib.h"
+#include "ol_sysbase.h"
 
 /* NDK 3.2's ClipRect says obscured with a LONG, zero or not (it was lobs,
  * the layer in front, before V45). OS 3.2 puts 1 there (measured). */
@@ -95,9 +99,6 @@ struct OInfo {
     UWORD fattened;             /* FattenLayerInfo less ThinLayerInfo */
 };
 
-static struct OInfo *infos;
-static struct SignalSemaphore infolock;
-
 #define OL(l) ((struct OLayer *)(l))
 
 /* OS 3.2 marks a hidden layer in its Flags with this bit */
@@ -118,38 +119,39 @@ static const struct lc_mem mem = { m_alloc, m_free, 0 };
 
 static void *zalloc(ULONG size) { return AllocMem(size, MEMF_PUBLIC | MEMF_CLEAR); }
 
-void ol_init(void)
+void ol_init(struct ol_base *olb, struct GfxBase *gfx)
 {
-    InitSemaphore(&infolock);
-    infos = 0;
+    olb->gfx = gfx;
+    InitSemaphore(&olb->infolock);
+    olb->infos = 0;
 }
 
-static struct OInfo *info_of(struct Layer_Info *li, int make)
+static struct OInfo *info_of(struct ol_base *olb, struct Layer_Info *li, int make)
 {
     struct OInfo *i;
-    ObtainSemaphore(&infolock);
-    for (i = infos; i && i->li != li; i = i->next)
+    ObtainSemaphore(&olb->infolock);
+    for (i = olb->infos; i && i->li != li; i = i->next)
         ;
     if (!i && make && (i = zalloc(sizeof *i))) {
         i->li = li;
-        i->next = infos;
-        infos = i;
+        i->next = olb->infos;
+        olb->infos = i;
     }
-    ReleaseSemaphore(&infolock);
+    ReleaseSemaphore(&olb->infolock);
     return i;
 }
 
-static void info_drop(struct Layer_Info *li)
+static void info_drop(struct ol_base *olb, struct Layer_Info *li)
 {
     struct OInfo **pp, *i;
-    ObtainSemaphore(&infolock);
-    for (pp = &infos; (i = *pp) && i->li != li; pp = &i->next)
+    ObtainSemaphore(&olb->infolock);
+    for (pp = &olb->infos; (i = *pp) && i->li != li; pp = &i->next)
         ;
     if (i) {
         *pp = i->next;
         FreeMem(i, sizeof *i);
     }
-    ReleaseSemaphore(&infolock);
+    ReleaseSemaphore(&olb->infolock);
 }
 
 /* ---- rectangles -------------------------------------------------------- */
@@ -219,7 +221,7 @@ static struct place place_of(struct Layer *l, const struct OClip *c, LONG ox, LO
 
 /* Where a super bitmap layer's super bitmap reaches, in screen
  * coordinates. */
-static struct lc_rect super_ext(struct Layer *l)
+static struct lc_rect super_ext(struct ol_base *olb, struct Layer *l)
 {
     struct lc_rect e;
     e.x0 = l->bounds.MinX - l->Scroll_X;
@@ -231,15 +233,16 @@ static struct lc_rect super_ext(struct Layer *l)
 
 /* Copies r (screen coordinates where it lands) from s, where it was
  * (ddx, ddy) away, to d. */
-static void copy(const struct place *s, const struct place *d, const struct lc_rect *r, LONG ddx, LONG ddy)
+static void copy(struct ol_base *olb, const struct place *s, const struct place *d, const struct lc_rect *r, LONG ddx,
+                 LONG ddy)
 {
     BltBitMap(s->bm, r->x0 - ddx + s->dx, r->y0 - ddy + s->dy, d->bm, r->x0 + d->dx, r->y0 + d->dy,
               r->x1 - r->x0 + 1, r->y1 - r->y0 + 1, 0xC0, 0xFF, 0);
 }
 
 /* Fills r of a place with a hook: l's (or the Layer_Info's, l 0). */
-static void backfill_with(struct Layer *l, struct RastPort *from, struct Hook *hook, const struct place *p,
-                          const struct lc_rect *r)
+static void backfill_with(struct ol_base *olb, struct Layer *l, struct RastPort *from, struct Hook *hook,
+                          const struct place *p, const struct lc_rect *r)
 {
     struct ol_hookmsg msg;
     struct RastPort rp;
@@ -267,21 +270,22 @@ static void backfill_with(struct Layer *l, struct RastPort *from, struct Hook *h
 /* As OS 3.2 calls a layer's hook: the layer's own RastPort, Layer and all
  * (a hook draws with Layer cleared, in its own copy); the Layer_Info's
  * hook, l 0, a bare one. */
-static void backfill(struct Layer *l, struct Hook *hook, const struct place *p, const struct lc_rect *r)
+static void backfill(struct ol_base *olb, struct Layer *l, struct Hook *hook, const struct place *p,
+                     const struct lc_rect *r)
 {
-    backfill_with(l, l ? l->rp : 0, hook, p, r);
+    backfill_with(olb, l, l ? l->rp : 0, hook, p, r);
 }
 
 /* ---- ClipRect lists ---------------------------------------------------- */
 
-static struct BitMap *backing(struct Layer *l, const struct lc_rect *r)
+static struct BitMap *backing(struct ol_base *olb, struct Layer *l, const struct lc_rect *r)
 {
     struct BitMap *scr = l->rp->BitMap;
     return AllocBitMap((ULONG)(r->x1 - (r->x0 & ~15) + 1), (ULONG)(r->y1 - r->y0 + 1),
                        GetBitMapAttr(scr, BMA_DEPTH), 0, scr);
 }
 
-static void free_list(struct OClip *c)
+static void free_list(struct ol_base *olb, struct OClip *c)
 {
     while (c) {
         struct OClip *n = (struct OClip *)c->cr.Next;
@@ -306,7 +310,8 @@ static struct OClip *add_clip(struct OClip **head, struct OClip **tail, const st
 
 /* The pieces of list cut to set (screen coordinates), each with its own
  * copy of a backing bitmap's pixels. */
-static int make_sub(struct Layer *l, struct OClip *list, const struct lc_rects *set, struct OClip **out)
+static int make_sub(struct ol_base *olb, struct Layer *l, struct OClip *list, const struct lc_rects *set,
+                    struct OClip **out)
 {
     struct OClip *head = 0, *tail = 0, *c;
     uint32_t i;
@@ -322,46 +327,46 @@ static int make_sub(struct Layer *l, struct OClip *list, const struct lc_rects *
             s->cr.obscured = c->cr.obscured;
             if (c->kind == K_BM) {
                 struct place ps, pd;
-                if (!(s->cr.BitMap = backing(l, &m))) goto fail;
+                if (!(s->cr.BitMap = backing(olb, l, &m))) goto fail;
                 ps = place_of(l, c, 0, 0);
                 pd = place_of(l, s, 0, 0);
-                copy(&ps, &pd, &m, 0, 0);
+                copy(olb, &ps, &pd, &m, 0, 0);
             }
         }
     }
     *out = head;
     return 0;
 fail:
-    free_list(head);
+    free_list(olb, head);
     *out = 0;
     return -1;
 }
 
 /* Puts a cut list's pixels back into the pieces it came from, and frees it. */
-static void drop_sub(struct Layer *l, struct OClip *list)
+static void drop_sub(struct ol_base *olb, struct Layer *l, struct OClip *list)
 {
     struct OClip *c;
     for (c = list; c; c = (struct OClip *)c->cr.Next)
         if (c->kind == K_BM && c->cr.BitMap && c->parent) {
             struct lc_rect b = lr(&c->cr.bounds);
             struct place ps = place_of(l, c, 0, 0), pd = place_of(l, c->parent, 0, 0);
-            copy(&ps, &pd, &b, 0, 0);
+            copy(olb, &ps, &pd, &b, 0, 0);
         }
-    free_list(list);
+    free_list(olb, list);
 }
 
 /* The layer's list in use goes back to its full list. */
-static void detach(struct Layer *l)
+static void detach(struct ol_base *olb, struct Layer *l)
 {
     struct OLayer *o = OL(l);
-    if (o->update_list) drop_sub(l, o->update_list);
-    if (o->region_list) drop_sub(l, o->region_list);
+    if (o->update_list) drop_sub(olb, l, o->update_list);
+    if (o->region_list) drop_sub(olb, l, o->region_list);
     o->update_list = o->region_list = 0;
     l->ClipRect = o->full ? &o->full->cr : 0;
 }
 
 /* The clip region's list, then the update's, made again from the full one. */
-static void attach(struct Layer *l)
+static void attach(struct ol_base *olb, struct Layer *l)
 {
     struct OLayer *o = OL(l);
     struct OClip *base = o->full;
@@ -371,13 +376,14 @@ static void attach(struct Layer *l)
     l->Flags &= ~LAYER_CLIPRECTS_LOST;
     if (l->ClipRegion) {
         if (region_set(l->ClipRegion, l->bounds.MinX - l->Scroll_X, l->bounds.MinY - l->Scroll_Y, &s) ||
-            make_sub(l, base, &s, &o->region_list))
+            make_sub(olb, l, base, &s, &o->region_list))
             l->Flags |= LAYER_CLIPRECTS_LOST;
         else
             base = o->region_list;
     }
     if (l->Flags & LAYERUPDATING) {
-        if (region_set(l->DamageList, l->bounds.MinX, l->bounds.MinY, &s) || make_sub(l, base, &s, &o->update_list))
+        if (region_set(l->DamageList, l->bounds.MinX, l->bounds.MinY, &s) ||
+            make_sub(olb, l, base, &s, &o->update_list))
             l->Flags |= LAYER_CLIPRECTS_LOST;
         l->ClipRect = o->update_list ? &o->update_list->cr : 0;
     } else {
@@ -444,6 +450,7 @@ static ULONG count_layers(struct Layer_Info *li)
 /* ---- begin and finish -------------------------------------------------- */
 
 struct change {
+    struct ol_base *olb;
     struct Layer_Info *li;
     struct Layer **old;         /* the stack before, front to back */
     ULONG nold;
@@ -460,13 +467,14 @@ static void lock_info_all(struct Layer_Info *li)
 
 /* Locks everything and notes the stack. Answers -1 when there is no memory
  * for the note (nothing is locked then). */
-static int begin(struct Layer_Info *li, struct change *ch)
+static int begin(struct ol_base *olb, struct Layer_Info *li, struct change *ch)
 {
     struct Layer *l;
     struct OInfo *inf;
     ULONG i;
 
     lock_info_all(li);
+    ch->olb = olb;
     ch->li = li;
     ch->nold = count_layers(li);
     ch->old = 0;
@@ -479,9 +487,9 @@ static int begin(struct Layer_Info *li, struct change *ch)
         ch->old[i] = l;
         OL(l)->oldb = l->bounds;
         OL(l)->oldhidden = OL(l)->hidden;
-        detach(l);
+        detach(olb, l);
     }
-    inf = info_of(li, 0);
+    inf = info_of(olb, li, 0);
     ch->have_screen = 0;
     if (inf && inf->have_bounds) {
         ch->screen = lr(&inf->bounds);
@@ -543,6 +551,7 @@ static void free_stack(struct lc_layer *st, struct Layer **ord, ULONG n)
 /* Layer ord[idx]'s new full list, into its fresh. */
 static int build(struct change *ch, struct lc_layer *st, struct Layer **ord, ULONG n, ULONG idx)
 {
+    struct ol_base *olb = ch->olb;
     struct Layer *l = ord[idx];
     struct OLayer *o = OL(l);
     struct lc_pieces p;
@@ -574,7 +583,7 @@ static int build(struct change *ch, struct lc_layer *st, struct Layer **ord, ULO
                     c->parent = old;    /* finish copies nothing into it */
                     break;
                 }
-        if (!c->cr.BitMap && !(c->cr.BitMap = backing(l, &p.p[i].r))) goto fail;
+        if (!c->cr.BitMap && !(c->cr.BitMap = backing(olb, l, &p.p[i].r))) goto fail;
     }
     lc_pieces_free(&p);
     o->fresh = head;
@@ -583,7 +592,7 @@ fail:
     lc_pieces_free(&p);
     for (c = head; c; c = (struct OClip *)c->cr.Next)
         if (c->parent) { c->parent->stolen = 0; c->stolen = 1; }
-    free_list(head);
+    free_list(olb, head);
     return -1;
 }
 
@@ -650,7 +659,7 @@ fail:
 }
 
 /* Phase a, b or c (above) for layer l. */
-static void transfer(struct Layer *l, int phase)
+static void transfer(struct ol_base *olb, struct Layer *l, int phase)
 {
     struct OLayer *o = OL(l);
     struct OClip *n, *c;
@@ -664,7 +673,7 @@ static void transfer(struct Layer *l, int phase)
         s.dx = s.dy = 0;
         for (i = 0; i < o->movers.n; i++) {
             m = shift(o->movers.r[i], ddx, ddy);
-            copy(&s, &s, &m, ddx, ddy);
+            copy(olb, &s, &s, &m, ddx, ddy);
         }
         return;
     }
@@ -681,14 +690,14 @@ static void transfer(struct Layer *l, int phase)
             if (phase == 'a' && c->kind == K_SUPER && n->kind == K_SUPER) continue;
             if (phase == 'c' && c->kind == K_SCREEN) continue;
             ps = place_of(l, c, o->oldb.MinX, o->oldb.MinY);
-            copy(&ps, &pd, &m, ddx, ddy);
+            copy(olb, &ps, &pd, &m, ddx, ddy);
         }
     }
 }
 
 /* Phase d for layer l: what none of its old pieces had (plan's fills). */
 
-static void fill_fresh(struct Layer *l, int made)
+static void fill_fresh(struct ol_base *olb, struct Layer *l, int made)
 {
     struct OLayer *o = OL(l);
     struct OClip *n, sup;
@@ -723,22 +732,22 @@ static void fill_fresh(struct Layer *l, int made)
             struct lc_rect e, m, out[4];
             uint32_t k, nk = 1;
             if (!l->SuperBitMap) continue;
-            e = super_ext(l);
+            e = super_ext(olb, l);
             out[0] = *r;
             if (lc_meet(r, &e, &m)) {
-                copy(&ps, &pd, &m, 0, 0);
+                copy(olb, &ps, &pd, &m, 0, 0);
                 nk = lc_cut(r, &m, out);
             }
-            for (k = 0; k < nk; k++) backfill(l, LAYERS_BACKFILL, &pd, &out[k]);
+            for (k = 0; k < nk; k++) backfill(olb, l, LAYERS_BACKFILL, &pd, &out[k]);
         } else if (made) {
             /* a layer just made gets its hook with its own RastPort; a
              * simple refresh one a second time with a bare one (so the
              * hook draws), its refresh bits up meanwhile, as on OS 3.2 */
-            backfill(l, l->BackFill, &pd, r);
+            backfill(olb, l, l->BackFill, &pd, r);
             if (simple) {
                 UWORD f = l->Flags;
                 l->Flags |= LAYERREFRESH | LAYERIREFRESH | LAYERIREFRESH2;
-                backfill_with(l, 0, l->BackFill, &pd, r);
+                backfill_with(olb, l, 0, l->BackFill, &pd, r);
                 l->Flags = f;
             }
         } else if (moved(l)) {
@@ -750,9 +759,9 @@ static void fill_fresh(struct Layer *l, int made)
             trp = *l->rp;
             tmp.rp = &trp;
             trp.Layer = &tmp;
-            backfill_with(&tmp, &trp, l->BackFill, &pd, r);
+            backfill_with(olb, &tmp, &trp, l->BackFill, &pd, r);
         } else {
-            backfill_with(l, 0, l->BackFill, &pd, r);
+            backfill_with(olb, l, 0, l->BackFill, &pd, r);
         }
     }
     if (simple && o->hidden && !made && moved(l)) {
@@ -779,7 +788,7 @@ static void fill_fresh(struct Layer *l, int made)
                 break;
         if (!n) continue;
         pd = place_of(l, n, l->bounds.MinX, l->bounds.MinY);
-        backfill_with(l, 0, l->BackFill, &pd, r);
+        backfill_with(olb, l, 0, l->BackFill, &pd, r);
     }
 }
 
@@ -817,6 +826,7 @@ static int uncovered_by(const struct lc_layer *st, ULONG n, const struct lc_laye
  * 0, or -1 when memory ran out and the stack is back as it was. */
 static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
 {
+    struct ol_base *olb = ch->olb;
     struct lc_layer *st, *ost = 0;
     struct Layer **ord, **oord = 0, *l;
     ULONG n, on = 0, i;
@@ -839,7 +849,7 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
                 struct OClip *c;
                 for (c = OL(ord[i])->fresh; c; c = (struct OClip *)c->cr.Next)
                     if (c->parent) { c->parent->stolen = 0; c->stolen = 1; }
-                free_list(OL(ord[i])->fresh);
+                free_list(olb, OL(ord[i])->fresh);
                 OL(ord[i])->fresh = 0;
             }
             free_stack(st, ord, n);
@@ -869,7 +879,7 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
             struct OClip *c;
             for (c = OL(ord[k])->fresh; c; c = (struct OClip *)c->cr.Next)
                 if (c->parent) { c->parent->stolen = 0; c->stolen = 1; }
-            free_list(OL(ord[k])->fresh);
+            free_list(olb, OL(ord[k])->fresh);
             OL(ord[k])->fresh = 0;
         }
         free_stack(st, ord, n);
@@ -878,11 +888,11 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
 
     /* the pixels */
     for (phase = 'a'; phase <= 'c'; phase++)
-        for (i = 0; i < n; i++) transfer(ord[i], phase);
+        for (i = 0; i < n; i++) transfer(olb, ord[i], phase);
     /* simple refresh layers' new parts, the screen uncovered, then the
      * others' new parts: the order OS 3.2 calls the hooks in */
     for (i = 0; i < n; i++)
-        if (!(ord[i]->Flags & (LAYERSMART | LAYERSUPER))) fill_fresh(ord[i], ord[i] == made);
+        if (!(ord[i]->Flags & (LAYERSMART | LAYERSUPER))) fill_fresh(olb, ord[i], ord[i] == made);
     if (who.n) {
         /* OS 3.2 hands the Layer_Info's hook a stand-in for the layer that
          * left each piece: that layer as it was (its old bounds), simple
@@ -890,7 +900,7 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
         struct place p;
         struct Layer tmp;
         struct RastPort trp;
-        inf = info_of(ch->li, 0);
+        inf = info_of(olb, ch->li, 0);
         p.bm = (n ? ord[0] : gone)->rp->BitMap;
         p.dx = p.dy = 0;
         for (i = 0; i < who.n; i++) {
@@ -910,12 +920,12 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
             }
             /* the stand-in's RastPort names it; a layer itself comes with
              * a bare one */
-            if (moved(was)) backfill_with(&tmp, &trp, inf ? inf->hook : LAYERS_BACKFILL, &p, &who.p[i].r);
-            else backfill_with(was, was == gone ? was->rp : 0, inf ? inf->hook : LAYERS_BACKFILL, &p, &who.p[i].r);
+            if (moved(was)) backfill_with(olb, &tmp, &trp, inf ? inf->hook : LAYERS_BACKFILL, &p, &who.p[i].r);
+            else backfill_with(olb, was, was == gone ? was->rp : 0, inf ? inf->hook : LAYERS_BACKFILL, &p, &who.p[i].r);
         }
     }
     for (i = 0; i < n; i++) {
-        if (ord[i]->Flags & (LAYERSMART | LAYERSUPER)) fill_fresh(ord[i], ord[i] == made);
+        if (ord[i]->Flags & (LAYERSMART | LAYERSUPER)) fill_fresh(olb, ord[i], ord[i] == made);
         lc_free(&OL(ord[i])->movers);
         lc_free(&OL(ord[i])->fills);
         lc_free(&OL(ord[i])->fills_y);
@@ -928,10 +938,10 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
         struct OLayer *o = OL(ord[i]);
         struct OClip *c;
         for (c = o->fresh; c; c = (struct OClip *)c->cr.Next) c->parent = 0;
-        free_list(o->full);
+        free_list(olb, o->full);
         o->full = o->fresh;
         o->fresh = 0;
-        attach(ord[i]);
+        attach(olb, ord[i]);
     }
     free_stack(st, ord, n);
     end(ch);
@@ -953,7 +963,7 @@ undo_nothing:
         x->Width = (WORD)(x->bounds.MaxX - x->bounds.MinX + 1);
         x->Height = (WORD)(x->bounds.MaxY - x->bounds.MinY + 1);
         set_hidden(x, OL(x)->oldhidden);
-        attach(x);
+        attach(olb, x);
     }
     ch->li->top_layer = ch->nold ? ch->old[0] : 0;
     end(ch);
@@ -962,7 +972,7 @@ undo_nothing:
 
 /* ---- Layer_Info -------------------------------------------------------- */
 
-void ol_InitLayers(struct Layer_Info *li)
+void ol_InitLayers(struct ol_base *olb, struct Layer_Info *li)
 {
     UBYTE *p = (UBYTE *)li;
     ULONG i;
@@ -970,26 +980,26 @@ void ol_InitLayers(struct Layer_Info *li)
     InitSemaphore(&li->Lock);
 }
 
-LONG ol_FattenLayerInfo(struct Layer_Info *li)
+LONG ol_FattenLayerInfo(struct ol_base *olb, struct Layer_Info *li)
 {
-    struct OInfo *i = info_of(li, 1);
+    struct OInfo *i = info_of(olb, li, 1);
     if (!i) return FALSE;
     i->fattened++;
     return TRUE;
 }
 
-void ol_ThinLayerInfo(struct Layer_Info *li)
+void ol_ThinLayerInfo(struct ol_base *olb, struct Layer_Info *li)
 {
-    struct OInfo *i = info_of(li, 0);
-    if (i && i->fattened > 0 && --i->fattened == 0) info_drop(li);
+    struct OInfo *i = info_of(olb, li, 0);
+    if (i && i->fattened > 0 && --i->fattened == 0) info_drop(olb, li);
 }
 
-struct Layer_Info *ol_NewLayerInfo(void)
+struct Layer_Info *ol_NewLayerInfo(struct ol_base *olb)
 {
     struct Layer_Info *li = zalloc(sizeof *li);
     if (!li) return 0;
-    ol_InitLayers(li);
-    if (!ol_FattenLayerInfo(li)) {
+    ol_InitLayers(olb, li);
+    if (!ol_FattenLayerInfo(olb, li)) {
         FreeMem(li, sizeof *li);
         return 0;
     }
@@ -997,32 +1007,32 @@ struct Layer_Info *ol_NewLayerInfo(void)
     return li;
 }
 
-void ol_DisposeLayerInfo(struct Layer_Info *li)
+void ol_DisposeLayerInfo(struct ol_base *olb, struct Layer_Info *li)
 {
-    info_drop(li);
+    info_drop(olb, li);
     if (li->Flags & NEWLAYERINFO_CALLED) FreeMem(li, sizeof *li);
 }
 
-void ol_LockLayerInfo(struct Layer_Info *li) { ObtainSemaphore(&li->Lock); }
-void ol_UnlockLayerInfo(struct Layer_Info *li) { ReleaseSemaphore(&li->Lock); }
-void ol_LockLayer(struct Layer *l) { ObtainSemaphore(&l->Lock); }
-void ol_UnlockLayer(struct Layer *l) { ReleaseSemaphore(&l->Lock); }
+void ol_LockLayerInfo(struct ol_base *olb, struct Layer_Info *li) { ObtainSemaphore(&li->Lock); }
+void ol_UnlockLayerInfo(struct ol_base *olb, struct Layer_Info *li) { ReleaseSemaphore(&li->Lock); }
+void ol_LockLayer(struct ol_base *olb, struct Layer *l) { ObtainSemaphore(&l->Lock); }
+void ol_UnlockLayer(struct ol_base *olb, struct Layer *l) { ReleaseSemaphore(&l->Lock); }
 
-void ol_LockLayers(struct Layer_Info *li)
+void ol_LockLayers(struct ol_base *olb, struct Layer_Info *li)
 {
     lock_info_all(li);
 }
 
-void ol_UnlockLayers(struct Layer_Info *li)
+void ol_UnlockLayers(struct ol_base *olb, struct Layer_Info *li)
 {
     struct Layer *l;
     for (l = li->top_layer; l; l = l->back) ReleaseSemaphore(&l->Lock);
     ReleaseSemaphore(&li->Lock);
 }
 
-struct Hook *ol_InstallLayerInfoHook(struct Layer_Info *li, struct Hook *hook)
+struct Hook *ol_InstallLayerInfoHook(struct ol_base *olb, struct Layer_Info *li, struct Hook *hook)
 {
-    struct OInfo *i = info_of(li, 1);
+    struct OInfo *i = info_of(olb, li, 1);
     struct Hook *old;
     if (!i) return LAYERS_BACKFILL;
     ObtainSemaphore(&li->Lock);
@@ -1032,13 +1042,13 @@ struct Hook *ol_InstallLayerInfoHook(struct Layer_Info *li, struct Hook *hook)
     return old;
 }
 
-LONG ol_SetLayerInfoBounds(struct Layer_Info *li, const struct Rectangle *bounds)
+LONG ol_SetLayerInfoBounds(struct ol_base *olb, struct Layer_Info *li, const struct Rectangle *bounds)
 {
     struct change ch;
-    struct OInfo *i = info_of(li, 1);
+    struct OInfo *i = info_of(olb, li, 1);
     struct Rectangle ob;
     UBYTE had;
-    if (!i || begin(li, &ch)) return FALSE;
+    if (!i || begin(olb, li, &ch)) return FALSE;
     ob = i->bounds;
     had = i->have_bounds;
     if (bounds) { i->bounds = *bounds; i->have_bounds = 1; ch.screen = lr(bounds); ch.have_screen = 1; }
@@ -1053,8 +1063,8 @@ LONG ol_SetLayerInfoBounds(struct Layer_Info *li, const struct Rectangle *bounds
 
 /* ---- making and deleting layers ---------------------------------------- */
 
-static struct Layer *create(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1, LONG y1, LONG flags,
-                            struct Hook *hook, struct BitMap *sbm, int upfront)
+static struct Layer *create(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1,
+                            LONG y1, LONG flags, struct Hook *hook, struct BitMap *sbm, int upfront)
 {
     struct OLayer *o;
     struct Layer *l;
@@ -1080,7 +1090,7 @@ static struct Layer *create(struct Layer_Info *li, struct BitMap *bm, LONG x0, L
     InitSemaphore(&l->Lock);
     o->oldb = l->bounds;
 
-    if (begin(li, &ch)) goto fail;
+    if (begin(olb, li, &ch)) goto fail;
     link_before(li, l, upfront ? front_spot(li, l) : back_spot(li, l));
     if (finish(&ch, l, 0)) goto fail;   /* finish took l out again */
     return l;
@@ -1090,43 +1100,43 @@ fail:
     return 0;
 }
 
-struct Layer *ol_CreateUpfrontHookLayer(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1,
-                                        LONG y1, LONG flags, struct Hook *hook, struct BitMap *sbm)
+struct Layer *ol_CreateUpfrontHookLayer(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, LONG x0,
+                                        LONG y0, LONG x1, LONG y1, LONG flags, struct Hook *hook, struct BitMap *sbm)
 {
-    return create(li, bm, x0, y0, x1, y1, flags, hook, sbm, 1);
+    return create(olb, li, bm, x0, y0, x1, y1, flags, hook, sbm, 1);
 }
 
-struct Layer *ol_CreateBehindHookLayer(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1,
-                                       LONG y1, LONG flags, struct Hook *hook, struct BitMap *sbm)
+struct Layer *ol_CreateBehindHookLayer(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0,
+                                       LONG x1, LONG y1, LONG flags, struct Hook *hook, struct BitMap *sbm)
 {
-    return create(li, bm, x0, y0, x1, y1, flags, hook, sbm, 0);
+    return create(olb, li, bm, x0, y0, x1, y1, flags, hook, sbm, 0);
 }
 
-struct Layer *ol_CreateUpfrontLayer(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1, LONG y1,
-                                    LONG flags, struct BitMap *sbm)
+struct Layer *ol_CreateUpfrontLayer(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0,
+                                    LONG x1, LONG y1, LONG flags, struct BitMap *sbm)
 {
-    return create(li, bm, x0, y0, x1, y1, flags, LAYERS_BACKFILL, sbm, 1);
+    return create(olb, li, bm, x0, y0, x1, y1, flags, LAYERS_BACKFILL, sbm, 1);
 }
 
-struct Layer *ol_CreateBehindLayer(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1, LONG y1,
-                                   LONG flags, struct BitMap *sbm)
+struct Layer *ol_CreateBehindLayer(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0,
+                                   LONG x1, LONG y1, LONG flags, struct BitMap *sbm)
 {
-    return create(li, bm, x0, y0, x1, y1, flags, LAYERS_BACKFILL, sbm, 0);
+    return create(olb, li, bm, x0, y0, x1, y1, flags, LAYERS_BACKFILL, sbm, 0);
 }
 
-LONG ol_DeleteLayer(struct Layer *l)
+LONG ol_DeleteLayer(struct ol_base *olb, struct Layer *l)
 {
     struct Layer_Info *li = l->LayerInfo;
     struct OLayer *o = OL(l);
     struct change ch;
 
-    if (begin(li, &ch)) return FALSE;
+    if (begin(olb, li, &ch)) return FALSE;
     /* a smart layer's pixels are lost with it: nothing to copy back, so
      * its list goes before the others are cut */
     unlink_layer(li, l);
     o->hidden = 1;
     if (finish(&ch, 0, l)) return FALSE;
-    free_list(o->full);
+    free_list(olb, o->full);
     if (l->DamageList) DisposeRegion(l->DamageList);
     FreeMem(o, sizeof *o);
     return TRUE;
@@ -1134,22 +1144,22 @@ LONG ol_DeleteLayer(struct Layer *l)
 
 /* ---- depth ------------------------------------------------------------- */
 
-static LONG restack(struct Layer *l, struct Layer *at, int use_at, int front)
+static LONG restack(struct ol_base *olb, struct Layer *l, struct Layer *at, int use_at, int front)
 {
     struct Layer_Info *li = l->LayerInfo;
     struct change ch;
     if (OL(l)->hidden) return TRUE;     /* OS 3.2 leaves a hidden layer where it is */
-    if (begin(li, &ch)) return FALSE;
+    if (begin(olb, li, &ch)) return FALSE;
     unlink_layer(li, l);
     if (!use_at) at = front ? front_spot(li, l) : back_spot(li, l);
     link_before(li, l, at);
     return finish(&ch, 0, 0) ? FALSE : TRUE;
 }
 
-LONG ol_UpfrontLayer(struct Layer *l) { return restack(l, 0, 0, 1); }
-LONG ol_BehindLayer(struct Layer *l) { return restack(l, 0, 0, 0); }
+LONG ol_UpfrontLayer(struct ol_base *olb, struct Layer *l) { return restack(olb, l, 0, 0, 1); }
+LONG ol_BehindLayer(struct ol_base *olb, struct Layer *l) { return restack(olb, l, 0, 0, 0); }
 
-LONG ol_MoveLayerInFrontOf(struct Layer *l, struct Layer *other)
+LONG ol_MoveLayerInFrontOf(struct ol_base *olb, struct Layer *l, struct Layer *other)
 {
     struct Layer *at = other, *x;
     if (other == l) return TRUE;
@@ -1160,14 +1170,14 @@ LONG ol_MoveLayerInFrontOf(struct Layer *l, struct Layer *other)
     } else if (other && !backdrop(other)) {
         at = first_backdrop(l->LayerInfo, l);
     }
-    return restack(l, at, 1, 0);
+    return restack(olb, l, at, 1, 0);
 }
 
-LONG ol_HideLayer(struct Layer *l)
+LONG ol_HideLayer(struct ol_base *olb, struct Layer *l)
 {
     struct change ch;
     if (OL(l)->hidden) return TRUE;
-    if (begin(l->LayerInfo, &ch)) return FALSE;
+    if (begin(olb, l->LayerInfo, &ch)) return FALSE;
     set_hidden(l, 1);
     /* OS 3.2 moves a hidden layer to the very back */
     unlink_layer(l->LayerInfo, l);
@@ -1175,11 +1185,11 @@ LONG ol_HideLayer(struct Layer *l)
     return finish(&ch, 0, 0) ? FALSE : TRUE;
 }
 
-LONG ol_ShowLayer(struct Layer *l, struct Layer *in_front_of)
+LONG ol_ShowLayer(struct ol_base *olb, struct Layer *l, struct Layer *in_front_of)
 {
     struct Layer_Info *li = l->LayerInfo;
     struct change ch;
-    if (begin(li, &ch)) return FALSE;
+    if (begin(olb, li, &ch)) return FALSE;
     set_hidden(l, 0);
     if (in_front_of != l) {
         unlink_layer(li, l);
@@ -1190,7 +1200,7 @@ LONG ol_ShowLayer(struct Layer *l, struct Layer *in_front_of)
     return finish(&ch, 0, 0) ? FALSE : TRUE;
 }
 
-LONG ol_LayerOccluded(struct Layer *l)
+LONG ol_LayerOccluded(struct ol_base *olb, struct Layer *l)
 {
     struct Layer *f;
     struct lc_rect b = lr(&l->bounds);
@@ -1204,7 +1214,7 @@ LONG ol_LayerOccluded(struct Layer *l)
     return r;
 }
 
-struct Layer *ol_WhichLayer(struct Layer_Info *li, LONG x, LONG y)
+struct Layer *ol_WhichLayer(struct ol_base *olb, struct Layer_Info *li, LONG x, LONG y)
 {
     struct Layer *l;
     ObtainSemaphore(&li->Lock);
@@ -1218,7 +1228,7 @@ struct Layer *ol_WhichLayer(struct Layer_Info *li, LONG x, LONG y)
 
 /* ---- moving and sizing ------------------------------------------------- */
 
-LONG ol_MoveSizeLayer(struct Layer *l, LONG dx, LONG dy, LONG dw, LONG dh)
+LONG ol_MoveSizeLayer(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy, LONG dw, LONG dh)
 {
     struct change ch;
     LONG w = l->bounds.MaxX - l->bounds.MinX + 1 + dw, h = l->bounds.MaxY - l->bounds.MinY + 1 + dh;
@@ -1227,7 +1237,7 @@ LONG ol_MoveSizeLayer(struct Layer *l, LONG dx, LONG dy, LONG dw, LONG dh)
         (w + l->Scroll_X > (LONG)GetBitMapAttr(l->SuperBitMap, BMA_WIDTH) ||
          h + l->Scroll_Y > (LONG)GetBitMapAttr(l->SuperBitMap, BMA_HEIGHT)))
         return FALSE;
-    if (begin(l->LayerInfo, &ch)) return FALSE;
+    if (begin(olb, l->LayerInfo, &ch)) return FALSE;
     l->bounds.MinX += (WORD)dx;
     l->bounds.MinY += (WORD)dy;
     l->bounds.MaxX = (WORD)(l->bounds.MinX + w - 1);
@@ -1243,16 +1253,22 @@ LONG ol_MoveSizeLayer(struct Layer *l, LONG dx, LONG dy, LONG dw, LONG dh)
     return TRUE;
 }
 
-LONG ol_MoveLayer(struct Layer *l, LONG dx, LONG dy) { return ol_MoveSizeLayer(l, dx, dy, 0, 0); }
-LONG ol_SizeLayer(struct Layer *l, LONG dx, LONG dy) { return ol_MoveSizeLayer(l, 0, 0, dx, dy); }
+LONG ol_MoveLayer(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy)
+{
+    return ol_MoveSizeLayer(olb, l, dx, dy, 0, 0);
+}
+LONG ol_SizeLayer(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy)
+{
+    return ol_MoveSizeLayer(olb, l, 0, 0, dx, dy);
+}
 
-void ol_ScrollLayer(struct Layer *l, LONG dx, LONG dy)
+void ol_ScrollLayer(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy)
 {
     struct OLayer *o = OL(l);
     struct OClip *c;
 
     ObtainSemaphore(&l->Lock);
-    detach(l);
+    detach(olb, l);
     if ((l->Flags & LAYERSUPER) && l->SuperBitMap) {
         /* every piece into the super bitmap, then back from the new place
          * (where the super bitmap reaches): OS 3.2 does not clamp */
@@ -1266,62 +1282,62 @@ void ol_ScrollLayer(struct Layer *l, LONG dx, LONG dy)
                 l->Scroll_X += (WORD)dx;
                 l->Scroll_Y += (WORD)dy;
             }
-            ext = super_ext(l);
+            ext = super_ext(olb, l);
             for (c = o->full; c; c = (struct OClip *)c->cr.Next) {
                 struct lc_rect b = lr(&c->cr.bounds);
                 if (c->kind == K_NONE || !lc_meet(&b, &ext, &b)) continue;
                 ps = place_of(l, c, 0, 0);
                 pd = place_of(l, &sup, l->bounds.MinX, l->bounds.MinY);
-                if (way) copy(&pd, &ps, &b, 0, 0);
-                else copy(&ps, &pd, &b, 0, 0);
+                if (way) copy(olb, &pd, &ps, &b, 0, 0);
+                else copy(olb, &ps, &pd, &b, 0, 0);
             }
         }
     } else {
         l->Scroll_X += (WORD)dx;
         l->Scroll_Y += (WORD)dy;
     }
-    attach(l);
+    attach(olb, l);
     ReleaseSemaphore(&l->Lock);
 }
 
 /* ---- clip regions, updates and hooks ----------------------------------- */
 
-struct Region *ol_InstallClipRegion(struct Layer *l, struct Region *region)
+struct Region *ol_InstallClipRegion(struct ol_base *olb, struct Layer *l, struct Region *region)
 {
     struct Region *old;
     ObtainSemaphore(&l->Lock);
-    detach(l);
+    detach(olb, l);
     old = l->ClipRegion;
     l->ClipRegion = region;
-    attach(l);
+    attach(olb, l);
     ReleaseSemaphore(&l->Lock);
     return old;
 }
 
-LONG ol_BeginUpdate(struct Layer *l)
+LONG ol_BeginUpdate(struct ol_base *olb, struct Layer *l)
 {
     LONG ok;
     ObtainSemaphore(&l->Lock);
-    detach(l);
+    detach(olb, l);
     l->Flags |= LAYERUPDATING;
-    attach(l);
+    attach(olb, l);
     ok = !(l->Flags & LAYER_CLIPRECTS_LOST);
     ReleaseSemaphore(&l->Lock);
     return ok;
 }
 
-void ol_EndUpdate(struct Layer *l, UWORD flag)
+void ol_EndUpdate(struct ol_base *olb, struct Layer *l, UWORD flag)
 {
     ObtainSemaphore(&l->Lock);
-    detach(l);
+    detach(olb, l);
     l->Flags &= ~LAYERUPDATING;
     /* LAYERREFRESH stays: Intuition clears it, as with OS 3.2 */
     if (flag) ClearRegion(l->DamageList);
-    attach(l);
+    attach(olb, l);
     ReleaseSemaphore(&l->Lock);
 }
 
-struct Hook *ol_InstallLayerHook(struct Layer *l, struct Hook *hook)
+struct Hook *ol_InstallLayerHook(struct ol_base *olb, struct Layer *l, struct Hook *hook)
 {
     struct Hook *old;
     ObtainSemaphore(&l->Lock);
@@ -1331,7 +1347,7 @@ struct Hook *ol_InstallLayerHook(struct Layer *l, struct Hook *hook)
     return old;
 }
 
-void ol_DoHookClipRects(struct Hook *hook, struct RastPort *rp, const struct Rectangle *rect)
+void ol_DoHookClipRects(struct ol_base *olb, struct Hook *hook, struct RastPort *rp, const struct Rectangle *rect)
 {
     struct Layer *l = rp->Layer;
     struct lc_rect want = lr(rect), m;
@@ -1345,7 +1361,7 @@ void ol_DoHookClipRects(struct Hook *hook, struct RastPort *rp, const struct Rec
         all.x0 = all.y0 = 0;
         all.x1 = (LONG)GetBitMapAttr(rp->BitMap, BMA_WIDTH) - 1;
         all.y1 = (LONG)GetBitMapAttr(rp->BitMap, BMA_HEIGHT) - 1;
-        if (lc_meet(&want, &all, &m)) backfill(0, hook, &p, &m);
+        if (lc_meet(&want, &all, &m)) backfill(olb, 0, hook, &p, &m);
         return;
     }
     ObtainSemaphore(&l->Lock);
@@ -1364,7 +1380,7 @@ void ol_DoHookClipRects(struct Hook *hook, struct RastPort *rp, const struct Rec
         } else {
             continue;
         }
-        backfill(l, hook, &p, &m);
+        backfill(olb, l, hook, &p, &m);
     }
     /* OS 3.2 also hands a super bitmap layer's hook the rectangle in the
      * super bitmap: the part in the layer's window, then the rest */
@@ -1375,23 +1391,23 @@ void ol_DoHookClipRects(struct Hook *hook, struct RastPort *rp, const struct Rec
         p.bm = l->SuperBitMap;
         p.dx = l->Scroll_X - l->bounds.MinX;
         p.dy = l->Scroll_Y - l->bounds.MinY;
-        all = super_ext(l);
+        all = super_ext(olb, l);
         if (lc_meet(&want, &all, &want)) {
             win = lr(&l->bounds);
             if (lc_meet(&want, &win, &m)) {
-                backfill(l, hook, &p, &m);
+                backfill(olb, l, hook, &p, &m);
                 n = lc_cut(&want, &m, out);
             } else {
                 out[0] = want;
                 n = 1;
             }
-            for (k = 0; k < n; k++) backfill(l, hook, &p, &out[k]);
+            for (k = 0; k < n; k++) backfill(olb, l, hook, &p, &out[k]);
         }
     }
     ReleaseSemaphore(&l->Lock);
 }
 
-void ol_SortLayerCR(struct Layer *l, LONG dx, LONG dy)
+void ol_SortLayerCR(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy)
 {
     struct ClipRect *cr, **nodes, *prev;
     struct lc_rect *r;
@@ -1422,7 +1438,7 @@ void ol_SortLayerCR(struct Layer *l, LONG dx, LONG dy)
     if (r) FreeMem(r, n * sizeof *r);
 }
 
-void ol_SwapBitsRastPortClipRect(struct RastPort *rp, struct ClipRect *cr)
+void ol_SwapBitsRastPortClipRect(struct ol_base *olb, struct RastPort *rp, struct ClipRect *cr)
 {
     LONG x = cr->bounds.MinX, y = cr->bounds.MinY;
     LONG w = cr->bounds.MaxX - x + 1, h = cr->bounds.MaxY - y + 1, bx = x - (x & ~15);

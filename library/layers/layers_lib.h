@@ -11,6 +11,7 @@
 #define OPENLAYERS_LIB_H
 
 #include <exec/types.h>
+#include <exec/semaphores.h>
 #include <graphics/clip.h>
 #include <graphics/layers.h>
 #include <graphics/rastport.h>
@@ -32,48 +33,60 @@ struct ol_hookmsg {
  * hook, A2 obj, A1 msg. */
 ULONG ol_call_hook(struct Hook *hook, APTR obj, APTR msg);
 
-/* Once, before any call. */
-void ol_init(void);
+/* What the calls keep between them: graphics.library's base and each
+ * Layer_Info's extra state (layers_lib.c's struct OInfo). It lives in the
+ * library base (openlayers_lib.c), or the test's own, and every call is
+ * handed it: no writable globals, so the library can run from ROM. */
+struct GfxBase;
+struct OInfo;
+struct ol_base {
+    struct GfxBase *gfx;
+    struct OInfo *infos;
+    struct SignalSemaphore infolock;
+};
 
-void ol_InitLayers(struct Layer_Info *li);
-struct Layer *ol_CreateUpfrontLayer(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1, LONG y1,
-                                    LONG flags, struct BitMap *sbm);
-struct Layer *ol_CreateBehindLayer(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1, LONG y1,
-                                   LONG flags, struct BitMap *sbm);
-LONG ol_UpfrontLayer(struct Layer *l);
-LONG ol_BehindLayer(struct Layer *l);
-LONG ol_MoveLayer(struct Layer *l, LONG dx, LONG dy);
-LONG ol_SizeLayer(struct Layer *l, LONG dx, LONG dy);
-void ol_ScrollLayer(struct Layer *l, LONG dx, LONG dy);
-LONG ol_BeginUpdate(struct Layer *l);
-void ol_EndUpdate(struct Layer *l, UWORD flag);
-LONG ol_DeleteLayer(struct Layer *l);
-void ol_LockLayer(struct Layer *l);
-void ol_UnlockLayer(struct Layer *l);
-void ol_LockLayers(struct Layer_Info *li);
-void ol_UnlockLayers(struct Layer_Info *li);
-void ol_LockLayerInfo(struct Layer_Info *li);
-void ol_SwapBitsRastPortClipRect(struct RastPort *rp, struct ClipRect *cr);
-struct Layer *ol_WhichLayer(struct Layer_Info *li, LONG x, LONG y);
-void ol_UnlockLayerInfo(struct Layer_Info *li);
-struct Layer_Info *ol_NewLayerInfo(void);
-void ol_DisposeLayerInfo(struct Layer_Info *li);
-LONG ol_FattenLayerInfo(struct Layer_Info *li);
-void ol_ThinLayerInfo(struct Layer_Info *li);
-LONG ol_MoveLayerInFrontOf(struct Layer *l, struct Layer *other);
-struct Region *ol_InstallClipRegion(struct Layer *l, struct Region *region);
-LONG ol_MoveSizeLayer(struct Layer *l, LONG dx, LONG dy, LONG dw, LONG dh);
-struct Layer *ol_CreateUpfrontHookLayer(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1,
-                                        LONG y1, LONG flags, struct Hook *hook, struct BitMap *sbm);
-struct Layer *ol_CreateBehindHookLayer(struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0, LONG x1,
-                                       LONG y1, LONG flags, struct Hook *hook, struct BitMap *sbm);
-struct Hook *ol_InstallLayerHook(struct Layer *l, struct Hook *hook);
-struct Hook *ol_InstallLayerInfoHook(struct Layer_Info *li, struct Hook *hook);
-void ol_SortLayerCR(struct Layer *l, LONG dx, LONG dy);
-void ol_DoHookClipRects(struct Hook *hook, struct RastPort *rp, const struct Rectangle *rect);
-LONG ol_LayerOccluded(struct Layer *l);
-LONG ol_HideLayer(struct Layer *l);
-LONG ol_ShowLayer(struct Layer *l, struct Layer *in_front_of);
-LONG ol_SetLayerInfoBounds(struct Layer_Info *li, const struct Rectangle *bounds);
+/* Once, before any call. */
+void ol_init(struct ol_base *olb, struct GfxBase *gfx);
+
+void ol_InitLayers(struct ol_base *olb, struct Layer_Info *li);
+struct Layer *ol_CreateUpfrontLayer(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0,
+                                    LONG x1, LONG y1, LONG flags, struct BitMap *sbm);
+struct Layer *ol_CreateBehindLayer(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0,
+                                   LONG x1, LONG y1, LONG flags, struct BitMap *sbm);
+LONG ol_UpfrontLayer(struct ol_base *olb, struct Layer *l);
+LONG ol_BehindLayer(struct ol_base *olb, struct Layer *l);
+LONG ol_MoveLayer(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy);
+LONG ol_SizeLayer(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy);
+void ol_ScrollLayer(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy);
+LONG ol_BeginUpdate(struct ol_base *olb, struct Layer *l);
+void ol_EndUpdate(struct ol_base *olb, struct Layer *l, UWORD flag);
+LONG ol_DeleteLayer(struct ol_base *olb, struct Layer *l);
+void ol_LockLayer(struct ol_base *olb, struct Layer *l);
+void ol_UnlockLayer(struct ol_base *olb, struct Layer *l);
+void ol_LockLayers(struct ol_base *olb, struct Layer_Info *li);
+void ol_UnlockLayers(struct ol_base *olb, struct Layer_Info *li);
+void ol_LockLayerInfo(struct ol_base *olb, struct Layer_Info *li);
+void ol_SwapBitsRastPortClipRect(struct ol_base *olb, struct RastPort *rp, struct ClipRect *cr);
+struct Layer *ol_WhichLayer(struct ol_base *olb, struct Layer_Info *li, LONG x, LONG y);
+void ol_UnlockLayerInfo(struct ol_base *olb, struct Layer_Info *li);
+struct Layer_Info *ol_NewLayerInfo(struct ol_base *olb);
+void ol_DisposeLayerInfo(struct ol_base *olb, struct Layer_Info *li);
+LONG ol_FattenLayerInfo(struct ol_base *olb, struct Layer_Info *li);
+void ol_ThinLayerInfo(struct ol_base *olb, struct Layer_Info *li);
+LONG ol_MoveLayerInFrontOf(struct ol_base *olb, struct Layer *l, struct Layer *other);
+struct Region *ol_InstallClipRegion(struct ol_base *olb, struct Layer *l, struct Region *region);
+LONG ol_MoveSizeLayer(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy, LONG dw, LONG dh);
+struct Layer *ol_CreateUpfrontHookLayer(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, LONG x0,
+                                        LONG y0, LONG x1, LONG y1, LONG flags, struct Hook *hook, struct BitMap *sbm);
+struct Layer *ol_CreateBehindHookLayer(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, LONG x0, LONG y0,
+                                       LONG x1, LONG y1, LONG flags, struct Hook *hook, struct BitMap *sbm);
+struct Hook *ol_InstallLayerHook(struct ol_base *olb, struct Layer *l, struct Hook *hook);
+struct Hook *ol_InstallLayerInfoHook(struct ol_base *olb, struct Layer_Info *li, struct Hook *hook);
+void ol_SortLayerCR(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy);
+void ol_DoHookClipRects(struct ol_base *olb, struct Hook *hook, struct RastPort *rp, const struct Rectangle *rect);
+LONG ol_LayerOccluded(struct ol_base *olb, struct Layer *l);
+LONG ol_HideLayer(struct ol_base *olb, struct Layer *l);
+LONG ol_ShowLayer(struct ol_base *olb, struct Layer *l, struct Layer *in_front_of);
+LONG ol_SetLayerInfoBounds(struct ol_base *olb, struct Layer_Info *li, const struct Rectangle *bounds);
 
 #endif
