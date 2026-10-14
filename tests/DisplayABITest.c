@@ -100,7 +100,7 @@ static void s_gfxnew(void)
         struct ExtendedNode *n = GfxNew(t);
         if (!n) { out("GFXNEW %lu none\n", t); continue; }
         out("GFXNEW %lu type %u sub %u subtype %u lib=base:%d init:%d\n", t, n->xln_Type, n->xln_Subsystem,
-            n->xln_Subtype, n->xln_Library == (LONG)GfxBase, n->xln_Init != 0);
+            n->xln_Subtype, (ULONG)n->xln_Library == (ULONG)GfxBase, n->xln_Init != 0);
         if (t == MONITOR_SPEC_TYPE) {
             struct MonitorSpec *ms = (struct MonitorSpec *)n;
             out("GFXNEW MonitorSpec ratio %ld %ld list:%d\n", ms->ratioh, ms->ratiov,
@@ -116,7 +116,7 @@ static void s_database(void)
     struct DisplayInfo di;
     struct DimensionInfo dims;
     struct NameInfo ni;
-    while ((id = NextDisplayInfo(id)) != INVALID_ID && n < 300) {
+    while ((id = NextDisplayInfo(id)) != (ULONG)INVALID_ID && n < 300) {
         DisplayInfoHandle h = FindDisplayInfo(id);
         ULONG a, b, c;
         memset(&di, 0, sizeof di);

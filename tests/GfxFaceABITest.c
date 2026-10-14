@@ -26,6 +26,7 @@
 #include <graphics/rpattr.h>
 #include <graphics/view.h>
 #include <graphics/scale.h>
+#include <graphics/gfxmacros.h>   /* SetDrPt and the other RastPort macros */
 #include <utility/tagitem.h>
 #include <dos/dos.h>
 #include <proto/exec.h>
