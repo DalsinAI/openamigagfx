@@ -128,6 +128,19 @@ static uint32_t e_call_hook(void *ctx, void *hook, void *obj, void *msg)
     return CallHookPkt((struct Hook *)hook, obj, msg);
 }
 
+/* SetRGB32 (-852) through our own vector, with A6 our base: what a driver
+ * patched with SetFunction runs (gfx_env.h) */
+static void e_set_rgb32_vector(void *ctx, void *vp, uint32_t n, uint32_t r, uint32_t g, uint32_t b)
+{
+    register void *a6 __asm("a6") = ctx;
+    register void *a0 __asm("a0") = vp;
+    register uint32_t d0 __asm("d0") = n;
+    register uint32_t d1 __asm("d1") = r;
+    register uint32_t d2 __asm("d2") = g;
+    register uint32_t d3 __asm("d3") = b;
+    __asm volatile ("jsr -852(%%a6)" : "+r"(a0), "+r"(d0), "+r"(d1) : "r"(a6), "r"(d2), "r"(d3) : "a1", "cc", "memory");
+}
+
 static void new_list(struct gfx_list *l, UBYTE type)
 {
     l->head = (struct gfx_node *)&l->tail;
@@ -186,6 +199,7 @@ static struct Library *lib_init(REG(d0, struct gfx_base *base), REG(a0, BPTR seg
     env->call_hook = e_call_hook;
     env->set_int_vector = e_set_int_vector;
     env->type_of_mem = e_type_of_mem;
+    env->set_rgb32_vector = e_set_rgb32_vector;
 
     if (!gfx_init_face(env)) goto fail;
     n = 1;
