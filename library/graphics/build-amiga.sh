@@ -21,6 +21,8 @@ CXX=${CXX:-"$P/bin/m68k-amigaos-g++"}
 NM=${NM:-"$P/bin/m68k-amigaos-nm"}
 OBJDUMP=${OBJDUMP:-"$P/bin/m68k-amigaos-objdump"}
 OUT=${OUT:-"$HERE/build-amiga"}
+# the ROM module's optimisation: -Os (size) by default; OPT=-O2 for speed
+OPT=${OPT:--Os}
 GUEST=${GUEST:?set GUEST to an amigachrome-guest checkout}
 mkdir -p "$OUT/libs" "$OUT/tests" "$OUT/obj"
 
@@ -29,7 +31,7 @@ FD=${FD:-"$P/m68k-amigaos/ndk/lib/fd/graphics_lib.fd"}
 [ -f "$FD" ] || { echo "no $FD: set FD=" >&2; exit 1; }
 python3 "$GUEST/libraries/common/check_fd.py" "$FD" "$HERE/graphics.lvo"
 
-COMMON="-m68000 -O2 -fno-strict-aliasing -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
+COMMON="-m68000 $OPT -fno-strict-aliasing -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
   -fno-lto -fno-builtin -fno-tree-loop-distribute-patterns -Wall -Wextra -Werror -Wno-unused-parameter
   -nostartfiles -nostdlib -I$HERE -I$LIB/core"
 CXXFLAGS="-std=gnu++23 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-asynchronous-unwind-tables
