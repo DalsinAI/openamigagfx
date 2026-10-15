@@ -157,10 +157,20 @@ uint32_t color_dist(const gfx_colormap *cm, uint32_t i, uint32_t r, uint32_t g, 
     return uint32_t(dr * dr + dg * dg + db * db);
 }
 
+// A pen's colour, set by ObtainPen or ObtainBestPenA: on a ViewPort's map,
+// through SetRGB32's vector when the library has one, so a card's driver
+// that patched SetRGB32 shows the colour too (OpenRTG keeps its board's
+// palette that way; without it, the pens icons and OpenMeters obtained
+// were black on an OpenRTG screen).
 void pen_set_color(gfx_env *e, gfx_colormap *cm, uint32_t n, uint32_t r, uint32_t g, uint32_t b)
 {
+    void *vp = cm->palextra ? cm->palextra->viewport : nullptr;
+    if (vp && e->set_rgb32_vector) {
+        e->set_rgb32_vector(e->ctx, vp, n, r, g, b);
+        return;
+    }
     gfx_SetRGB32CM(e, cm, n, r, g, b);
-    if (cm->palextra && cm->palextra->viewport) gfx_hook_vp_colors(e, cm->palextra->viewport, n, 1);
+    if (vp) gfx_hook_vp_colors(e, vp, n, 1);
 }
 
 // The next free pen, highest first (ABI test: which one OS 3.2 hands out

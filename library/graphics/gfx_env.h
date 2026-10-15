@@ -75,6 +75,12 @@ struct gfx_env {
     /* exec's SetIntVector (answers the old one) and TypeOfMem */
     struct gfx_interrupt *(*set_int_vector)(void *ctx, int32_t intnum, struct gfx_interrupt *is);
     uint32_t (*type_of_mem)(void *ctx, const void *p);
+
+    /* SetRGB32 through the library's own vector, so that a card's driver
+     * that patched it (OpenRTG, Picasso96) hears of a colour graphics sets
+     * itself: a pen ObtainPen or ObtainBestPenA gives out. May be 0 (the
+     * tests): the face then sets the map and calls gfx_hook_vp_colors. */
+    void (*set_rgb32_vector)(void *ctx, void *vp, uint32_t n, uint32_t r, uint32_t g, uint32_t b);
 };
 
 /* Each area's private state, by index into gfx_private.area. */
