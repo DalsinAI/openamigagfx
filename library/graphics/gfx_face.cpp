@@ -173,12 +173,17 @@ void pen_set_color(gfx_env *e, gfx_colormap *cm, uint32_t n, uint32_t r, uint32_
     if (vp) gfx_hook_vp_colors(e, vp, n, 1);
 }
 
+// How many pens a PalExtra shares. pe_SharableColors is the highest pen
+// it shares, not a count (ABI test: OS 3.2.3 reads 15 at depth 4 and 255
+// at depth 8), and 0xFFFF when it shares none.
+uint32_t pe_pens(const gfx_paletteextra *pe) { return (uint32_t(pe->sharablecolors) + 1) & 0xFFFF; }
+
 // The next free pen, highest first (ABI test: which one OS 3.2 hands out
 // first), or -1.
 int32_t pen_take_free(gfx_colormap *cm)
 {
     gfx_paletteextra *pe = cm->palextra;
-    for (int32_t i = int32_t(pe->sharablecolors) - 1; i >= 0; i--)
+    for (int32_t i = int32_t(pe_pens(pe)) - 1; i >= 0; i--)
         if (pe->alloclist[i] == PEN_FREE) return i;
     return -1;
 }
@@ -891,23 +896,23 @@ void gfx_LoadRGB32(gfx_env *e, void *vp, const uint32_t *table)
 
 // The pens a PalExtra shares: as many as its ViewPort shows ("the set of
 // available colors will be determined by the mode and depth of the
-// viewport", the autodoc): 1 << depth, 16 for HAM6 and 64 for HAM8, 32 for
-// EHB, never more than the map holds; the whole map without a ViewPort,
-// RasInfo or bitmap. A Workbench opened with SA_FullPalette has a map of
-// 256 for its 16 colours, and pens past 15 drew nothing.
+// viewport", the autodoc): 1 << depth (1 at depth 0), 16 for HAM6 and 64
+// for HAM8, 32 for EHB (ABI test: OS 3.2.3 at each depth). None without a
+// ViewPort (ABI test). Ours: never more than the map holds, where OS 3.2.3
+// writes past it; the whole map without a RasInfo or bitmap.
 static uint32_t vp_pens(const void *vp, uint32_t count)
 {
-    if (!vp) return count;
+    if (!vp) return 0;
     const char *v = static_cast<const char *>(vp);
     uint16_t modes = *reinterpret_cast<const uint16_t *>(v + 32);         // ViewPort.Modes
     const char *ri = *reinterpret_cast<char *const *>(v + 36);            // ViewPort.RasInfo
     if (!ri) return count;
     const gfx_bitmap *bm = *reinterpret_cast<gfx_bitmap *const *>(ri + 4); // RasInfo.BitMap
-    if (!bm || !bm->depth) return count;
+    if (!bm) return count;
     uint32_t n;
     if (modes & 0x0800) n = bm->depth >= 8 ? 64 : 16;  // HAM
     else if (modes & 0x0080) n = 32;                    // EXTRA_HALFBRITE
-    else n = bm->depth >= 16 ? 65536 : 1u << bm->depth;
+    else n = bm->depth >= 16 ? 65535 : 1u << bm->depth;
     return n < count ? n : count;
 }
 
@@ -928,11 +933,13 @@ int32_t gfx_AttachPalExtra(gfx_env *e, gfx_colormap *cm, void *vp)
     e->sem_init(e->ctx, &pe->semaphore);
     // every pen starts free (ours: AllocList holds each pen's state, not
     // OS 3.2's own lists; FirstFree is the pen ObtainPen hands out next)
+    // pe_SharableColors and FirstFree are the highest pen, 0xFFFF for none
+    // (ABI test: 255 for 256 pens, 65535 without a ViewPort)
     uint32_t n = vp_pens(vp, cm->count);
     pe->nfree = uint16_t(n);
     pe->firstfree = uint16_t(n - 1);
     pe->viewport = vp;
-    pe->sharablecolors = uint16_t(n);
+    pe->sharablecolors = uint16_t(n - 1);
     cm->palextra = pe;
     return 0;
 }
@@ -945,7 +952,7 @@ int32_t gfx_ObtainPen(gfx_env *e, gfx_colormap *cm, uint32_t n, uint32_t r, uint
     int32_t pen = -1;
     int32_t want = int32_t(n);
     if (want == -1) want = pen_take_free(cm);
-    if (want >= 0 && want < pe->sharablecolors) {
+    if (want >= 0 && uint32_t(want) < pe_pens(pe)) {
         uint8_t st = pe->alloclist[want];
         if (st == PEN_FREE) {
             pen_mark(cm, uint32_t(want), (flags & GFX_PEN_EXCLUSIVE) ? PEN_EXCL : PEN_SHARED);
@@ -967,7 +974,7 @@ int32_t gfx_ObtainPen(gfx_env *e, gfx_colormap *cm, uint32_t n, uint32_t r, uint
 void gfx_ReleasePen(gfx_env *e, gfx_colormap *cm, uint32_t n)
 {
     gfx_paletteextra *pe = cm ? cm->palextra : nullptr;
-    if (!pe || n >= pe->sharablecolors) return;
+    if (!pe || n >= pe_pens(pe)) return;
     e->sem_obtain(e->ctx, &pe->semaphore);
     if (pe->alloclist[n] == PEN_SHARED) {
         if (pe->refcnt[n] > 1) pe->refcnt[n]--;
@@ -994,7 +1001,7 @@ int32_t gfx_ObtainBestPenA(gfx_env *e, gfx_colormap *cm, uint32_t r, uint32_t g,
     e->sem_obtain(e->ctx, &pe->semaphore);
     int32_t best = -1;
     uint32_t bestd = 0xFFFFFFFFu;
-    for (uint32_t i = 0; i < pe->sharablecolors; i++) {
+    for (uint32_t i = 0; i < pe_pens(pe); i++) {
         if (pe->alloclist[i] != PEN_SHARED) continue;
         uint32_t d = color_dist(cm, i, r, g, b);
         if (d < bestd) { bestd = d; best = int32_t(i); }

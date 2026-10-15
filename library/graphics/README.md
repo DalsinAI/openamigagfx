@@ -15,7 +15,7 @@
 | `check_regs.py` | Checks every area's `gfx_lvo_` definitions against graphics.lvo (the registers, in order) and OWNERS.md (the owning directory). |
 | `build-amiga.sh` | The os32-gcc16 stove (GCC 16.2.0-open2). Runs the fd and register checks, then builds `graphics.library` (the replacement), `opengfx.library` (the same code under its own name) and `GfxFaceABITest`, with nm checks: nothing undefined, no data or bss, no C++ runtime. |
 | `tests/m68k/test_gfx_face.sh` | The face and the core under qemu-m68k on the 68000, 68020 and 68040 at -O0 and -O2. Every line is checked against an independent python3 model. It also runs check_regs and gen_stubs, and nm checks on the face. |
-| `tests/GfxFaceABITest.c` | One script run through OS 3.2's graphics.library and then through opengfx.library, line by line. `PROBE` records OS 3.2's answers for the corners marked "ABI test" below. |
+| `tests/GfxFaceABITest.c` | One script run through OS 3.2's graphics.library and then through opengfx.library, line by line. `PROBE` records OS 3.2's answers for the corners marked "ABI test" below. `SCREENS` also prints the PaletteExtra of a screen of each depth, and the Workbench's. `ONLY=SHARE` runs the pen-sharing lines alone. |
 
 ## How drawing goes
 
@@ -38,7 +38,7 @@ BltBitMap for a bitmap that is not standard planar (more than 8 planes, or BMF_S
 | InitBitMap | Sets BytesPerRow (whole words), Rows, Depth, Flags 0 and pad 0; leaves the planes alone | autodoc; ABI test (INITBM) |
 | AllocRaster size | Rows of whole words (RASSIZE), Chip RAM | documented |
 | AllocBitMap of depth > 8, or width or height 0 | NULL (planar only; RTG is not done yet) | ours; ABI test |
-| AllocBitMap of depth 0 | A BitMap with no planes | ours; ABI test |
+| AllocBitMap of depth 0 | A BitMap with no planes | ours. OS 3.2.3 jumps to an odd address, so GfxFaceABITest leaves it out |
 | AllocBitMap BMF_DISPLAYABLE on AGA | Rows rounded to 64 bits | ABI test |
 | AllocBitMap BMF_INTERLEAVED | One Chip block, BytesPerRow = row × depth, Flags BMF_INTERLEAVED. Depth 1 is not interleaved. With no block that large, it allocates plane by plane | documented; the fallback is ABI test |
 | A failure part way through AllocBitMap | Everything allocated so far is freed, and the call answers NULL | test |
@@ -61,6 +61,7 @@ BltBitMap for a bitmap that is not standard planar (more than 8 planes, or BMF_S
 | ObtainBestPenA with no good match | A free pen with that colour; with none free, the nearest shared pen, or -1 with OBP_FailIfBad | documented |
 | FindColor | Least sum of squared 8-bit differences; the lowest pen wins a tie; maxcolor -1 is every pen | ABI test |
 | AttachPalExtra twice | 0, and the first PaletteExtra is kept | ABI test |
+| The pens a PaletteExtra shares | As many as its ViewPort shows: 1 << depth (1 at depth 0), 32 for EHB, 16 for HAM6, 64 for HAM8. `pe_SharableColors` and `pe_FirstFree` hold the highest of them (255 for 256 pens) and `pe_NFree` the count. With no ViewPort, none: 0xFFFF and 0. Never more than the map holds, and the whole map without a RasInfo or bitmap | ABI test (SHARE, lab t3-sharable on OS 3.2.3, 14 Oct 2026); the map limit and no-RasInfo case are ours |
 | PaletteExtra's lists | AllocList holds each pen's state; NFree, NShared and FirstFree are kept up to date | ours; ABI test |
 | ScalerDiv | factor × numerator / denominator rounded to nearest; a denominator of 0 gives 0 | ABI test |
 | BitMapScale | Destination size from ScalerDiv, written back; nearest source pixel | ABI test (BITMAPSCALE) |
