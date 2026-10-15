@@ -13,6 +13,8 @@ STOVE=${STOVE:-"$HOME/AmigaChrome/stoves/os32-gcc16"}
 P="$STOVE/prefix"
 CC=${CC:-"$P/bin/m68k-amigaos-gcc"}
 OUT=${OUT:-"$HERE/build-amiga"}
+# the ROM module's optimisation: -Os (size) by default; OPT=-O2 for speed
+OPT=${OPT:--Os}
 GUEST=${GUEST:?set GUEST to an amigachrome-guest checkout}
 mkdir -p "$OUT/libs" "$OUT/tests"
 
@@ -21,7 +23,7 @@ FD=${FD:-"$P/m68k-amigaos/ndk/lib/fd/layers_lib.fd"}
 [ -f "$FD" ] || { echo "no $FD: set FD=" >&2; exit 1; }
 python3 "$GUEST/libraries/common/check_fd.py" "$FD" "$HERE/layers.lvo"
 
-LIBFLAGS="-m68000 -O2 -fno-strict-aliasing -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
+LIBFLAGS="-m68000 $OPT -fno-strict-aliasing -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
   -fno-lto -fno-builtin -fno-tree-loop-distribute-patterns -Wall -Wextra -Werror
   -Wno-unused-parameter -nostartfiles -nostdlib"
 for name in layers openlayers; do
