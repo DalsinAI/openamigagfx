@@ -414,8 +414,8 @@ static void t_colors(void)
             case 2: gfx_ReleasePen(&env, cm, i); printf("RP %lu\n", (unsigned long)i); break;
             case 3: case 4: {
                 struct gfx_tagitem t[3];
-                static const int32_t precs[] = {-1, 0, 16, 32};
-                int32_t pr = precs[rn(4)];
+                static const int32_t precs[] = {-1, 0, 4, 16, 32, -5};
+                int32_t pr = precs[rn(6)];
                 uint32_t fb = rn(2);
                 t[0].tag = GFX_OBP_PRECISION; t[0].data = (uint32_t)pr;
                 t[1].tag = GFX_OBP_FAILIFBAD; t[1].data = fb;
@@ -724,6 +724,178 @@ static void t_regions(void)
     }
 }
 
+/* A card's bitmap (as OpenRTG's): GetBitMapAttr's vector answers
+ * BMA_FLAGS without BMF_STANDARD, and the face draws it with RectFill's
+ * vector. Here the "card" is a planar bitmap the test marks, and the
+ * vector draws through the RastPort's DrawMode, Mask and pens pixel by
+ * pixel, counting each pixel. DrawEllipse must come out as the core's
+ * JAM1 ellipse (the ELREF lines the model checks), each pixel once, with no
+ * area pattern; EraseRect unlayered clears to pen 0 through the Mask. */
+static struct gfx_bitmap *card;
+static uint8_t card_hits[50][80];
+static int card_fills, card_patterned;
+static uint32_t t_bm_attr(void *ctx, struct gfx_bitmap *bm, uint32_t attr)
+{
+    (void)ctx;
+    if (attr != GFX_BMA_FLAGS) return 0;
+    return bm == card ? 0 : GFX_BMF_STANDARD;
+}
+static void t_rect_fill(void *ctx, struct gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, int32_t y1)
+{
+    struct gfx_planar p;
+    int32_t x, y;
+    int i;
+    (void)ctx;
+    card_fills++;
+    if (rp->areaptrn) card_patterned++;
+    if (rp->bitmap != card) fail("vector fill off the card", 0);
+    for (i = 0; i < 8; i++) p.planes[i] = i < card->depth ? card->planes[i] : 0;
+    p.bytes_per_row = card->bytesperrow; p.rows = card->rows; p.depth = card->depth; p.interleaved = 0;
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++) {
+            if (x < 0 || y < 0 || x >= 80 || y >= 50) continue;
+            card_hits[y][x]++;
+            if (rp->drawmode & GFX_COMPLEMENT) gfx_planar_put(&p, x, y, 0, rp->mask, GFX_INVERT);
+            else if (rp->drawmode & GFX_INVERSVID) {
+                if (rp->drawmode & GFX_JAM2) gfx_planar_put(&p, x, y, (uint8_t)rp->bgpen, rp->mask, GFX_SET);
+            } else gfx_planar_put(&p, x, y, (uint8_t)rp->fgpen, rp->mask, GFX_SET);
+        }
+}
+
+static void t_foreign(void)
+{
+    int r, x, y;
+    env.bitmap_attr_vector = t_bm_attr;
+    env.rect_fill_vector = t_rect_fill;
+    for (r = 0; r < ROUNDS; r++) {
+        struct gfx_bitmap *ref = gfx_AllocBitMap(&env, 80, 50, 1, GFX_BMF_CLEAR, 0);
+        struct gfx_rastport rr, rp;
+        int32_t xc = (int32_t)rn(90) - 5, yc = (int32_t)rn(60) - 5, a = (int32_t)rn(30), b = (int32_t)rn(20);
+        static const int8_t modes[] = {GFX_JAM1_MODE, GFX_JAM2_MODE, GFX_COMPLEMENT, GFX_INVERSVID | GFX_JAM2};
+        card = gfx_AllocBitMap(&env, 80, 50, 3, 0, 0);
+        for (y = 0; y < 50; y++)
+            for (x = 0; x < 80; x++) card_hits[y][x] = 0;
+        card_fills = card_patterned = 0;
+        gfx_InitRastPort(&env, &rr);
+        rr.bitmap = ref;
+        rr.drawmode = GFX_JAM1_MODE;
+        rr.fgpen = 1;
+        gfx_DrawEllipse(&env, &rr, xc, yc, a, b);
+        gfx_InitRastPort(&env, &rp);
+        rp.bitmap = card;
+        random_bm(card, 80, 50, 8, 10);
+        rp.fgpen = (int8_t)rn(8);
+        rp.bgpen = (int8_t)rn(8);
+        rp.mask = (uint8_t)rn(8);
+        rp.drawmode = modes[rn(4)];
+        rp.areaptrn = (uint16_t *)&rp;      /* must not reach the fills */
+        rp.areaptsz = 1;
+        print_bm("ELREF", ref, 80, 50);
+        print_bm("ELBEFORE", card, 80, 50);
+        gfx_DrawEllipse(&env, &rp, xc, yc, a, b);
+        printf("ELL %d %d %d %d\n", (uint8_t)rp.fgpen, (uint8_t)rp.bgpen, rp.mask, rp.drawmode);
+        print_bm("ELAFTER", card, 80, 50);
+        if (card_patterned) fail("card fill with an area pattern", card_patterned);
+        if (a > 0 && b > 0 && xc >= 0 && yc >= 0 && xc < 80 && yc < 50 && !card_fills) fail("card ellipse not filled", 0);
+        for (y = 0; y < 50; y++)
+            for (x = 0; x < 80; x++)
+                if (card_hits[y][x] > 1) fail("card pixel drawn twice", y * 80 + x);
+        if (rp.areaptrn != (uint16_t *)&rp) fail("card ellipse changed the RastPort", 0);
+        {
+            /* EraseRect, unlayered: pen 0 through the Mask, the rest left */
+            struct gfx_planar p;
+            uint8_t before[50][80];
+            int32_t x0 = (int32_t)rn(70), y0 = (int32_t)rn(40), x1 = x0 + (int32_t)rn(20), y1 = y0 + (int32_t)rn(15);
+            int i;
+            for (i = 0; i < 8; i++) p.planes[i] = i < card->depth ? card->planes[i] : 0;
+            p.bytes_per_row = card->bytesperrow; p.rows = card->rows; p.depth = card->depth; p.interleaved = 0;
+            for (y = 0; y < 50; y++)
+                for (x = 0; x < 80; x++) before[y][x] = (uint8_t)gfx_planar_get(&p, x, y);
+            gfx_EraseRect(&env, &rp, x0, y0, x1, y1);
+            for (y = 0; y < 50; y++)
+                for (x = 0; x < 80; x++) {
+                    uint8_t want = before[y][x];
+                    if (x >= x0 && x <= x1 && y >= y0 && y <= y1) want &= (uint8_t)~(rp.mask & 7);
+                    if (gfx_planar_get(&p, x, y) != want) { fail("card EraseRect", y * 80 + x); y = 50; break; }
+                }
+        }
+        gfx_FreeBitMap(&env, ref);
+        gfx_FreeBitMap(&env, card);
+        arena_reset("card leak");
+    }
+    env.bitmap_attr_vector = 0;
+    env.rect_fill_vector = 0;
+    card = 0;
+}
+
+/* EraseRect with the default backfill in a smart refresh layer with a
+ * covered piece: the piece that shows is cleared to pen 0, the covered
+ * piece's own bitmap is left as it was (measured on OS 3.2.3, DrawProbe) */
+static void t_erase_covered(void)
+{
+    int r;
+    for (r = 0; r < ROUNDS; r++) {
+        struct gfx_bitmap *scr = gfx_AllocBitMap(&env, 96, 48, 3, 0, 0);
+        struct gfx_bitmap *own = gfx_AllocBitMap(&env, 64, 48, 3, 0, 0);
+        struct gfx_layer l;
+        struct gfx_cliprect top, cov;
+        struct gfx_rastport rp;
+        struct gfx_planar ps, po;
+        uint8_t sb[48][96], ob[48][64];
+        int x, y, i, split = 20 + (int)rn(20);
+        random_bm(scr, 96, 48, 8, 14);
+        random_bm(own, 64, 48, 8, 14);
+        {
+            uint8_t *z = (uint8_t *)&l; unsigned k;
+            for (k = 0; k < sizeof l; k++) z[k] = 0;
+            z = (uint8_t *)&top;
+            for (k = 0; k < sizeof top; k++) z[k] = 0;
+            z = (uint8_t *)&cov;
+            for (k = 0; k < sizeof cov; k++) z[k] = 0;
+        }
+        gfx_InitRastPort(&env, &rp);
+        rp.bitmap = scr;
+        rp.layer = &l;
+        rp.mask = 0xFF;
+        l.rp = &rp;
+        l.bounds.minx = 8; l.bounds.miny = 4; l.bounds.maxx = 8 + 59; l.bounds.maxy = 4 + 39;
+        l.flags = GFX_LAYERSMART;
+        l.cliprect = &top;
+        top.next = &cov;
+        top.bounds = l.bounds;
+        top.bounds.maxx = (int16_t)(8 + split - 1);
+        cov.bounds = l.bounds;
+        cov.bounds.minx = (int16_t)(8 + split);
+        cov.lobs = &l;                       /* any layer in front */
+        cov.bitmap = own;
+        t_sem_init(0, &l.lock);
+        for (i = 0; i < 8; i++) {
+            ps.planes[i] = i < 3 ? scr->planes[i] : 0;
+            po.planes[i] = i < 3 ? own->planes[i] : 0;
+        }
+        ps.bytes_per_row = scr->bytesperrow; ps.rows = scr->rows; ps.depth = 3; ps.interleaved = 0;
+        po.bytes_per_row = own->bytesperrow; po.rows = own->rows; po.depth = 3; po.interleaved = 0;
+        for (y = 0; y < 48; y++) {
+            for (x = 0; x < 96; x++) sb[y][x] = (uint8_t)gfx_planar_get(&ps, x, y);
+            for (x = 0; x < 64; x++) ob[y][x] = (uint8_t)gfx_planar_get(&po, x, y);
+        }
+        gfx_EraseRect(&env, &rp, 0, 0, 59, 39);
+        for (y = 0; y < 48; y++) {
+            for (x = 0; x < 96; x++) {
+                uint8_t want = x >= 8 && x < 8 + split && y >= 4 && y < 44 ? 0 : sb[y][x];
+                if (gfx_planar_get(&ps, x, y) != want) { fail("EraseRect shown piece", y * 96 + x); x = 96; y = 48; }
+            }
+        }
+        for (y = 0; y < 48; y++)
+            for (x = 0; x < 64; x++)
+                if (gfx_planar_get(&po, x, y) != ob[y][x]) { fail("EraseRect covered piece", y * 64 + x); x = 64; y = 48; }
+        if (sem_held) fail("layer lock", sem_held);
+        gfx_FreeBitMap(&env, scr);
+        gfx_FreeBitMap(&env, own);
+        arena_reset("erase leak");
+    }
+}
+
 int main(void)
 {
     env_init();
@@ -733,6 +905,8 @@ int main(void)
     t_flood();
     t_scale();
     t_ellipse();
+    t_foreign();
+    t_erase_covered();
     t_layers();
     t_super();
     t_regions();
