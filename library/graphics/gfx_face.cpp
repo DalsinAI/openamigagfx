@@ -107,6 +107,31 @@ void planar_of(const gfx_bitmap *b, gfx_planar *p)
     p->interleaved = (b->flags & GFX_BMF_INTERLEAVED) != 0;
 }
 
+// A bitmap the core does not draw: more than 8 planes, or one a card's
+// driver made, which GetBitMapAttr (through the vector the driver patches)
+// answers BMA_FLAGS for without BMF_STANDARD. Such a bitmap is drawn with
+// the library's own RectFill vector (gfx_env.h). On OS 3.2.3 with OpenRTG,
+// DrawEllipse and EraseRect draw on its screens as on planar ones
+// (tests/DrawProbe.c, truecolour screen and window, 15 Oct 2026).
+bool foreign(gfx_env *e, gfx_bitmap *bm)
+{
+    if (!bm || !e->rect_fill_vector) return false;
+    if (bm->depth > 8) return true;
+    return e->bitmap_attr_vector && !(e->bitmap_attr_vector(e->ctx, bm, GFX_BMA_FLAGS) & GFX_BMF_STANDARD);
+}
+
+// RectFill through the vector on a copy of rp with no area pattern, so
+// every pixel of the rectangle is drawn once through rp's pens, DrawMode
+// and Mask.
+void vector_fill(gfx_env *e, const gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, int32_t y1)
+{
+    gfx_rastport c;
+    assign(c, *rp);
+    c.areaptrn = nullptr;
+    c.areaptsz = 0;
+    e->rect_fill_vector(e->ctx, &c, x0, y0, x1, y1);
+}
+
 // A copy of w x h from (sx, sy) of s to (dx, dy) of d, cut to both.
 void copy_cut(const gfx_bitmap *s, int32_t sx, int32_t sy, const gfx_bitmap *d, int32_t dx, int32_t dy, int32_t w,
               int32_t h)
@@ -155,6 +180,35 @@ uint32_t color_dist(const gfx_colormap *cm, uint32_t i, uint32_t r, uint32_t g, 
     int32_t dr = int32_t(cm_rgb8(cm, i, 8)) - int32_t(r >> 24), dg = int32_t(cm_rgb8(cm, i, 4)) - int32_t(g >> 24),
             db = int32_t(cm_rgb8(cm, i, 0)) - int32_t(b >> 24);
     return uint32_t(dr * dr + dg * dg + db * db);
+}
+
+// The distance ObtainBestPenA and FindColor choose by. Measured on OS
+// 3.2.3 (tests/DrawProbe.c "pens", 15 Oct 2026): on the guns' top 8 bits,
+// 4 times the largest difference, 2 times the middle one and the smallest
+// once. Every one of 160 ObtainBestPenA answers among 16 shared pens
+// follows it, and so do OS 3.2.3's tolerances in 15 directions at 15
+// precisions (gfx_ObtainBestPenA). FindColor: 157 of 160 answers; in the
+// other 3 OS 3.2.3 took a pen 1 to 5 further by it.
+uint32_t color_dist421(const gfx_colormap *cm, uint32_t i, uint32_t r, uint32_t g, uint32_t b)
+{
+    int32_t d[3] = {int32_t(cm_rgb8(cm, i, 8)) - int32_t(r >> 24), int32_t(cm_rgb8(cm, i, 4)) - int32_t(g >> 24),
+                    int32_t(cm_rgb8(cm, i, 0)) - int32_t(b >> 24)};
+    for (int k = 0; k < 3; k++)
+        if (d[k] < 0) d[k] = -d[k];
+    int32_t hi = max32(d[0], max32(d[1], d[2])), lo = min32(d[0], min32(d[1], d[2]));
+    int32_t mid = d[0] + d[1] + d[2] - hi - lo;
+    return uint32_t(4 * hi + 2 * mid + lo);
+}
+
+// Near enough for ObtainBestPenA to share the pen: measured on OS 3.2.3
+// (tests/DrawProbe.c "pens"), 4 * color_dist421 <= (precision + 15)^2 at
+// precisions 0 to 4, 6, 8, 12, 16, 20, 24 and 32; a negative precision
+// (PRECISION_EXACT, -2, -5) shares only the same colour.
+bool near_enough(uint32_t d, int32_t precision)
+{
+    if (precision < 0) return d == 0;
+    uint32_t p = uint32_t(min32(precision, 30000)) + 15;
+    return 4 * d <= p * p;
 }
 
 // A pen's colour, set by ObtainPen or ObtainBestPenA: on a ViewPort's map,
@@ -411,7 +465,9 @@ void solid_span(gfx_rastport *rp, int32_t xa, int32_t xb, int32_t y)
 // calls it: A2 a RastPort with no layer on the piece's bitmap, A1 the
 // layer, the bounds in that bitmap and the layer's own coordinates of
 // their top left.
-void backfill(gfx_env *e, gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, int32_t y1)
+// covered: the default backfill fills the covered parts of a smart
+// refresh layer too (ScrollRasterBF), or leaves them (EraseRect).
+void backfill(gfx_env *e, gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, int32_t y1, bool covered)
 {
     auto *l = static_cast<gfx_layer *>(rp->layer);
     void *hook = l->backfill;
@@ -426,6 +482,24 @@ void backfill(gfx_env *e, gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, 
         if (!cr->lobs) bm = rp->bitmap;
         else if (cr->bitmap) { bm = cr->bitmap; bx = cr->bounds.minx & ~15; by = cr->bounds.miny; }
         else continue;
+        // Measured on OS 3.2.3 (tests/DrawProbe.c EraseRect, 15 Oct 2026):
+        // with the default backfill, EraseRect in a smart refresh window
+        // leaves the part another window covers as it was, on an AGA
+        // screen and on OpenRTG ones alike; it clears what shows.
+        if (!hook && cr->lobs && !covered) continue;
+        if (!hook && foreign(e, bm)) {
+            // a card's bitmap: pen 0 through the Mask with the RectFill
+            // vector, on a RastPort with no layer on the piece's bitmap
+            gfx_rastport frp;
+            zero(&frp, sizeof frp);
+            frp.bitmap = bm;
+            frp.mask = rp->mask;
+            frp.fgpen = 0;
+            frp.drawmode = GFX_JAM2_MODE;
+            frp.lineptrn = 0xFFFF;
+            e->rect_fill_vector(e->ctx, &frp, a - bx, b - by, c - bx, d - by);
+            continue;
+        }
         if (!hook) {
             // ours, ABI test: pen 0 through the RastPort's Mask, as unlayered EraseRect
             gfx_planar p;
@@ -456,9 +530,24 @@ void backfill(gfx_env *e, gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, 
     }
 }
 
-void erase(gfx_env *e, gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, int32_t y1)
+void erase(gfx_env *e, gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, int32_t y1, bool covered)
 {
-    if (!ogfx_rp_EraseRect(rp, x0, y0, x1, y1)) backfill(e, rp, int16_t(x0), int16_t(y0), int16_t(x1), int16_t(y1));
+    if (!rp->layer && foreign(e, rp->bitmap)) {
+        // unlayered on a card's bitmap: pen 0 through the Mask, as the
+        // core clears a planar one (nothing for a negative corner), with
+        // the RectFill vector
+        if (int16_t(x0) < 0 || int16_t(y0) < 0) return;
+        gfx_rastport frp;
+        assign(frp, *rp);
+        frp.areaptrn = nullptr;
+        frp.areaptsz = 0;
+        frp.fgpen = 0;
+        frp.drawmode = GFX_JAM2_MODE;
+        e->rect_fill_vector(e->ctx, &frp, int16_t(x0), int16_t(y0), int16_t(x1), int16_t(y1));
+        return;
+    }
+    if (!ogfx_rp_EraseRect(rp, x0, y0, x1, y1))
+        backfill(e, rp, int16_t(x0), int16_t(y0), int16_t(x1), int16_t(y1), covered);
 }
 
 // ScrollRaster and ScrollRasterBF: the part that stays moves, the rest is
@@ -495,7 +584,7 @@ void scroll(gfx_env *e, gfx_rastport *rp, int32_t dx, int32_t dy, int32_t x0, in
         if (dy < 0) f[n++] = box(x0, y0, x1, y0 - dy - 1);
     }
     for (int i = 0; i < n; i++) {
-        if (bf) { erase(e, rp, f[i].minx, f[i].miny, f[i].maxx, f[i].maxy); continue; }
+        if (bf) { erase(e, rp, f[i].minx, f[i].miny, f[i].maxx, f[i].maxy, true); continue; }
         int8_t pen = rp->fgpen, mode = rp->drawmode;
         uint16_t *ptrn = rp->areaptrn;
         rp->fgpen = rp->bgpen; rp->drawmode = GFX_JAM1_MODE; rp->areaptrn = nullptr;
@@ -994,20 +1083,18 @@ int32_t gfx_ObtainBestPenA(gfx_env *e, gfx_colormap *cm, uint32_t r, uint32_t g,
     int32_t prec = t ? int32_t(t->data) : GFX_PRECISION_IMAGE;
     t = find_tag(GFX_OBP_FAILIFBAD, tags);
     bool failbad = t && t->data;
-    // ABI test: how near is near enough. Ours: each 8-bit gun within
-    // 8 + 2 * precision, exact for PRECISION_EXACT.
-    uint32_t tol = prec < 0 ? 0 : uint32_t(8 + 2 * prec);
-    uint32_t limit = 3 * tol * tol;
     e->sem_obtain(e->ctx, &pe->semaphore);
     int32_t best = -1;
     uint32_t bestd = 0xFFFFFFFFu;
+    // the nearest shared pen by OS 3.2.3's distance (color_dist421); the
+    // higher pen wins a tie (measured: pens 0 and 5 at 448, OS 3.2.3 gave 5)
     for (uint32_t i = 0; i < pe_pens(pe); i++) {
         if (pe->alloclist[i] != PEN_SHARED) continue;
-        uint32_t d = color_dist(cm, i, r, g, b);
-        if (d < bestd) { bestd = d; best = int32_t(i); }
+        uint32_t d = color_dist421(cm, i, r, g, b);
+        if (d <= bestd) { bestd = d; best = int32_t(i); }
     }
     int32_t pen = -1;
-    if (best >= 0 && bestd <= limit) {
+    if (best >= 0 && near_enough(bestd, prec)) {
         pen_share(pe, uint32_t(best));
         pen = best;
     } else if ((pen = pen_take_free(cm)) >= 0) {
@@ -1029,9 +1116,9 @@ int32_t gfx_FindColor(gfx_env *, gfx_colormap *cm, uint32_t r, uint32_t g, uint3
     int32_t last = maxcolor < 0 || maxcolor >= cm->count ? int32_t(cm->count) - 1 : maxcolor;
     int32_t best = 0;
     uint32_t bestd = 0xFFFFFFFFu;
-    // ABI test: OS 3.2's distance; ours sums the squares, the lowest pen wins a tie
+    // OS 3.2.3's distance as measured (color_dist421); the lowest pen wins a tie
     for (int32_t i = 0; i <= last; i++) {
-        uint32_t d = color_dist(cm, uint32_t(i), r, g, b);
+        uint32_t d = color_dist421(cm, uint32_t(i), r, g, b);
         if (d < bestd) { bestd = d; best = i; }
     }
     return best;
@@ -1211,41 +1298,55 @@ void gfx_EraseRect(gfx_env *e, gfx_rastport *rp, int32_t x0, int32_t y0, int32_t
     gfx_rectangle r = box(int16_t(x0), int16_t(y0), int16_t(x1), int16_t(y1));
     target t;
     begin(t, e, rp);
-    if (clip_super(t, x0, y0, x1, y1)) erase(e, t.use, x0, y0, x1, y1);
+    if (clip_super(t, x0, y0, x1, y1)) erase(e, t.use, x0, y0, x1, y1, false);
     end(t, &r);
 }
 
 void gfx_DrawEllipse(gfx_env *e, gfx_rastport *rp, int32_t xc, int32_t yc, int32_t a, int32_t b)
 {
     xc = int16_t(xc); yc = int16_t(yc); a = int16_t(a); b = int16_t(b);
+    // the core's ellipse into a one-plane mask, then each run of it drawn
+    // by span(xa, xb, y), each pixel once
+    auto through_mask = [&](auto span) {
+        if (a < 0 || b < 0) return;
+        uint32_t w = uint32_t(2 * a + 1), h = uint32_t(2 * b + 1), bpr = row_bytes(w);
+        uint8_t *m = static_cast<uint8_t *>(mem_alloc(e, bpr * h, GFX_MEMF_PUBLIC | GFX_MEMF_CLEAR));
+        if (!m) return;
+        gfx_bitmap mb;
+        zero(&mb, sizeof mb);
+        mb.bytesperrow = uint16_t(bpr);
+        mb.rows = uint16_t(h);
+        mb.depth = 1;
+        mb.planes[0] = m;
+        gfx_rastport mr;
+        zero(&mr, sizeof mr);
+        mr.bitmap = &mb;
+        mr.mask = 1;
+        mr.fgpen = 1;
+        mr.drawmode = GFX_JAM1_MODE;
+        mr.lineptrn = 0xFFFF;
+        ogfx_rp_DrawEllipse(&mr, a, b, a, b);
+        runs(m, bpr, xc - a, yc - b, int32_t(w), int32_t(h), span);
+        mem_free(e, m, bpr * h);
+    };
+    auto *l = static_cast<gfx_layer *>(rp->layer);
+    if (!(l && (l->flags & GFX_LAYERSUPER) && l->superbitmap) && foreign(e, rp->bitmap)) {
+        // a card's bitmap (foreign): each run through the RectFill vector,
+        // which takes the layer and the DrawMode itself. Measured on OS
+        // 3.2.3 with OpenRTG: DrawEllipse draws on its screens and windows
+        // in JAM1, JAM2 and COMPLEMENT, and these fills give the same
+        // pixels (tests/DrawProbe.c, truecolour lines)
+        gfx_hook_wait_blit(e);
+        through_mask([&](int32_t xa, int32_t xb, int32_t y) { vector_fill(e, rp, xa, y, xb, y); });
+        return;
+    }
     gfx_rectangle r = box(xc - a, yc - b, xc + a, yc + b);
     target t;
     begin(t, e, rp);
-    if (!ogfx_rp_DrawEllipse(t.use, xc, yc, a, b) && a >= 0 && b >= 0) {
-        // COMPLEMENT, INVERSVID or a line pattern: the core's ellipse into
-        // a one-plane mask, then each pixel once through the DrawMode (ours,
-        // ABI test: OS 3.2 runs the line pattern round it)
-        uint32_t w = uint32_t(2 * a + 1), h = uint32_t(2 * b + 1), bpr = row_bytes(w);
-        uint8_t *m = static_cast<uint8_t *>(mem_alloc(e, bpr * h, GFX_MEMF_PUBLIC | GFX_MEMF_CLEAR));
-        if (m) {
-            gfx_bitmap mb;
-            zero(&mb, sizeof mb);
-            mb.bytesperrow = uint16_t(bpr);
-            mb.rows = uint16_t(h);
-            mb.depth = 1;
-            mb.planes[0] = m;
-            gfx_rastport mr;
-            zero(&mr, sizeof mr);
-            mr.bitmap = &mb;
-            mr.mask = 1;
-            mr.fgpen = 1;
-            mr.drawmode = GFX_JAM1_MODE;
-            mr.lineptrn = 0xFFFF;
-            ogfx_rp_DrawEllipse(&mr, a, b, a, b);
-            runs(m, bpr, xc - a, yc - b, int32_t(w), int32_t(h),
-                 [&](int32_t xa, int32_t xb, int32_t y) { solid_span(t.use, xa, xb, y); });
-            mem_free(e, m, bpr * h);
-        }
+    if (!ogfx_rp_DrawEllipse(t.use, xc, yc, a, b)) {
+        // COMPLEMENT, INVERSVID or a line pattern: each pixel once through
+        // the DrawMode (ours, ABI test: OS 3.2 runs the line pattern round it)
+        through_mask([&](int32_t xa, int32_t xb, int32_t y) { solid_span(t.use, xa, xb, y); });
     }
     end(t, &r);
 }

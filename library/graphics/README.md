@@ -16,6 +16,7 @@
 | `build-amiga.sh` | The os32-gcc16 stove (GCC 16.2.0-open2). Runs the fd and register checks, then builds `graphics.library` (the replacement), `opengfx.library` (the same code under its own name) and `GfxFaceABITest`, with nm checks: nothing undefined, no data or bss, no C++ runtime. |
 | `tests/m68k/test_gfx_face.sh` | The face and the core under qemu-m68k on the 68000, 68020 and 68040 at -O0 and -O2. Every line is checked against an independent python3 model. It also runs check_regs and gen_stubs, and nm checks on the face. |
 | `tests/GfxFaceABITest.c` | One script run through OS 3.2's graphics.library and then through opengfx.library, line by line. `PROBE` records OS 3.2's answers for the corners marked "ABI test" below. `SCREENS` also prints the PaletteExtra of a screen of each depth, and the Workbench's. `ONLY=SHARE` runs the pen-sharing lines alone. |
+| `tests/DrawProbe.c` | What graphics.library draws, one call at a time, as `case \| what \| value` lines to diff between two ROMs: RectFill, Draw, WritePixel, BltTemplate, BltBitMapRastPort, BltMaskBitMapRastPort, WritePixelArray8, WriteChunkyPixels, DrawImage, Text, ClipBlit, ScrollRaster, EraseRect, DrawEllipse and SetRast in each DrawMode, with masks and patterns, on bitmaps of 8 and 2 planes, an AGA screen, RTG screens and windows (one covered); and ObtainBestPenA's and FindColor's picks and tolerances. `DUMP` prints the pens. Built with the os32-gcc16 stove: `m68k-amigaos-gcc -noixemul -m68020 -O2 -o DrawProbe tests/DrawProbe.c`. |
 
 ## How drawing goes
 
@@ -24,7 +25,8 @@ Each drawing call (WritePixel ... WriteChunkyPixels) waits for the blitter (`gfx
 - **Super bitmap layers.** The call draws on the super bitmap, whose coordinates are the RastPort's. The face then copies the call's box from the super bitmap to the layer's pieces: the screen where the layer is on top, and a smart piece's own bitmap where it is covered. The super bitmap edges clip a rectangle call.
 - **DrawEllipse in COMPLEMENT or INVERSVID, or with a line pattern.** The core draws its ellipse into a one-plane mask, and each pixel of the mask is then drawn once through the DrawMode.
 - **BltPattern through a mask in a layer.** Each run of the mask's set bits is filled as RectFill fills it.
-- **EraseRect in a layer.** The layer's BackFill hook is called piece by piece, as layers.library calls it. LAYERS_NOBACKFILL does nothing, and the default clears to pen 0 through the Mask.
+- **EraseRect in a layer.** The layer's BackFill hook is called piece by piece, as layers.library calls it. LAYERS_NOBACKFILL does nothing, and the default clears to pen 0 through the Mask where the layer shows; a smart refresh layer's covered pieces are left as they were (measured on OS 3.2.3, `tests/DrawProbe.c`).
+- **A card's bitmap (OpenRTG, Picasso96).** A bitmap the core does not draw is one with more than 8 planes, or one that GetBitMapAttr answers BMA_FLAGS for without BMF_STANDARD (asked through the library's own vector, which the card's driver patches). DrawEllipse and EraseRect's pen-0 fill draw there with RectFill through the library's own vector (`gfx_env.h`), so the driver's RectFill draws them. On OS 3.2.3 with OpenRTG both draw on its screens (`tests/DrawProbe.c`).
 - **ClipBlit and ScrollRaster in a simple refresh layer or under a clip region, or with a rectangle not wholly in the layer, or a ScrollRaster shift of its size or more.** The part that can be read and written is copied through the core, and the rest is filled. A simple refresh destination gets damage and LAYERREFRESH. ScrollRasterBF fills through the backfill.
 - **AreaEnd that the core has not measured** (NOCROSSFILL, more than 16 pattern rows, multicolour patterns, an outline past a layer edge) is drawn the core's way anyway.
 
@@ -57,9 +59,10 @@ BltBitMap for a bitmap that is not standard planar (more than 8 planes, or BMF_S
 | LoadRGB32 | Runs of (count << 16 \| first) until a count of 0. Entries past the map are skipped | documented |
 | Which pen ObtainPen(-1) and ObtainBestPen hand out | The highest free pen | ABI test |
 | ObtainPen of a shared pen | Shared again when PEN_EXCLUSIVE is not asked for and the colour is the same (or with PEN_NO_SETCOLOR); otherwise -1 | ABI test |
-| ObtainBestPenA's precision | Each 8-bit gun within 8 + 2 × precision; exact for PRECISION_EXACT. Default PRECISION_IMAGE | default documented; tolerance is ABI test |
+| ObtainBestPenA's distance | 4 × the largest 8-bit gun difference + 2 × the middle one + the smallest; the nearest shared pen, the higher pen on a tie | measured on OS 3.2.3 (`tests/DrawProbe.c` "pens": 160 picks, one tie) |
+| ObtainBestPenA's precision | Shared when 4 × distance ≤ (precision + 15)²; a negative precision shares only the same colour. Default PRECISION_IMAGE | default documented; tolerance measured on OS 3.2.3 at precisions 0-4, 6, 8, 12, 16, 20, 24, 32 and -1, -2, -5, in 15 directions (`tests/DrawProbe.c`) |
 | ObtainBestPenA with no good match | A free pen with that colour; with none free, the nearest shared pen, or -1 with OBP_FailIfBad | documented |
-| FindColor | Least sum of squared 8-bit differences; the lowest pen wins a tie; maxcolor -1 is every pen | ABI test |
+| FindColor | The least ObtainBestPenA distance; the lowest pen wins a tie; maxcolor -1 is every pen | measured on OS 3.2.3: 157 of 160 picks; in the other 3 OS 3.2.3 took a pen 1 to 5 further by this distance (`tests/DrawProbe.c`) |
 | AttachPalExtra twice | 0, and the first PaletteExtra is kept | ABI test |
 | The pens a PaletteExtra shares | As many as its ViewPort shows: 1 << depth (1 at depth 0), 32 for EHB, 16 for HAM6, 64 for HAM8. `pe_SharableColors` and `pe_FirstFree` hold the highest of them (255 for 256 pens) and `pe_NFree` the count. With no ViewPort, none: 0xFFFF and 0. Never more than the map holds, and the whole map without a RasInfo or bitmap | ABI test (SHARE, lab t3-sharable on OS 3.2.3, 14 Oct 2026); the map limit and no-RasInfo case are ours |
 | PaletteExtra's lists | AllocList holds each pen's state; NFree, NShared and FirstFree are kept up to date | ours; ABI test |
@@ -71,7 +74,7 @@ BltBitMap for a bitmap that is not standard planar (more than 8 planes, or BMF_S
 | DrawEllipse with a negative radius | Nothing | ours |
 | Super bitmap layer WritePixel/ReadPixel off the super bitmap | -1 | ours, as off a layer |
 | Damage from a copy in a simple refresh layer | The whole destination rectangle, when either layer has a hidden piece or the rectangle leaves its window | coarse ours; OS 3.2 damages only the hidden parts |
-| EraseRect default backfill in a layer | Pen 0 through the RastPort's Mask | ABI test |
+| EraseRect default backfill in a layer | Pen 0 through the RastPort's Mask where the layer shows; covered pieces of a smart refresh layer are left as they were | the pen: ABI test; the covered pieces: measured on OS 3.2.3 (`tests/DrawProbe.c`, AGA and OpenRTG screens) |
 | AreaMove/AreaDraw/AreaEllipse/AreaEnd with no AreaInfo | -1 (OS 3.2 crashes) | ours |
 | LockLayerRom(NULL) and the other layer calls given NULL | Nothing | ours |
 | Private LVOs (-642, -648, -738, -744, -750, -846, -906, -912, -1014) | Answer 0 | ours |

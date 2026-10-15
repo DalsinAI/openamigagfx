@@ -81,6 +81,15 @@ struct gfx_env {
      * itself: a pen ObtainPen or ObtainBestPenA gives out. May be 0 (the
      * tests): the face then sets the map and calls gfx_hook_vp_colors. */
     void (*set_rgb32_vector)(void *ctx, void *vp, uint32_t n, uint32_t r, uint32_t g, uint32_t b);
+
+    /* GetBitMapAttr and RectFill through the library's own vectors, for a
+     * bitmap the core does not draw: one a card's driver (OpenRTG,
+     * Picasso96) made and answers BMA_FLAGS for without BMF_STANDARD. The
+     * face then draws DrawEllipse and EraseRect's default fill with the
+     * RectFill the driver patched. May be 0 (the tests): every bitmap with
+     * 8 planes or fewer is then the core's. */
+    uint32_t (*bitmap_attr_vector)(void *ctx, struct gfx_bitmap *bm, uint32_t attr);
+    void (*rect_fill_vector)(void *ctx, struct gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, int32_t y1);
 };
 
 /* Each area's private state, by index into gfx_private.area. */

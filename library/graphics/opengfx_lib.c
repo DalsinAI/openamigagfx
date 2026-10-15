@@ -141,6 +141,29 @@ static void e_set_rgb32_vector(void *ctx, void *vp, uint32_t n, uint32_t r, uint
     __asm volatile ("jsr -852(%%a6)" : "+r"(a0), "+r"(d0), "+r"(d1) : "r"(a6), "r"(d2), "r"(d3) : "a1", "cc", "memory");
 }
 
+/* GetBitMapAttr (-960) and RectFill (-306) through our own vectors, with A6
+ * our base: what a card's driver patched with SetFunction runs (gfx_env.h) */
+static uint32_t e_bitmap_attr_vector(void *ctx, struct gfx_bitmap *bm, uint32_t attr)
+{
+    register void *a6 __asm("a6") = ctx;
+    register void *a0 __asm("a0") = bm;
+    register uint32_t d1 __asm("d1") = attr;
+    register uint32_t d0 __asm("d0");
+    __asm volatile ("jsr -960(%%a6)" : "=r"(d0), "+r"(a0), "+r"(d1) : "r"(a6) : "a1", "cc", "memory");
+    return d0;
+}
+
+static void e_rect_fill_vector(void *ctx, struct gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, int32_t y1)
+{
+    register void *a6 __asm("a6") = ctx;
+    register void *a1 __asm("a1") = rp;
+    register int32_t d0 __asm("d0") = x0;
+    register int32_t d1 __asm("d1") = y0;
+    register int32_t d2 __asm("d2") = x1;
+    register int32_t d3 __asm("d3") = y1;
+    __asm volatile ("jsr -306(%%a6)" : "+r"(a1), "+r"(d0), "+r"(d1) : "r"(a6), "r"(d2), "r"(d3) : "a0", "cc", "memory");
+}
+
 static void new_list(struct gfx_list *l, UBYTE type)
 {
     l->head = (struct gfx_node *)&l->tail;
@@ -200,6 +223,8 @@ static struct Library *lib_init(REG(d0, struct gfx_base *base), REG(a0, BPTR seg
     env->set_int_vector = e_set_int_vector;
     env->type_of_mem = e_type_of_mem;
     env->set_rgb32_vector = e_set_rgb32_vector;
+    env->bitmap_attr_vector = e_bitmap_attr_vector;
+    env->rect_fill_vector = e_rect_fill_vector;
 
     if (!gfx_init_face(env)) goto fail;
     n = 1;

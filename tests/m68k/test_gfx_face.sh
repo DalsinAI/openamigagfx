@@ -96,8 +96,11 @@ rp = {}
 cm = []; pens = []; refs = []
 def rgb(i): return cm[i]
 def dist(i, r, g, b):
+    # OS 3.2.3's distance, measured (tests/DrawProbe.c "pens"): 4 x the
+    # largest gun difference, 2 x the middle one, 1 x the smallest
     R, G, B = cm[i]
-    return (R - r) ** 2 + (G - g) ** 2 + (B - b) ** 2
+    hi, mid, lo = sorted((abs(R - r), abs(G - g), abs(B - b)), reverse=True)
+    return 4 * hi + 2 * mid + lo
 
 npens = 0
 def take_free():
@@ -254,14 +257,15 @@ while pos < len(lines):
     elif t == "BP":
         r, g, b, pr, fb, res = map(int, f[1:])
         vpc = take_vpc()
-        tol = 0 if pr < 0 else 8 + 2 * pr
+        # shared when 4 x dist <= (precision + 15)^2; only the same colour below 0
+        near = (lambda d: d == 0) if pr < 0 else (lambda d: 4 * d <= (pr + 15) ** 2)
         best, bd = -1, None
         for i in range(npens):
             if pens[i] == 1:
                 d = dist(i, r, g, b)
-                if bd is None or d < bd: best, bd = i, d
+                if bd is None or d <= bd: best, bd = i, d   # the higher pen wins a tie
         pen = -1; setc = False
-        if best >= 0 and bd <= 3 * tol * tol: pen = best; refs[best] += 1
+        if best >= 0 and near(bd): pen = best; refs[best] += 1
         elif take_free() >= 0:
             pen = take_free(); pens[pen] = 1; refs[pen] = 1; cm[pen] = (r, g, b); setc = True
         elif not fb and best >= 0: pen = best; refs[best] += 1
