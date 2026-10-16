@@ -1,5 +1,5 @@
 # OpenGfx's topaz 8, redrawn clean-room for OpenGfx (MIT, Copyright (c)
-# 2026 Dalsin Limited): 8 x 8 cells, baseline row 6, one descender row.
+# 2026 AmigaChrome Team): 8 x 8 cells, baseline row 6, one descender row.
 # Drawn by hand in this file, not taken from any ROM. mkfont.py builds
 # topaz_data.cpp from it (and topaz 9 from it, widened and deepened).
 # "@ c" starts a glyph (c a character or 0xNN); "@ default" is the glyph

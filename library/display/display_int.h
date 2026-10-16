@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
-/* OpenGfx display: what the core's files share. Copyright (c) 2026 Dalsin
- * Limited. MIT. Lean C++: no Amiga headers, no globals, no runtime. */
+/* OpenGfx display: what the core's files share. Copyright (c) 2026 AmigaChrome
+ * Team. MIT. Lean C++: no Amiga headers, no globals, no runtime. */
 #ifndef OPENGFX_DISPLAY_INT_H
 #define OPENGFX_DISPLAY_INT_H
 

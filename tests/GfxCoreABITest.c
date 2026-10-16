@@ -1,5 +1,5 @@
 /* GfxCoreABITest: OS 3.2's graphics.library and OpenGfx's core side by side.
- * Copyright (c) 2026 Dalsin Limited. MIT.
+ * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Two identical Chip RAM bitmaps get the same random contents; one call
  * goes through graphics.library on the first and through OpenGfx's

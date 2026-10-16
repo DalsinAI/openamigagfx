@@ -6,7 +6,7 @@
  * the beam, and tasks that block in OwnBlitter. It runs the script
  * tests/m68k/test_gfx_gels.py writes (gels_script.h) and prints what it
  * sees; the python model prints what it should see, and the two are
- * compared line by line. Copyright (c) 2026 Dalsin Limited. MIT. */
+ * compared line by line. Copyright (c) 2026 AmigaChrome Team. MIT. */
 #include <stdio.h>
 #include <stdint.h>
 #include "gels_core.h"

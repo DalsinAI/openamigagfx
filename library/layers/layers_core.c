@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-/* OpenLayers' core (layers_core.h). Copyright (c) 2026 Dalsin Limited. MIT. */
+/* OpenLayers' core (layers_core.h). Copyright (c) 2026 AmigaChrome Team. MIT. */
 #include "layers_core.h"
 
 int lc_meet(const struct lc_rect *a, const struct lc_rect *b, struct lc_rect *out)

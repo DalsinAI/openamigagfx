@@ -2,7 +2,7 @@
 /* A bare runtime for the 68000 tests: the Linux libc and libgcc are built
  * for the 68020, so a 68000 build links this instead and runs on qemu's
  * 68000 (which faults on a 68020 instruction or an odd word access, as a
- * real 68000 would). Copyright (c) 2026 Dalsin Limited. MIT. */
+ * real 68000 would). Copyright (c) 2026 AmigaChrome Team. MIT. */
 #include <stdarg.h>
 #include <stddef.h>
 int main(void);

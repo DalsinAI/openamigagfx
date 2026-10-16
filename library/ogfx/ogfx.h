@@ -1,4 +1,4 @@
-/* Copyright (c) 2026 Dalsin Limited. OpenRTG, MIT licence (LICENSE).
+/* Copyright (c) 2026 AmigaChrome Team. OpenRTG, MIT licence (LICENSE).
  * SPDX-License-Identifier: MIT
  *
  * OpenGfx inside opengpu.library: what opengpu_lib.c sees of it.
@@ -39,7 +39,7 @@ struct ogfx_state {
     UBYTE patched;
     UBYTE enabled;
     UBYTE have_provider;
-    UBYTE amigachrome;                 /* Dalsin boards: the leaves run as host code */
+    UBYTE amigachrome;                 /* AmigaChrome Team boards: the leaves run as host code */
     struct OGFXProviderAll provider;   /* a v1 provider's calls are provider.v1's */
     APTR old[OGFX_P_COUNT];            /* graphics.library's vectors before the patches */
     UWORD tramp[OGFX_P_COUNT][OGFX_TRAMP_WORDS]; /* each patch's entry, written by InstallPatches */

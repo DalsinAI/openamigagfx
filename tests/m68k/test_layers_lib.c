@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenLayers' library code (library/layers/layers_lib.c) against a model.
- * Copyright (c) 2026 Dalsin Limited. MIT.
+ * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * exec and graphics.library are played here: bitmaps are a byte a pixel,
  * BltBitMap copies, clears and exclusive-ors them (overlapping or not, and

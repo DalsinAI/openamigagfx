@@ -7,7 +7,7 @@ links with any subset of the areas; OWNERS.md).
   gen_stubs.py graphics.lvo DEFINED OUTDIR
 
 DEFINED is a file of the symbols the areas' objects define (nm output or
-one name a line; a leading underscore is ignored). MIT, Dalsin Limited."""
+one name a line; a leading underscore is ignored). MIT, AmigaChrome Team."""
 import re, sys
 
 def lvo_names(path):

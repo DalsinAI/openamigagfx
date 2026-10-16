@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// OpenGfx gels (gels_core.h). Copyright (c) 2026 Dalsin Limited. MIT.
+// OpenGfx gels (gels_core.h). Copyright (c) 2026 AmigaChrome Team. MIT.
 //
 // Lean C++: no exceptions, no RTTI, no static constructors, no libstdc++,
 // nothing in globals. Everything reaches exec and the chips through

@@ -5,7 +5,7 @@
  * Text on a planar bitmap, the ROM fonts' data against their drawing, the
  * font list, extensions and memory. With WITH_LVO, also the register
  * entries (text_lvo.c) over a GfxBase and gfx_env like the face's.
- * Copyright (c) 2026 Dalsin Limited. MIT. */
+ * Copyright (c) 2026 AmigaChrome Team. MIT. */
 #include <exec/types.h>
 #include <exec/lists.h>
 #include <graphics/gfx.h>

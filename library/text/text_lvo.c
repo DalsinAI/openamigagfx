@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx text: graphics.library's text LVOs, taking their registers
  * (graphics.lvo, library/graphics/OWNERS.md) and coming to the core
- * (text_core.h). Copyright (c) 2026 Dalsin Limited. MIT.
+ * (text_core.h). Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Built by the Amiga compiler with the NDK 3.2 headers, -I library/graphics
  * (gfx_env.h) and -I library/core (gfx_rp.h). gfx_init_text makes the

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // OpenGfx text: the ROM fonts topaz 8 and topaz 9, redrawn for OpenGfx
-// (topaz8.txt). Copyright (c) 2026 Dalsin Limited. MIT.
+// (topaz8.txt). Copyright (c) 2026 AmigaChrome Team. MIT.
 // Made by mkfont.py; do not edit.
 #include "topaz_data.h"
 

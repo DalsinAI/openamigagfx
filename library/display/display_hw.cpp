@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx display: the beam, the chip revision and the sprites.
- * Copyright (c) 2026 Dalsin Limited. MIT.
+ * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Clean-room: from graphics.library's autodocs (VBeamPos, WaitTOF,
  * WaitBOVP, SetChipRev, GetSprite, FreeSprite, ChangeSprite, MoveSprite,

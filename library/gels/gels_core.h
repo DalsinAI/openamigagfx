@@ -3,7 +3,7 @@
  * collisions, and the blitter: its queue (QBlit, QBSBlit), its ownership
  * (OwnBlitter, DisownBlitter, WaitBlit) and the blits drawn through it
  * (BltClear, BltTemplate, BltMaskBitMapRastPort). Copyright (c) 2026
- * Dalsin Limited. MIT.
+ * AmigaChrome Team. MIT.
  *
  * Clean-room, from the NDK 3.2 headers' published layouts (graphics/gels.h,
  * graphics/rastport.h's GelsInfo, hardware/blit.h's bltnode), the autodocs,

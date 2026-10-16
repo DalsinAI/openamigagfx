@@ -2,7 +2,7 @@
 // OpenGfx text: the NDK 3.2 structures the text calls touch, with their
 // published names, laid out for the m68k (big-endian, 32-bit pointers,
 // 2-byte alignment) and checked by static_asserts. Copyright (c) 2026
-// Dalsin Limited. MIT.
+// AmigaChrome Team. MIT.
 //
 // Clean-room, written from the layouts graphics/text.h, graphics/rastport.h,
 // exec/nodes.h, exec/lists.h, exec/ports.h and utility/tagitem.h publish

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx graphics.library: the gels LVOs in their registers, gels' init,
  * and the calls into user code that need registers. Copyright (c) 2026
- * Dalsin Limited. MIT.
+ * AmigaChrome Team. MIT.
  *
  * Each gfx_lvo_<Call> takes the fd's arguments in the registers
  * graphics.lvo lists (library/graphics/check_regs.py compares them), with

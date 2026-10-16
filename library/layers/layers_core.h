@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenLayers' core: layers.library's geometry in plain C. Copyright (c)
- * 2026 Dalsin Limited. MIT.
+ * 2026 AmigaChrome Team. MIT.
  *
  * Clean-room, from the autodocs, the NDK 3.2 headers' public structures and
  * measurements of OS 3.2. The core knows nothing of Layer, ClipRect or

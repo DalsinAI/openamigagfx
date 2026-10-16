@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenLayers: layers.library's calls in plain C arguments. Copyright (c)
- * 2026 Dalsin Limited. MIT.
+ * 2026 AmigaChrome Team. MIT.
  *
  * layers_lib.c does the work of each call, through the core
  * (layers_core.h) and exec's and graphics.library's own calls; the library

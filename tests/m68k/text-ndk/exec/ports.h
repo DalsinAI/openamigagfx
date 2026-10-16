@@ -1,4 +1,4 @@
-/* host NDK overlay (tests only): exec/ports.h's Message. MIT, Dalsin Limited. */
+/* host NDK overlay (tests only): exec/ports.h's Message. MIT, AmigaChrome Team. */
 #ifndef EXEC_PORTS_H
 #define EXEC_PORTS_H
 #include <exec/nodes.h>

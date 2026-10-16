@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* GelsABITest: OpenGfx graphics.library's gels and blitter calls
  * (library/gels) side by side with OS 3.2's graphics.library. Copyright
- * (c) 2026 Dalsin Limited. MIT.
+ * (c) 2026 AmigaChrome Team. MIT.
  *
  * One script of calls is run through OS 3.2's graphics.library and then
  * through opengfx.library (OpenGfx's graphics.library under its own name),

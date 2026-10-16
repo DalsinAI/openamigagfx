@@ -1,7 +1,7 @@
 /* Test-only: graphics/text.h as far as library/core/gfx_rp.c uses it, and
  * the RastPort constants and structures tests/host-ndk's rastport.h leaves out, for
  * tests/m68k/test_gfx_face.sh. Written from the published layouts; no NDK
- * text. MIT, Dalsin Limited. */
+ * text. MIT, AmigaChrome Team. */
 #ifndef GRAPHICS_TEXT_H
 #define GRAPHICS_TEXT_H
 #include <exec/nodes.h>

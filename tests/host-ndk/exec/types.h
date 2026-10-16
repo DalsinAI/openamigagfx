@@ -1,4 +1,4 @@
-/* host NDK (tests only): exec types. MIT, Dalsin Limited. */
+/* host NDK (tests only): exec types. MIT, AmigaChrome Team. */
 #ifndef EXEC_TYPES_H
 #define EXEC_TYPES_H
 #include <stdint.h>

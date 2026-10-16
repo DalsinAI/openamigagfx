@@ -1,7 +1,7 @@
 /* host NDK overlay (tests only): the graphics constants and structures
  * library/core/gfx_rp.c uses that tests/host-ndk leaves out, forced in with
  * -include, so tests/m68k/test_gfx_text.sh can draw mono text through the
- * real core. Clean-room, from the published layouts. MIT, Dalsin Limited. */
+ * real core. Clean-room, from the published layouts. MIT, AmigaChrome Team. */
 #ifndef TEXT_NDK_GFXDEFS_H
 #define TEXT_NDK_GFXDEFS_H
 #include <exec/types.h>

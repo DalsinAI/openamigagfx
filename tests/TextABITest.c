@@ -1,5 +1,5 @@
 /* TextABITest: OpenGfx's text calls (library/text) side by side with OS
- * 3.2's graphics.library. Copyright (c) 2026 Dalsin Limited. MIT.
+ * 3.2's graphics.library. Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Opens OS 3.2's graphics.library and OpenGfx's built under its own name
  * (opengfx.library, library/graphics/build-amiga.sh) and makes each call
