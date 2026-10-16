@@ -271,6 +271,10 @@ while pos < len(lines):
         elif not fb and best >= 0: pen = best; refs[best] += 1
         if res != pen: err("%s: want %d" % (l, pen))
         if vpc != ([(pen, 1)] if setc else []): err("%s: hook %s" % (l, vpc))
+    elif t == "RC":
+        # pe_RefCnt: the count of holders, shown up to 255
+        i, v = int(f[1]), int(f[2])
+        if v != min(refs[i], 255): err("%s: want %d" % (l, min(refs[i], 255)))
     elif t == "FC":
         r, g, b, mx, res = map(int, f[1:])
         last = len(cm) - 1 if mx < 0 or mx >= len(cm) else mx
