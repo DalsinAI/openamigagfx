@@ -1,4 +1,4 @@
-/* Copyright (c) 2026 Dalsin Limited. OpenRTG, MIT licence (LICENSE).
+/* Copyright (c) 2026 AmigaChrome Team. OpenRTG, MIT licence (LICENSE).
  * SPDX-License-Identifier: MIT
  *
  * OpenGfx inside opengpu.library: graphics.library's drawing and text.
@@ -1001,7 +1001,7 @@ LONG OGFX_InstallPatches(REG(a6, struct Library *base))
     if (!(gfx = (struct Library *)gfx_of(st)))
         return 0;
 
-    /* AmigaChrome: boards with Dalsin's own id (0xDA15) are there and nowhere
+    /* AmigaChrome: boards with the AmigaChrome Team's own id (0xDA15) are there and nowhere
      * else. The old id, 2011, is shared with UAE and home-made boards, so it
      * is not taken as proof: a runtime from before 1 Oct 2026 just keeps
      * Chip RAM on the blitter. */

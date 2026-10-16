@@ -4,7 +4,7 @@
  * that count, hooks called as C. Random calls; each prints a line of what
  * it was given and what it answered or drew, and test_gfx_face.sh's python
  * model, written apart from the library, checks every line. The memory and
- * the locks are checked here. Copyright (c) 2026 Dalsin Limited. MIT. */
+ * the locks are checked here. Copyright (c) 2026 AmigaChrome Team. MIT. */
 #include <stdio.h>
 #include "gfx_face.h"
 #include "gfx_core.h"

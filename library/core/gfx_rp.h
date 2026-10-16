@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx's RastPort calls: graphics.library's arguments and results, on a
  * RastPort with no layer, through the core (gfx_core.h). Copyright (c) 2026
- * Dalsin Limited. MIT.
+ * AmigaChrome Team. MIT.
  *
  * Each reads the RastPort's pens, DrawMode and Mask and answers as
  * graphics.library does (measured on OS 3.2 by tests/GfxCoreABITest.c).

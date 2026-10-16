@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-/* OpenGfx's core (gfx_core.h). Copyright (c) 2026 Dalsin Limited. MIT. */
+/* OpenGfx's core (gfx_core.h). Copyright (c) 2026 AmigaChrome Team. MIT. */
 #include "gfx_core.h"
 
 typedef uint32_t __attribute__((may_alias)) u32a;

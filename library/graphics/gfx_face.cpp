@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // OpenGfx graphics.library, the face: bitmaps, RastPort state, colour maps
 // and pens, regions, layer locks, super bitmaps, scaling, Flood and the
-// drawing calls around the core. Copyright (c) 2026 Dalsin Limited. MIT.
+// drawing calls around the core. Copyright (c) 2026 AmigaChrome Team. MIT.
 //
 // Clean-room: from graphics.library's autodocs, the NDK 3.2 layouts
 // (gfx_types.h) and OS 3.2's answers where tests/GfxFaceABITest.c measures

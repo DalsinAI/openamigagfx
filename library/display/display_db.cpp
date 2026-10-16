@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx display: extended nodes, monitors, the display database,
- * VideoControl, and the display's start. Copyright (c) 2026 Dalsin
- * Limited. MIT.
+ * VideoControl, and the display's start. Copyright (c) 2026 AmigaChrome
+ * Team. MIT.
  *
  * Clean-room: from graphics.library's autodocs (GfxNew, GfxFree,
  * GfxAssociate, GfxLookUp, OpenMonitor, CloseMonitor, FindDisplayInfo,

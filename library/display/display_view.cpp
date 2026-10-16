@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx display: Views, ViewPorts and the copper. Copyright (c) 2026
- * Dalsin Limited. MIT.
+ * AmigaChrome Team. MIT.
  *
  * Clean-room: from graphics.library's autodocs (InitView, InitVPort,
  * MakeVPort, MrgCop, LoadView, FreeVPortCopLists, FreeCopList,

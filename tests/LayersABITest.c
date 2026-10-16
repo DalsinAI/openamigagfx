@@ -1,5 +1,5 @@
 /* LayersABITest: OS 3.2's layers.library and OpenLayers side by side.
- * Copyright (c) 2026 Dalsin Limited. MIT.
+ * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Runs one script of calls through a layers.library base and writes what
  * comes of each as lines of text. With openlayers.library in the directory

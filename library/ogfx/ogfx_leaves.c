@@ -5,7 +5,7 @@
  * GCC, 32-bit ints, arguments on the stack (not -mregparm), with -fno-lto,
  * -fno-builtin and -fno-tree-loop-distribute-patterns, so no loop here
  * becomes a call to a C library this code may not have.
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #include "ogfx_leaves.h"
 #include "ac_magic.h"   /* a copy of amigachrome-guest common/amiga/ac_magic.h */
 

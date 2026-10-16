@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* graphics.library: 32-bit multiply and divide for the 68000 build (as layers_arith.c): the os32-gcc16
  * stove's 68000 libgcc.a does not define them under -nostdlib. Shift and
- * add, shift and subtract. Copyright (c) 2026 Dalsin Limited. MIT. */
+ * add, shift and subtract. Copyright (c) 2026 AmigaChrome Team. MIT. */
 unsigned long __mulsi3(unsigned long a, unsigned long b);
 unsigned long __udivsi3(unsigned long a, unsigned long b);
 unsigned long __umodsi3(unsigned long a, unsigned long b);

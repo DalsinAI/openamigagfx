@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx's core: graphics.library's drawing on a bitmap's own memory, in
  * plain C, planar (OCS/ECS/AGA) and chunky (RTG). Copyright (c) 2026
- * Dalsin Limited. MIT.
+ * AmigaChrome Team. MIT.
  *
  * Clean-room, from the autodocs and measurements of OS 3.2. The core knows
  * nothing of RastPorts, layers or clipping: the library glue reads a

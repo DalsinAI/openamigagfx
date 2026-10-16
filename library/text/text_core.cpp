@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // OpenGfx text: graphics.library's font and text calls (text_core.h).
-// Copyright (c) 2026 Dalsin Limited. MIT.
+// Copyright (c) 2026 AmigaChrome Team. MIT.
 //
 // Clean-room, from the autodocs, the NDK 3.2 layouts and OS 3.2's answers
 // measured by tests/GfxCoreABITest (TEXTPROBE) and tests/TextABITest

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx display: graphics.library's View, ViewPort, copper, display
  * database, monitor, beam and sprite calls in plain C arguments.
- * Copyright (c) 2026 Dalsin Limited. MIT.
+ * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * The lean C++ core (display_*.cpp) does the work; display_lvo.c takes
  * each call's registers (gfx_lvo_<Call>) and comes here with the env

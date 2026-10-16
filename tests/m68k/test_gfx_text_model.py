@@ -5,8 +5,8 @@
 # answer and draw, a pixel at a time from the rules (library/text/README.md),
 # and writes them as a C header for test_gfx_text.c to check the core
 # against. Independent of library/text: glyphs are kept here as rows of
-# pixels, not as the packed bits the C reads. Copyright (c) 2026 Dalsin
-# Limited. MIT.
+# pixels, not as the packed bits the C reads. Copyright (c) 2026 AmigaChrome
+# Team. MIT.
 #   python3 test_gfx_text_model.py SEED > cases.h
 import os
 import random

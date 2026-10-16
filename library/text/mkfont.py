@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # OpenGfx text: builds topaz_data.cpp, the ROM fonts topaz 8 and topaz 9,
-# from topaz8.txt. Copyright (c) 2026 Dalsin Limited. MIT.
+# from topaz8.txt. Copyright (c) 2026 AmigaChrome Team. MIT.
 #
 # The glyphs are OpenGfx's own drawing (topaz8.txt), not ROM bytes. Topaz 8
 # is that drawing; the Latin-1 accented letters are composed here from a
@@ -134,7 +134,7 @@ def emit(out):
     w = out.write
     w('// SPDX-License-Identifier: MIT\n')
     w('// OpenGfx text: the ROM fonts topaz 8 and topaz 9, redrawn for OpenGfx\n')
-    w('// (topaz8.txt). Copyright (c) 2026 Dalsin Limited. MIT.\n')
+    w('// (topaz8.txt). Copyright (c) 2026 AmigaChrome Team. MIT.\n')
     w('// Made by mkfont.py; do not edit.\n')
     w('#include "topaz_data.h"\n\n')
     w('extern "C" const char gt_topaz_name[] = "topaz.font";\n\n')

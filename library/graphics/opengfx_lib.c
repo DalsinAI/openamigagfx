@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx: an open graphics.library for AmigaOS 3.2, API and ABI
- * compatible. Copyright (c) 2026 Dalsin Limited. MIT.
+ * compatible. Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Clean-room: written from graphics.library's autodocs, the NDK 3.2
  * headers' published layouts and OS 3.2's answers measured by the ABI
@@ -44,9 +44,9 @@
 int start(void) { return -1; }
 
 static const char lib_name[] = LIBNAME;
-static const char lib_id[] = "graphics.library 47.100 (13.10.2026) OpenGfx, Dalsin Limited\r\n";
+static const char lib_id[] = "graphics.library 47.100 (13.10.2026) OpenGfx, AmigaChrome Team\r\n";
 static const char lib_ver[] __attribute__((used)) =
-    "\0$VER: graphics.library 47.100 (13.10.2026) OpenGfx, Dalsin Limited";
+    "\0$VER: graphics.library 47.100 (13.10.2026) OpenGfx, AmigaChrome Team";
 static const char util_name[] = "utility.library";
 
 /* ---- the env: ctx is the library base -------------------------------- */

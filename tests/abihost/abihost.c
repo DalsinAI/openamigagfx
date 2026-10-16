@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 /* LayersABITest on the host, over OpenLayers' own code: exec, dos and
  * graphics.library played closely enough that its PROBE lines can be set
- * beside the ones OS 3.2 gave on an Amiga. Copyright (c) 2026 Dalsin
- * Limited. MIT.
+ * beside the ones OS 3.2 gave on an Amiga. Copyright (c) 2026 AmigaChrome
+ * Team. MIT.
  *
  * Bitmaps are planar, laid out as AllocBitMap lays them out (rows of whole
  * words), so the screen's checksum is the Amiga's. RectFill and ReadPixel

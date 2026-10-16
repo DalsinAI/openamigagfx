@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx display: the NDK layouts only the display area uses, in stdint
- * types with no Amiga header. Copyright (c) 2026 Dalsin Limited. MIT.
+ * types with no Amiga header. Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Clean-room: the field order and sizes of the NDK 3.2 headers' published
  * structures (graphics/view.h, graphics/copper.h, graphics/monitor.h,

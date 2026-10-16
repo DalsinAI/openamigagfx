@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-/* OpenGfx's regions (gfx_region.h). Copyright (c) 2026 Dalsin Limited. MIT.
+/* OpenGfx's regions (gfx_region.h). Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Every call is one sweep: the edges of both operands cut the plane into
  * bands; in each band the two operands are runs of x, combined by the

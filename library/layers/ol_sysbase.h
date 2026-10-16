@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
-/* OpenLayers: exec's base without a global. Copyright (c) 2026 Dalsin
- * Limited. MIT.
+/* OpenLayers: exec's base without a global. Copyright (c) 2026 AmigaChrome
+ * Team. MIT.
  *
  * Included after <proto/exec.h>, so the exec calls' inline macros read
  * SysBase through this. The hosted tests' exec calls are plain functions

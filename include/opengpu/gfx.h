@@ -1,4 +1,4 @@
-/* Copyright (c) 2026 Dalsin Limited. OpenRTG, MIT licence (LICENSE).
+/* Copyright (c) 2026 AmigaChrome Team. OpenRTG, MIT licence (LICENSE).
  * SPDX-License-Identifier: MIT
  *
  * OpenGfx inside opengpu.library (0.6 and later): the public calls.
@@ -82,7 +82,7 @@
 #define OGFX_STATUS_PATCHED  (1UL << 0)
 #define OGFX_STATUS_ENABLED  (1UL << 1)
 #define OGFX_STATUS_PROVIDER (1UL << 2)
-#define OGFX_STATUS_AMIGACHROME (1UL << 3)   /* Dalsin boards found; Chip RAM drawing goes to the leaves */
+#define OGFX_STATUS_AMIGACHROME (1UL << 3)   /* AmigaChrome Team boards found; Chip RAM drawing goes to the leaves */
 #define OGFX_PATCHES 8                       /* the graphics.library calls OpenGfx 1.1 owned (1.4: OGFX_PATCHES_ALL) */
 
 struct OGFXRectFillRequest {

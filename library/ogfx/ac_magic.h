@@ -13,7 +13,7 @@
  *     BRA.S   *+12            ; $600A: a real Amiga branches over the tag
  *     DC.L    'ACMF'
  *     DC.W    $0001           ; the tag's version
- *     DC.L    id              ; who (Dalsin is 1) in the top half, which below
+ *     DC.L    id              ; who (AmigaChrome Team is 1) in the top half, which below
  *     JMP     name_acbody
  * When AC090 translates the entry and knows the id, it runs its native
  * version instead, after checking the call (plain RAM only, no overlap it
@@ -48,7 +48,7 @@
  *   -fno-lto when it goes into a static library.
  *
  * The ids are a published list: a PiStorm's Emu68 or an FPGA accelerator
- * may honour the same tags. Dalsin's (1 in the top half) are below; a new
+ * may honour the same tags. AmigaChrome Team's (1 in the top half) are below; a new
  * one is added here and in jit_magic.c's magic_defs together. */
 
 /* void *memcpy(void *dst, const void *src, size_t n): dst. AC090 declines

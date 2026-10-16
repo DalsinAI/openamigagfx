@@ -7,7 +7,7 @@
 # blitter queue as an event list.
 #   python3 test_gfx_gels.py OUTDIR [SEED] [ROUNDS]
 # writes OUTDIR/gels_script.h and OUTDIR/expected.txt.
-# Copyright (c) 2026 Dalsin Limited. MIT.
+# Copyright (c) 2026 AmigaChrome Team. MIT.
 import os
 import random
 import sys

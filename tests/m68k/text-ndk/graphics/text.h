@@ -2,7 +2,7 @@
  * library/core/gfx_rp.c next to OpenGfx's text calls in
  * tests/m68k/test_gfx_text.sh. Clean-room, from the published layouts
  * (offsets checked by text_types.h's static_asserts on the m68k).
- * MIT, Dalsin Limited. */
+ * MIT, AmigaChrome Team. */
 #ifndef GRAPHICS_TEXT_H
 #define GRAPHICS_TEXT_H
 #include <exec/ports.h>

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx's regions: graphics.library's NewRegion, DisposeRegion,
  * ClearRegion and the And/Or/Xor/Clear Rect and Region calls, in plain C.
- * Copyright (c) 2026 Dalsin Limited. MIT.
+ * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Clean-room, from the autodocs and measurements of OS 3.2
  * (tests/RegionABITest.c). The structures have graphics/regions.h's

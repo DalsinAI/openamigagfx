@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /* GfxFaceABITest: OpenGfx graphics.library's face (library/graphics) side
- * by side with OS 3.2's graphics.library. Copyright (c) 2026 Dalsin
- * Limited. MIT.
+ * by side with OS 3.2's graphics.library. Copyright (c) 2026 AmigaChrome
+ * Team. MIT.
  *
  * One script of calls is run through OS 3.2's graphics.library and then
  * through opengfx.library (the same code as OpenGfx's graphics.library

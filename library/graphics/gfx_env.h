@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenGfx graphics.library: the env every area's core reaches exec, the
- * machine and the other areas through. Copyright (c) 2026 Dalsin Limited.
+ * machine and the other areas through. Copyright (c) 2026 AmigaChrome Team.
  * MIT.
  *
  * No Amiga headers: the lean C++ cores of library/graphics (face),

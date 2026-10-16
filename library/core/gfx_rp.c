@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-/* OpenGfx's RastPort calls (gfx_rp.h). Copyright (c) 2026 Dalsin Limited. MIT. */
+/* OpenGfx's RastPort calls (gfx_rp.h). Copyright (c) 2026 AmigaChrome Team. MIT. */
 #include <graphics/gfx.h>
 #include <graphics/clip.h>
 #include <graphics/layers.h>

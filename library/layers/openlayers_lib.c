@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* OpenLayers: an open layers.library for AmigaOS 3.2, API and ABI
- * compatible. Copyright (c) 2026 Dalsin Limited. MIT.
+ * compatible. Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Clean-room: written from layers.library's autodocs, the NDK 3.2 headers'
  * published layouts and OS 3.2's answers measured by tests/LayersABITest,
@@ -53,9 +53,9 @@ struct OLBase {
 int start(void) { return -1; }
 
 static const char lib_name[] = LIBNAME;
-static const char lib_id[] = "layers.library 47.100 (13.10.2026) OpenLayers, Dalsin Limited\r\n";
+static const char lib_id[] = "layers.library 47.100 (13.10.2026) OpenLayers, AmigaChrome Team\r\n";
 static const char lib_ver[] __attribute__((used)) =
-    "\0$VER: layers.library 47.100 (13.10.2026) OpenLayers, Dalsin Limited";
+    "\0$VER: layers.library 47.100 (13.10.2026) OpenLayers, AmigaChrome Team";
 static const char gfx_name[] = "graphics.library";
 
 /* A hook as utility.library calls one: A0 the hook, A2 the object, A1 the

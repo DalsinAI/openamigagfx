@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-/* OpenLayers' calls (layers_lib.h). Copyright (c) 2026 Dalsin Limited. MIT.
+/* OpenLayers' calls (layers_lib.h). Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Clean-room, from the autodocs, the NDK 3.2 headers' public structures and
  * OS 3.2's answers measured by tests/LayersABITest.c; never from Kickstart's

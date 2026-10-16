@@ -1,6 +1,6 @@
 /* DrawProbe: what graphics.library draws, one call at a time, as lines to
  * diff between two ROMs (OS 3.2.3's and the open one).
- * Copyright (c) 2026 Dalsin Limited. MIT.
+ * Copyright (c) 2026 AmigaChrome Team. MIT.
  *
  * Every line is "case | what | value", with no addresses. For each target
  * (an 8-plane and a 2-plane bitmap of its own, an 8-plane AGA screen, an
