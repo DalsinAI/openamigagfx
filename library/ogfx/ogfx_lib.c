@@ -44,9 +44,9 @@
 #define REG OGFX_REG
 
 /* Zorro manufacturer of AmigaChrome's own boards (amigachrome-guest
- * common/protocol/dalsin.h). The old id, 2011, is shared with UAE and
+ * common/protocol/amigachrome_zorro.h). The old id, 2011, is shared with UAE and
  * home-made boards, so it is not taken as proof. */
-#define OGFX_DALSIN_MANUFACTURER 0xDA15
+#define OGFX_AMIGACHROME_MANUFACTURER 0xDA15
 
 /* graphics.library's vectors, in OGFX_P_ order. */
 static const WORD lvo_of[OGFX_P_COUNT] = {
@@ -1008,7 +1008,7 @@ LONG OGFX_InstallPatches(REG(a6, struct Library *base))
     {
         struct Library *ExpansionBase = OpenLibrary((CONST_STRPTR)expansion_name, 37);
         if (ExpansionBase) {
-            st->amigachrome = FindConfigDev(NULL, OGFX_DALSIN_MANUFACTURER, -1) != NULL;
+            st->amigachrome = FindConfigDev(NULL, OGFX_AMIGACHROME_MANUFACTURER, -1) != NULL;
             CloseLibrary(ExpansionBase);
         }
     }
