@@ -242,20 +242,59 @@ int32_t pen_take_free(gfx_colormap *cm)
     return -1;
 }
 
+// A shared pen's full count of holders. pe_RefCnt is a byte a pen; with
+// the count held only there, a pen obtained 300 times was freed by its
+// 256th ReleasePen and handed to the next colour asked for (SatProbe, W33).
+// On the 24-bit Workbench of lab t5-icon24 (W33) pens 0 and 1, which
+// Intuition obtains for the DrawInfo, were found free while in use, and
+// OpenBench's labels and the look-B icons' dark pixels were drawn yellow.
+// icon.library takes a reference for each palette colour of each icon
+// laid out: with this change, after the same boot, pens 1, 233, 248 and
+// 251 had 255 holders or more (PenProbe, W33). OS 3.2.3's
+// graphics 47.10 keeps a pen obtained 300 and 1000 times until its last
+// release (SatProbe). The full counts are kept after the bytes, in the
+// same allocation (pen_counts_size); pe_RefCnt shows them up to 255.
+uint32_t pen_counts_at(uint32_t count) { return (count + 1) & ~1u; }   // even: a 68000 reads the words there
+uint32_t pen_counts_size(uint32_t count) { return pen_counts_at(count) + count * 2; }
+uint16_t *pen_counts(gfx_colormap *cm)
+{
+    return reinterpret_cast<uint16_t *>(cm->palextra->refcnt + pen_counts_at(cm->count));
+}
+
+void pen_set_count(gfx_colormap *cm, uint32_t n, uint16_t c)
+{
+    pen_counts(cm)[n] = c;
+    cm->palextra->refcnt[n] = uint8_t(c < 255 ? c : 255);
+}
+
 void pen_mark(gfx_colormap *cm, uint32_t n, uint8_t state)
 {
     gfx_paletteextra *pe = cm->palextra;
     if (pe->alloclist[n] == PEN_FREE) pe->nfree--;
     if (pe->alloclist[n] == PEN_SHARED) pe->nshared--;
     pe->alloclist[n] = state;
-    pe->refcnt[n] = state == PEN_SHARED ? 1 : 0;
+    pen_set_count(cm, n, state == PEN_SHARED ? 1 : 0);
     if (state == PEN_FREE) pe->nfree++;
     if (state == PEN_SHARED) pe->nshared++;
 }
 
-void pen_share(gfx_paletteextra *pe, uint32_t n)
+// 65535 holders and the pen stays shared for good: never freed in use
+void pen_share(gfx_colormap *cm, uint32_t n)
 {
-    if (pe->refcnt[n] < 255) pe->refcnt[n]++;
+    uint16_t c = pen_counts(cm)[n];
+    if (c < 0xFFFF) pen_set_count(cm, n, uint16_t(c + 1));
+}
+
+// true when the last holder has gone
+bool pen_unshare(gfx_colormap *cm, uint32_t n)
+{
+    uint16_t c = pen_counts(cm)[n];
+    if (c == 0xFFFF) return false;
+    if (c > 1) {
+        pen_set_count(cm, n, uint16_t(c - 1));
+        return false;
+    }
+    return true;
 }
 
 // ---- regions ---------------------------------------------------------------
@@ -906,7 +945,7 @@ void gfx_FreeColorMap(gfx_env *e, gfx_colormap *cm)
 {
     if (!cm) return;
     if (gfx_paletteextra *pe = cm->palextra) {
-        mem_free(e, pe->refcnt, cm->count);
+        mem_free(e, pe->refcnt, pen_counts_size(cm->count));
         mem_free(e, pe->alloclist, cm->count);
         mem_free(e, pe, sizeof(gfx_paletteextra));
     }
@@ -1011,10 +1050,10 @@ int32_t gfx_AttachPalExtra(gfx_env *e, gfx_colormap *cm, void *vp)
     if (cm->palextra) return 0; // ABI test: a second call
     auto *pe = static_cast<gfx_paletteextra *>(mem_alloc(e, sizeof(gfx_paletteextra), GFX_MEMF_PUBLIC | GFX_MEMF_CLEAR));
     if (!pe) return 1;
-    pe->refcnt = static_cast<uint8_t *>(mem_alloc(e, cm->count, GFX_MEMF_PUBLIC | GFX_MEMF_CLEAR));
+    pe->refcnt = static_cast<uint8_t *>(mem_alloc(e, pen_counts_size(cm->count), GFX_MEMF_PUBLIC | GFX_MEMF_CLEAR));
     pe->alloclist = static_cast<uint8_t *>(mem_alloc(e, cm->count, GFX_MEMF_PUBLIC | GFX_MEMF_CLEAR));
     if (!pe->refcnt || !pe->alloclist) {
-        mem_free(e, pe->refcnt, cm->count);
+        mem_free(e, pe->refcnt, pen_counts_size(cm->count));
         mem_free(e, pe->alloclist, cm->count);
         mem_free(e, pe, sizeof(gfx_paletteextra));
         return 1;
@@ -1050,7 +1089,7 @@ int32_t gfx_ObtainPen(gfx_env *e, gfx_colormap *cm, uint32_t n, uint32_t r, uint
         } else if (st == PEN_SHARED && !(flags & GFX_PEN_EXCLUSIVE) &&
                    ((flags & GFX_PEN_NO_SETCOLOR) || !color_dist(cm, uint32_t(want), r, g, b))) {
             // ABI test: sharing a named pen asks for its colour
-            pen_share(pe, uint32_t(want));
+            pen_share(cm, uint32_t(want));
             pen = want;
         }
     }
@@ -1066,8 +1105,7 @@ void gfx_ReleasePen(gfx_env *e, gfx_colormap *cm, uint32_t n)
     if (!pe || n >= pe_pens(pe)) return;
     e->sem_obtain(e->ctx, &pe->semaphore);
     if (pe->alloclist[n] == PEN_SHARED) {
-        if (pe->refcnt[n] > 1) pe->refcnt[n]--;
-        else pen_mark(cm, n, PEN_FREE);
+        if (pen_unshare(cm, n)) pen_mark(cm, n, PEN_FREE);
     } else if (pe->alloclist[n] == PEN_EXCL) pen_mark(cm, n, PEN_FREE);
     int32_t next = pen_take_free(cm);
     pe->firstfree = uint16_t(next < 0 ? 0 : next);
@@ -1095,13 +1133,13 @@ int32_t gfx_ObtainBestPenA(gfx_env *e, gfx_colormap *cm, uint32_t r, uint32_t g,
     }
     int32_t pen = -1;
     if (best >= 0 && near_enough(bestd, prec)) {
-        pen_share(pe, uint32_t(best));
+        pen_share(cm, uint32_t(best));
         pen = best;
     } else if ((pen = pen_take_free(cm)) >= 0) {
         pen_mark(cm, uint32_t(pen), PEN_SHARED);
         pen_set_color(e, cm, uint32_t(pen), r, g, b);
     } else if (!failbad && best >= 0) {
-        pen_share(pe, uint32_t(best));
+        pen_share(cm, uint32_t(best));
         pen = best;
     }
     int32_t next = pen_take_free(cm);
