@@ -13,6 +13,6 @@ CC=${CC:-"$P/bin/m68k-amigaos-gcc"}
 OUT=${OUT:-"$TOP/library/graphics/build-amiga"}
 sh "$TOP/library/graphics/build-amiga.sh"
 mkdir -p "$OUT/tests"
-"$CC" -m68000 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
+"$CC" -m68040 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
   -o "$OUT/tests/GelsABITest" "$TOP/tests/GelsABITest.c"
 echo "$OUT/tests/GelsABITest ($(wc -c < "$OUT/tests/GelsABITest") bytes)"

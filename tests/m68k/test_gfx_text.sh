@@ -1,6 +1,6 @@
 #!/bin/sh
 # OpenGfx text (library/text): the lean C++ core, built with an m68k cross
-# GCC for the 68000, 68020 and 68040 at -O0 and -O2, each run on that CPU
+# GCC for the 68040 at -O0 and -O2, each run on that CPU
 # under qemu-m68k against a python3 model made at test time
 # (test_gfx_text_model.py: random fonts, colour, proportional, kerned and
 # right-to-left, strings, styles and draw modes; Text's pixels, TextLength,
@@ -39,12 +39,8 @@ warn="-Wall -Wextra -Werror"
 inc="-I$here/text-ndk -I$here/../host-ndk -I$core -I$text -I$tmp -include $here/text-ndk/gfxdefs.h"
 cxxflags="-std=gnu++23 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-asynchronous-unwind-tables
   -fno-unwind-tables -nostdlib++ -ffreestanding -fno-builtin $warn"
-for cpu in -m68000 -m68020 -m68040; do
+for cpu in -m68040; do
   for opt in -O0 -O2; do
-    case $cpu in
-      -m68000) rt="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -nostdlib -ffreestanding -fno-builtin $here/rt68000.c $here/text_rt68000.c" ;;
-      *) rt= ;;
-    esac
     o=$tmp/o$cpu$opt; mkdir -p "$o"
     # shellcheck disable=SC2086
     "$cxx" $cpu $opt $cxxflags -c "$text/text_core.cpp" -o "$o/text_core.o"
@@ -67,7 +63,7 @@ for cpu in -m68000 -m68020 -m68040; do
       src="$src $text/text_lvo.c $core/gfx_region.c $o/face.o"
     fi
     # shellcheck disable=SC2086
-    "$cc" $cpu $opt -static $warn -Wno-unused-parameter $lvo $inc -o "$o/t" $src "$o/text_core.o" "$o/topaz_data.o" $rt
+    "$cc" $cpu $opt -static $warn -Wno-unused-parameter $lvo $inc -o "$o/t" $src "$o/text_core.o" "$o/topaz_data.o"
     q=m${cpu#-m}
     if out=$(timeout 120 "$qemu" -cpu $q "$o/t" 2>&1 | head -c 8000000); then
       case $out in *" 0 failed"*) echo "ok   $opt $cpu: $out" ;; *) echo "FAIL $opt $cpu:"; echo "$out"; fail=1 ;; esac

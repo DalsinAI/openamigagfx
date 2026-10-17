@@ -9,12 +9,12 @@ STOVE=${STOVE:-"$HOME/AmigaChrome/stoves/os32-gcc16"}
 CC=${CC:-"$STOVE/prefix/bin/m68k-amigaos-gcc"}
 OUT=${OUT:-"$HERE/build-amiga"}
 mkdir -p "$OUT"
-# A 68000 build: the core must run on every Amiga.
-"$CC" -m68000 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -noixemul \
+# A 68040 build (all builds are 68040 only).
+"$CC" -m68040 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -noixemul \
   -I"$HERE/library/core" -o "$OUT/GfxCoreABITest" \
   "$HERE/tests/GfxCoreABITest.c" "$HERE/library/core/gfx_rp.c" "$HERE/library/core/gfx_core.c"
 echo "$OUT/GfxCoreABITest ($(wc -c < "$OUT/GfxCoreABITest") bytes)"
-"$CC" -m68000 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -noixemul \
+"$CC" -m68040 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -noixemul \
   -I"$HERE/library/core" -o "$OUT/RegionABITest" \
   "$HERE/tests/RegionABITest.c" "$HERE/library/core/gfx_region.c"
 echo "$OUT/RegionABITest ($(wc -c < "$OUT/RegionABITest") bytes)"

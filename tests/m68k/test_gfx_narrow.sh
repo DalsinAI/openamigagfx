@@ -6,7 +6,7 @@
 #     casts it to that width.
 #  2. test_gfx_narrow.c calls a sample of the face's LVOs twice, with clean
 #     arguments and with garbage in the upper parts, under qemu-m68k on the
-#     68000, 68020 and 68040: the rasters and answers must match.
+#     68040: the rasters and answers must match.
 #   sh tests/m68k/test_gfx_narrow.sh
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
@@ -25,19 +25,15 @@ cxxflags="-std=gnu++23 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-as
   -fno-unwind-tables -nostdlib++ -ffreestanding -fno-builtin -Wall -Wextra -Werror"
 warn="-Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-function"
 inc="-I$g -I$core -I$here/gfx_face_ndk -I$here/../host-ndk"
-for cpu in -m68000 -m68020 -m68040; do
+for cpu in -m68040; do
   for opt in -O0 -O2; do
-    case $cpu in
-      -m68000) rt="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -nostdlib -ffreestanding -fno-builtin $here/rt68000.c" ;;
-      *) rt= ;;
-    esac
     # shellcheck disable=SC2086
     "$cxx" $cpu $opt $cxxflags -I"$g" -I"$core" -c -o "$tmp/face.o" "$g/gfx_face.cpp"
     # shellcheck disable=SC2086
     "$cc" $cpu $opt -std=gnu11 $warn -I"$g" -c -o "$tmp/lvo.o" "$g/face_lvo.c"
     # shellcheck disable=SC2086
     "$cc" $cpu $opt -static $warn -DROUNDS=$rounds $inc -o "$tmp/t" "$here/test_gfx_narrow.c" \
-      "$core/gfx_core.c" "$core/gfx_region.c" "$core/gfx_rp.c" "$tmp/face.o" "$tmp/lvo.o" $rt
+      "$core/gfx_core.c" "$core/gfx_region.c" "$core/gfx_rp.c" "$tmp/face.o" "$tmp/lvo.o"
     if timeout 120 "$qemu" -cpu m${cpu#-m} "$tmp/t" > "$tmp/out" && grep -q '^END 0$' "$tmp/out"; then
       echo "ok   $opt $cpu: $(grep '^narrow:' "$tmp/out")"
     else

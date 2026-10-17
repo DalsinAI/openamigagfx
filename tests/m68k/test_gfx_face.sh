@@ -1,7 +1,7 @@
 #!/bin/sh
 # OpenGfx graphics.library's face (library/graphics) under qemu-m68k: the
 # lean C++ face with the core (library/core), built with an m68k cross
-# GCC for the 68000, 68020 and 68040 at -O0 and -O2, each run on that CPU
+# GCC for the 68040 at -O0 and -O2, each run on that CPU
 # by tests/m68k/test_gfx_face.c, whose every line a python3 model written
 # here, apart from the library, checks: bitmaps and rasters, RastPort
 # state and tags, colour maps, pen sharing, regions, Flood, BitMapScale
@@ -452,12 +452,8 @@ print("%d lines, %d model errors" % (checks, bad))
 sys.exit(1 if bad else 0)
 PY
 
-for cpu in -m68000 -m68020 -m68040; do
+for cpu in -m68040; do
   for opt in -O0 -O2; do
-    case $cpu in
-      -m68000) rt="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -nostdlib -ffreestanding -fno-builtin $here/rt68000.c" ;;
-      *) rt= ;;
-    esac
     # shellcheck disable=SC2086
     "$cxx" $cpu $opt $cxxflags -I"$g" -I"$core" -c -o "$tmp/face.o" "$g/gfx_face.cpp"
     # the face itself: no data, no bss (read-only constants are code), no C++ runtime; it calls the core,
@@ -470,7 +466,7 @@ for cpu in -m68000 -m68020 -m68040; do
     [ -z "$cxxrt" ] || { echo "FAIL $opt $cpu: C++ runtime: $cxxrt"; fail=1; }
     # shellcheck disable=SC2086
     "$cc" $cpu $opt -static $warn -DROUNDS=$rounds $inc -o "$tmp/t" "$here/test_gfx_face.c" \
-      "$core/gfx_core.c" "$core/gfx_region.c" "$core/gfx_rp.c" "$tmp/face.o" $rt
+      "$core/gfx_core.c" "$core/gfx_region.c" "$core/gfx_rp.c" "$tmp/face.o"
     q=m${cpu#-m}
     if timeout 120 "$qemu" -cpu $q "$tmp/t" | head -c 8000000 > "$tmp/out"; then
       if res=$(python3 "$tmp/model.py" "$tmp/out"); then echo "ok   $opt $cpu: $res"
@@ -480,11 +476,11 @@ for cpu in -m68000 -m68020 -m68040; do
 done
 
 # the face's register entries compile as C (GFX_REG as plain parameters here)
-"$cc" -std=gnu11 -O2 $warn -I"$g" -c -o "$tmp/lvo.o" "$g/face_lvo.c" || fail=1
+"$cc" -std=gnu11 -m68040 -O2 $warn -I"$g" -c -o "$tmp/lvo.o" "$g/face_lvo.c" || fail=1
 "$nm" "$tmp/lvo.o" > "$tmp/defined"
 "$nm" "$tmp/face.o" >> "$tmp/defined"
 python3 "$g/gen_stubs.py" "$g/graphics.lvo" "$tmp/defined" "$tmp" | cut -c1-100
-"$cc" -O2 $warn -I"$g" -c -o "$tmp/stubs.o" "$tmp/gfx_stubs.c" || fail=1
+"$cc" -m68040 -O2 $warn -I"$g" -c -o "$tmp/stubs.o" "$tmp/gfx_stubs.c" || fail=1
 grep -c 'gfx_lvo_' "$tmp/gfx_vectors.h" | grep -qx 344 || { echo "FAIL gfx_vectors.h is not 172 slots"; fail=1; }
 [ $fail = 0 ] && echo "test_gfx_face: all passed"
 exit $fail
