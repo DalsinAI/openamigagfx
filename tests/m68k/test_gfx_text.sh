@@ -27,7 +27,7 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail=0
 
 python3 "$here/test_gfx_text_model.py" "$seed" > "$tmp/cases.h"
-# the font data must be what mkfont.py makes from topaz8.txt
+# the font data must be what mkfont.py makes from romfont8.txt and romfont9.txt
 python3 "$text/mkfont.py" > "$tmp/topaz_data.cpp"
 cmp -s "$tmp/topaz_data.cpp" "$text/topaz_data.cpp" || { echo "FAIL topaz_data.cpp is not mkfont.py's"; fail=1; }
 
