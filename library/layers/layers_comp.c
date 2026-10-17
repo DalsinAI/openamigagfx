@@ -16,7 +16,8 @@
  * The screen's bitmap always holds what is shown. A change of the stack is
  * composed into it at once, under every lock the change holds; what is
  * drawn into a layer is marked (oc_mark, on the drawing calls' vectors)
- * and composed by the compositor task at the next vertical blank. A
+ * and composed by the compositor task once the drawing has paused for
+ * OC_SETTLE (oc_settle), not at the next vertical blank. A
  * compose is one OpenGPU batch with one fence: what no layer covers gets
  * the Layer_Info's backfill, then each shown layer, back to front, its
  * shadow under it, is copied (opaque) or composited (with its opacity, or
@@ -27,6 +28,7 @@
  * those are classic layers, exactly as before. */
 #include <exec/tasks.h>
 #include <exec/execbase.h>
+#include <devices/timer.h>
 #include <dos/dos.h>
 #include <dos/dosextens.h>
 #include <graphics/gfxbase.h>
@@ -57,6 +59,13 @@ enum { SET_ON, SET_SHADOWS, SET_SIZE, SET_STRENGTH, SET_DRAG, SET_INACTIVE };
 #define OC_SIG SIGBREAKF_CTRL_F
 #define OC_NPATCH 37
 #define OC_THUNK 25
+/* What is drawn is composed once nothing more has been drawn for
+ * OC_SETTLE microseconds, and at most OC_SETTLE_MAX after the first mark
+ * (a program drawing all the time). Composing at the next WaitTOF instead
+ * made drawn-to-shown 20.2 ms on average (W50's CompTest); every redraw a
+ * click brings waited for it, a click that makes two waited twice. */
+#define OC_SETTLE 1000
+#define OC_SETTLE_MAX 8000
 
 /* One composited Layer_Info. */
 struct OComp {
@@ -86,6 +95,7 @@ struct OCB {
     struct OComp *comps;
     UBYTE pending;
     ULONG composes;
+    ULONG marks;                        /* counts every mark, for oc_settle */
     struct OThunk *thunk[OC_NPATCH];    /* the newest thunk on each call */
 };
 
@@ -176,6 +186,7 @@ static __attribute__((noinline)) void oc_add(struct OCB *cb, struct OLayer *o, L
         if (x1 > d->x1) d->x1 = x1;
         if (y1 > d->y1) d->y1 = y1;
     }
+    cb->marks++;
     if (!cb->pending) {
         cb->pending = 1;
         Signal(cb->task, OC_SIG);
@@ -663,13 +674,37 @@ static void oc_run(struct OCB *cb)
     }
 }
 
+/* Until the drawing pauses: OC_SETTLE at a time while marks keep coming,
+ * OC_SETTLE_MAX in all. The compositor's priority (1) is above a drawing
+ * program's, so the timer, not the program's next Wait, ends each step. */
+static void oc_settle(struct OCB *cb, struct timerequest *tr)
+{
+    volatile ULONG *marks = &cb->marks;
+    ULONG n, t = 0;
+    do {
+        n = *marks;
+        tr->tr_node.io_Command = TR_ADDREQUEST;
+        tr->tr_time.tv_secs = 0;
+        tr->tr_time.tv_micro = OC_SETTLE;
+        DoIO((struct IORequest *)tr);
+        t += OC_SETTLE;
+    } while (*marks != n && t < OC_SETTLE_MAX);
+}
+
 static void oc_task(void)
 {
     struct OCB *cb = (struct OCB *)FindTask(0)->tc_UserData;
     struct ol_base *olb = cb->olb;
+    struct MsgPort *port = CreateMsgPort();
+    struct timerequest *tr = port ? (struct timerequest *)CreateIORequest(port, sizeof *tr) : 0;
+    if (tr && OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0)) {
+        DeleteIORequest((struct IORequest *)tr);
+        tr = 0;
+    }
     for (;;) {
         Wait(OC_SIG);
-        WaitTOF();
+        if (tr) oc_settle(cb, tr);
+        else WaitTOF();                 /* no timer.device: at the next vertical blank, as before */
         oc_run(cb);
     }
 }

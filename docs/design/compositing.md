@@ -30,7 +30,7 @@ A screen keeps its mode until it closes. A changed switch applies to the screens
 
 - **The screen's bitmap always holds what is shown.** It is the composition's target; nothing else is.
 - **A change of the stack** (create, delete, depth, move, size, hide, show, `SetLayerInfoBounds`) is composed at once, inside the call, under the locks the call holds: the old and new places of the layer it changed, with their shadows, or everything for a change of the bounds.
-- **What is drawn** into a layer is marked and composed at the next vertical blank by the compositor task (`layers.library compositor`, priority 1). It wakes on the first mark, waits for `WaitTOF`, takes every layer's dirty box and composes their union, so a program drawing fast is shown at most once a frame.
+- **What is drawn** into a layer is marked and composed by the compositor task (`layers.library compositor`, priority 1) as soon as the drawing pauses. It wakes on the first mark, then waits on timer.device in steps of 1 ms until a step passes with no new mark (8 ms at most from the first mark), takes every layer's dirty box and composes their union. A burst of drawing is composed once; a program drawing all the time is composed every 8 ms. Waiting for `WaitTOF` instead (until W56) made drawn-to-shown 20 ms on average, and a click that brought two redraws waited for two frames. Without timer.device it falls back to `WaitTOF`.
 
 ### The marks
 
