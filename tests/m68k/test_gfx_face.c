@@ -432,6 +432,28 @@ static void t_colors(void)
             }
             if (sem_held) fail("pen lock", sem_held);
         }
+        {   /* one colour obtained 300 times, released 299: still shared, its pe_RefCnt at 255 on the way (W33) */
+            struct gfx_tagitem t[3];
+            int32_t pen = -1, p;
+            uint32_t a = (rnd() & 0xFF000000u) | 0x00010203u;
+            t[0].tag = GFX_OBP_PRECISION; t[0].data = (uint32_t)-1;
+            t[1].tag = GFX_OBP_FAILIFBAD; t[1].data = 0;
+            t[2].tag = GFX_TAG_DONE;
+            for (k = 0; k < 300; k++) {
+                p = gfx_ObtainBestPenA(&env, cm, a, a, a, t);
+                printf("BP %lu %lu %lu -1 0 %ld\n", (unsigned long)(a >> 24), (unsigned long)(a >> 24), (unsigned long)(a >> 24), (long)p);
+                if (!k) pen = p;
+            }
+            if (pen >= 0 && cm->palextra)
+                printf("RC %ld %u\n", (long)pen, (unsigned)cm->palextra->refcnt[pen]);
+            for (k = 0; pen >= 0 && k < 299; k++) {
+                gfx_ReleasePen(&env, cm, (uint32_t)pen);
+                printf("RP %lu\n", (unsigned long)pen);
+            }
+            if (pen >= 0 && cm->palextra)
+                printf("RC %ld %u\n", (long)pen, (unsigned)cm->palextra->refcnt[pen]);
+            if (sem_held) fail("pen lock", sem_held);
+        }
         gfx_FreeColorMap(&env, cm);
         arena_reset("colormap leak");
     }
