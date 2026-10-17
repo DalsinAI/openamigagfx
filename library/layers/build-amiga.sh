@@ -26,9 +26,13 @@ python3 "$GUEST/libraries/common/check_fd.py" "$FD" "$HERE/layers.lvo"
 LIBFLAGS="-m68000 $OPT -fno-strict-aliasing -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
   -fno-lto -fno-builtin -fno-tree-loop-distribute-patterns -Wall -Wextra -Werror
   -Wno-unused-parameter -nostartfiles -nostdlib"
+# OL_COMPOSITE: the composited mode (layers_comp.c, docs/design/compositing.md);
+# COMPOSITE=0 builds classic layers only, as before it
+COMP=${COMPOSITE:-1}
+[ "$COMP" = 0 ] && CDEF= || CDEF=-DOL_COMPOSITE
 for name in layers openlayers; do
   # shellcheck disable=SC2086
-  "$CC" $LIBFLAGS -DLIBNAME="\"$name.library\"" -I"$HERE" -o "$OUT/libs/$name.library" \
+  "$CC" $LIBFLAGS $CDEF -DLIBNAME="\"$name.library\"" -I"$HERE" -I"$HERE/../../include" -o "$OUT/libs/$name.library" \
     "$HERE/openlayers_lib.c" "$HERE/layers_lib.c" "$HERE/layers_core.c" "$HERE/layers_arith.c" -lgcc
   echo "$OUT/libs/$name.library ($(wc -c < "$OUT/libs/$name.library") bytes)"
   und=$("$P/bin/m68k-amigaos-nm" -u "$OUT/libs/$name.library" || true)

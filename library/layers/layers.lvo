@@ -38,3 +38,6 @@
 -228 HideLayer a0
 -234 ShowLayer a0,a1
 -240 SetLayerInfoBounds a0,a1
+-246 ComposeLayerInfo a0,a1,d0  # ours, beyond the fd: the composited mode (include/graphics/openlayers.h)
+-252 SetLayerOpacity a0,d0  # ours, beyond the fd
+-258 SetLayerLook a0,d0,d1  # ours, beyond the fd
