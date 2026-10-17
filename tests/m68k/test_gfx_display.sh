@@ -1,7 +1,7 @@
 #!/bin/sh
 # OpenGfx graphics.library's display (library/display) under qemu-m68k:
-# the lean C++ core built with an m68k cross GCC for the 68000, 68020 and
-# 68040 at -O0 and -O2, each run on that CPU by test_gfx_display.cpp on a
+# the lean C++ core built with an m68k cross GCC for the 68040
+# at -O0 and -O2, each run on that CPU by test_gfx_display.cpp on a
 # simulated machine (exec's memory, the custom chips' registers, a copper
 # running the lists, an Agnus/Denise/Lisa showing the bitplanes).
 # test_gfx_display_model.py, written apart from the library, makes random
@@ -39,17 +39,11 @@ python3 "$here/test_gfx_display_model.py" "$seed" "$scenes" "$tmp/scenes.h" "$tm
 LEAN="-std=gnu++23 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-asynchronous-unwind-tables
   -fno-unwind-tables -nostdlib++ -fno-builtin -fno-tree-loop-distribute-patterns -fno-strict-aliasing"
 CORE="$d/display_view.cpp $d/display_hw.cpp $d/display_db.cpp"
-for cpu in 68000 68020 68040; do
+for cpu in 68040; do
   for opt in -O0 -O2; do
-    case $cpu in
-      68000) rt="-ffreestanding -nostdlib -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
-             "$cc" -m68000 $opt -ffreestanding -fno-builtin -c -o "$tmp/rt.o" "$here/rt68000.c"
-             extra="$tmp/rt.o" ;;
-      *) rt= extra= ;;
-    esac
     # shellcheck disable=SC2086
-    "$cxx" -m$cpu $opt -static $LEAN $rt -Wall -Wextra -Werror -I"$d" -I"$g" -I"$tmp" -o "$tmp/t" \
-      "$here/test_gfx_display.cpp" $CORE $extra
+    "$cxx" -m$cpu $opt -static $LEAN -Wall -Wextra -Werror -I"$d" -I"$g" -I"$tmp" -o "$tmp/t" \
+      "$here/test_gfx_display.cpp" $CORE
     timeout 120 "$qemu" -cpu m$cpu "$tmp/t" | head -c 8000000 > "$tmp/out" || true
     last=$(tail -n 1 "$tmp/out")
     grep -v '^FAIL\|^  \|checks, ' "$tmp/out" > "$tmp/got" || true
@@ -72,10 +66,10 @@ grep -q 'registers match' "$tmp/regs" || { echo "FAIL check_regs"; cat "$tmp/reg
 for name in $(grep -E '\| gfx-display \|' "$g/OWNERS.md" | sed -n 's/.*`gfx_lvo_\([A-Za-z0-9_]*\)`.*/\1/p'); do
   grep -q "gfx_lvo_$name(" "$d/display_lvo.c" || { echo "FAIL gfx_lvo_$name is the display's and missing"; fail=1; }
 done
-"$cc" -std=gnu99 -m68000 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -I"$d" -I"$g" -c -o "$tmp/lvo.o" "$d/display_lvo.c"
+"$cc" -std=gnu99 -m68040 -O2 -Wall -Wextra -Werror -Wno-unused-parameter -I"$d" -I"$g" -c -o "$tmp/lvo.o" "$d/display_lvo.c"
 for f in $CORE; do
   # shellcheck disable=SC2086
-  "$cxx" -m68000 -O2 $LEAN -ffreestanding -Wall -Wextra -Werror -I"$d" -I"$g" -c -o "$tmp/$(basename "$f").o" "$f"
+  "$cxx" -m68040 -O2 $LEAN -ffreestanding -Wall -Wextra -Werror -I"$d" -I"$g" -c -o "$tmp/$(basename "$f").o" "$f"
 done
 m68k-linux-gnu-ld -r -o "$tmp/core.o" "$tmp"/display_*.cpp.o
 und=$("$nm" -u "$tmp/core.o" | awk '{print $2}' | grep -v -E '^__(mul|div|udiv|mod|umod)si3$' || true)

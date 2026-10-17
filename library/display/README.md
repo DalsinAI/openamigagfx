@@ -99,7 +99,7 @@ The horizontal position follows the HRM:
 
 ## The tests
 
-`tests/m68k/test_gfx_display.sh` builds the core with m68k-linux-gnu-g++ 13.3 for the 68000, 68020 and 68040 at -O0 and -O2. It runs each build under qemu-m68k 8.2 on a simulated machine: exec's memory, the custom registers, a copper running the lists four colour clocks per instruction, and an Agnus/Denise/Lisa that shows the bitplanes line by line. The display models OCS, ECS and AGA, HAM6, HAM8, EHB, dual playfield, PF2OF, BPLAM and LOCT.
+`tests/m68k/test_gfx_display.sh` builds the core with m68k-linux-gnu-g++ 13.3 for the 68040 at -O0 and -O2 (until 17 October 2026 also for the 68000 and 68020). It runs each build under qemu-m68k 8.2 on a simulated machine: exec's memory, the custom registers, a copper running the lists four colour clocks per instruction, and an Agnus/Denise/Lisa that shows the bitplanes line by line. The display models OCS, ECS and AGA, HAM6, HAM8, EHB, dual playfield, PF2OF, BPLAM and LOCT.
 
 `test_gfx_display_model.py` is written separately from the library and does not model the copper. It makes random scenes and says, from the documented View and ViewPort rules, what each ViewPort must show. The scenes cover:
 
