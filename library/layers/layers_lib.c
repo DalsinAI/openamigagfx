@@ -65,7 +65,10 @@
  * the layer in front, before V45). OS 3.2 puts 1 there (measured). */
 #define OBSCURED 1
 
-enum { K_SCREEN, K_BM, K_SUPER, K_NONE };
+/* K_SURF: a composited layer's one piece, whose BitMap is the layer's
+ * surface (layers_comp.c): placed as a K_BM piece is, never freed with the
+ * list. */
+enum { K_SCREEN, K_BM, K_SUPER, K_NONE, K_SURF };
 
 /* Our ClipRects: graphics.library's, then what is ours. */
 struct OClip {
@@ -87,6 +90,19 @@ struct OLayer {
     struct lc_rects fills_y;    /* the same, rows first, for a moved simple layer itself */
     struct Rectangle oldb;
     UBYTE hidden, oldhidden;
+#ifdef OL_COMPOSITE
+    ULONG magic;                /* OL_MAGIC: one of ours (the drawing marks check it) */
+    struct BitMap *surf;        /* composited: the layer's surface; 0 for a classic layer */
+    ULONG saddr, sbpr;          /* its pixel 0,0 and bytes a row (ORTG_BitMapInfo) */
+    struct BitMap *nsurf;       /* finish's new surface, while it is being made */
+    ULONG naddr, nbpr;
+    UWORD sw, sh, nsw, nsh;     /* their sizes */
+    UBYTE soff;                 /* the layer's pixels start at x soff in it: MinX & 15 when they were put there */
+    UBYTE opacity;              /* 0-255, SetLayerOpacity's */
+    UBYTE look;                 /* OLOOK_ bits (layers_comp.c) */
+    UBYTE grown;
+    struct lc_rect dirty;       /* drawn since the last compose, from the layer's top left; x0 > x1 for none */
+#endif
 };
 
 /* What a Layer_Info has that its structure has no room for. */
@@ -97,7 +113,22 @@ struct OInfo {
     struct Rectangle bounds;    /* SetLayerInfoBounds' */
     UBYTE have_bounds;
     UWORD fattened;             /* FattenLayerInfo less ThinLayerInfo */
+#ifdef OL_COMPOSITE
+    struct OComp *comp;         /* composited: its state (layers_comp.c); 0 for classic layers */
+#endif
 };
+
+#ifdef OL_COMPOSITE
+struct change;
+struct OComp;
+static int oc_finish(struct change *ch, struct Layer *made, struct Layer *gone);
+static void oc_touch(struct ol_base *olb, struct Layer *l, const struct lc_rect *r);
+static void oc_demoted(struct change *ch, int ok);
+static void oc_gone(struct ol_base *olb, struct Layer *l);
+static void oc_info_drop(struct ol_base *olb, struct OInfo *i);
+static void oc_lock(struct ol_base *olb, int on);
+#define OL_MAGIC 0x4F4C4159UL   /* 'OLAY' */
+#endif
 
 #define OL(l) ((struct OLayer *)(l))
 
@@ -124,6 +155,9 @@ void ol_init(struct ol_base *olb, struct GfxBase *gfx)
     olb->gfx = gfx;
     InitSemaphore(&olb->infolock);
     olb->infos = 0;
+#ifdef OL_COMPOSITE
+    olb->cb = 0;
+#endif
 }
 
 static struct OInfo *info_of(struct ol_base *olb, struct Layer_Info *li, int make)
@@ -147,11 +181,14 @@ static void info_drop(struct ol_base *olb, struct Layer_Info *li)
     ObtainSemaphore(&olb->infolock);
     for (pp = &olb->infos; (i = *pp) && i->li != li; pp = &i->next)
         ;
+    if (i) *pp = i->next;
+    ReleaseSemaphore(&olb->infolock);
     if (i) {
-        *pp = i->next;
+#ifdef OL_COMPOSITE
+        if (i->comp) oc_info_drop(olb, i);
+#endif
         FreeMem(i, sizeof *i);
     }
-    ReleaseSemaphore(&olb->infolock);
 }
 
 /* ---- rectangles -------------------------------------------------------- */
@@ -203,6 +240,7 @@ static struct place place_of(struct Layer *l, const struct OClip *c, LONG ox, LO
     struct place p;
     switch (c->kind) {
     case K_BM:
+    case K_SURF:
         p.bm = c->cr.BitMap;
         p.dx = -(LONG)(c->cr.bounds.MinX & ~15);
         p.dy = -(LONG)c->cr.bounds.MinY;
@@ -322,10 +360,12 @@ static int make_sub(struct ol_base *olb, struct Layer *l, struct OClip *list, co
         for (i = 0; i < set->n; i++) {
             struct OClip *s;
             if (!lc_meet(&b, &set->r[i], &m)) continue;
-            if (!(s = add_clip(&head, &tail, &m, c->kind))) goto fail;
+            /* a surface's piece is cut as a backing bitmap's: its own
+             * bitmap, copied back to the surface by drop_sub */
+            if (!(s = add_clip(&head, &tail, &m, c->kind == K_SURF ? K_BM : c->kind))) goto fail;
             s->parent = c;
             s->cr.obscured = c->cr.obscured;
-            if (c->kind == K_BM) {
+            if (s->kind == K_BM) {
                 struct place ps, pd;
                 if (!(s->cr.BitMap = backing(olb, l, &m))) goto fail;
                 ps = place_of(l, c, 0, 0);
@@ -351,6 +391,9 @@ static void drop_sub(struct ol_base *olb, struct Layer *l, struct OClip *list)
             struct lc_rect b = lr(&c->cr.bounds);
             struct place ps = place_of(l, c, 0, 0), pd = place_of(l, c->parent, 0, 0);
             copy(olb, &ps, &pd, &b, 0, 0);
+#ifdef OL_COMPOSITE
+            if (c->parent->kind == K_SURF) oc_touch(olb, l, &b);
+#endif
         }
     free_list(olb, list);
 }
@@ -456,6 +499,12 @@ struct change {
     ULONG nold;
     struct lc_rect screen;
     int have_screen;
+#ifdef OL_COMPOSITE
+    struct OComp *comp;         /* the Layer_Info is composited */
+    struct OComp *demoted;      /* it was, and goes back to classic layers in this call */
+    struct Layer *subject;      /* the layer a depth, hide or show call is about */
+    UBYTE locked, full;         /* the composited mode's lock is held; everything is to be composed */
+#endif
 };
 
 static void lock_info_all(struct Layer_Info *li)
@@ -490,6 +539,15 @@ static int begin(struct ol_base *olb, struct Layer_Info *li, struct change *ch)
         detach(olb, l);
     }
     inf = info_of(olb, li, 0);
+#ifdef OL_COMPOSITE
+    /* a composited Layer_Info's stack changes under the composited mode's
+     * lock too, taken last, so its compositor sees it whole */
+    ch->comp = inf ? inf->comp : 0;
+    ch->demoted = 0;
+    ch->subject = 0;
+    ch->full = 0;
+    if ((ch->locked = ch->comp != 0)) oc_lock(olb, 1);
+#endif
     ch->have_screen = 0;
     if (inf && inf->have_bounds) {
         ch->screen = lr(&inf->bounds);
@@ -509,6 +567,9 @@ static int begin(struct ol_base *olb, struct Layer_Info *li, struct change *ch)
 static void end(struct change *ch)
 {
     ULONG i;
+#ifdef OL_COMPOSITE
+    if (ch->locked) oc_lock(ch->olb, 0);
+#endif
     for (i = 0; i < ch->nold; i++) ReleaseSemaphore(&ch->old[i]->Lock);
     ReleaseSemaphore(&ch->li->Lock);
     if (ch->old) FreeMem(ch->old, ch->nold * sizeof *ch->old);
@@ -834,6 +895,11 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
     struct OInfo *inf;
     int phase;
 
+#ifdef OL_COMPOSITE
+    /* a composited Layer_Info's change is composed (layers_comp.c); when a
+     * surface can't be had, its screen goes back to classic layers here */
+    if (ch->comp && !oc_finish(ch, made, gone)) return 0;
+#endif
     if (!ch->have_screen && made) {
         struct BitMap *bm = made->rp->BitMap;
         ch->screen.x0 = ch->screen.y0 = 0;
@@ -944,6 +1010,9 @@ static int finish(struct change *ch, struct Layer *made, struct Layer *gone)
         attach(olb, ord[i]);
     }
     free_stack(st, ord, n);
+#ifdef OL_COMPOSITE
+    if (ch->demoted) oc_demoted(ch, 1);
+#endif
     end(ch);
     return 0;
 
@@ -966,6 +1035,9 @@ undo_nothing:
         attach(olb, x);
     }
     ch->li->top_layer = ch->nold ? ch->old[0] : 0;
+#ifdef OL_COMPOSITE
+    if (ch->demoted) oc_demoted(ch, 0);
+#endif
     end(ch);
     return -1;
 }
@@ -1051,6 +1123,9 @@ LONG ol_SetLayerInfoBounds(struct ol_base *olb, struct Layer_Info *li, const str
     if (!i || begin(olb, li, &ch)) return FALSE;
     ob = i->bounds;
     had = i->have_bounds;
+#ifdef OL_COMPOSITE
+    ch.full = 1;
+#endif
     if (bounds) { i->bounds = *bounds; i->have_bounds = 1; ch.screen = lr(bounds); ch.have_screen = 1; }
     else i->have_bounds = 0;
     if (finish(&ch, 0, 0)) {
@@ -1089,6 +1164,12 @@ static struct Layer *create(struct ol_base *olb, struct Layer_Info *li, struct B
     l->BackFill = hook;
     InitSemaphore(&l->Lock);
     o->oldb = l->bounds;
+#ifdef OL_COMPOSITE
+    o->magic = OL_MAGIC;
+    o->opacity = 255;
+    o->dirty.x0 = 1;            /* nothing drawn */
+    o->dirty.x1 = 0;
+#endif
 
     if (begin(olb, li, &ch)) goto fail;
     link_before(li, l, upfront ? front_spot(li, l) : back_spot(li, l));
@@ -1137,6 +1218,9 @@ LONG ol_DeleteLayer(struct ol_base *olb, struct Layer *l)
     o->hidden = 1;
     if (finish(&ch, 0, l)) return FALSE;
     free_list(olb, o->full);
+#ifdef OL_COMPOSITE
+    oc_gone(olb, l);
+#endif
     if (l->DamageList) DisposeRegion(l->DamageList);
     FreeMem(o, sizeof *o);
     return TRUE;
@@ -1150,6 +1234,9 @@ static LONG restack(struct ol_base *olb, struct Layer *l, struct Layer *at, int 
     struct change ch;
     if (OL(l)->hidden) return TRUE;     /* OS 3.2 leaves a hidden layer where it is */
     if (begin(olb, li, &ch)) return FALSE;
+#ifdef OL_COMPOSITE
+    ch.subject = l;
+#endif
     unlink_layer(li, l);
     if (!use_at) at = front ? front_spot(li, l) : back_spot(li, l);
     link_before(li, l, at);
@@ -1178,6 +1265,9 @@ LONG ol_HideLayer(struct ol_base *olb, struct Layer *l)
     struct change ch;
     if (OL(l)->hidden) return TRUE;
     if (begin(olb, l->LayerInfo, &ch)) return FALSE;
+#ifdef OL_COMPOSITE
+    ch.subject = l;
+#endif
     set_hidden(l, 1);
     /* OS 3.2 moves a hidden layer to the very back */
     unlink_layer(l->LayerInfo, l);
@@ -1190,6 +1280,9 @@ LONG ol_ShowLayer(struct ol_base *olb, struct Layer *l, struct Layer *in_front_o
     struct Layer_Info *li = l->LayerInfo;
     struct change ch;
     if (begin(olb, li, &ch)) return FALSE;
+#ifdef OL_COMPOSITE
+    ch.subject = l;
+#endif
     set_hidden(l, 0);
     if (in_front_of != l) {
         unlink_layer(li, l);
@@ -1297,6 +1390,9 @@ void ol_ScrollLayer(struct ol_base *olb, struct Layer *l, LONG dx, LONG dy)
         l->Scroll_Y += (WORD)dy;
     }
     attach(olb, l);
+#ifdef OL_COMPOSITE
+    if (OL(l)->surf && (l->Flags & LAYERSUPER)) oc_touch(olb, l, 0);
+#endif
     ReleaseSemaphore(&l->Lock);
 }
 
@@ -1381,6 +1477,9 @@ void ol_DoHookClipRects(struct ol_base *olb, struct Hook *hook, struct RastPort 
             continue;
         }
         backfill(olb, l, hook, &p, &m);
+#ifdef OL_COMPOSITE
+        if (OL(l)->surf) oc_touch(olb, l, &m);
+#endif
     }
     /* OS 3.2 also hands a super bitmap layer's hook the rectangle in the
      * super bitmap: the part in the layer's window, then the rest */
@@ -1447,3 +1546,8 @@ void ol_SwapBitsRastPortClipRect(struct ol_base *olb, struct RastPort *rp, struc
     BltBitMap(rp->BitMap, x, y, cr->BitMap, bx, 0, w, h, 0x60, 0xFF, 0);
     BltBitMap(cr->BitMap, bx, 0, rp->BitMap, x, y, w, h, 0x60, 0xFF, 0);
 }
+
+#ifdef OL_COMPOSITE
+/* The composited mode: in the same unit, so it reaches the statics above */
+#include "layers_comp.c"
+#endif

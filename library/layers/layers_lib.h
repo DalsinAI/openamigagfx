@@ -39,10 +39,14 @@ ULONG ol_call_hook(struct Hook *hook, APTR obj, APTR msg);
  * handed it: no writable globals, so the library can run from ROM. */
 struct GfxBase;
 struct OInfo;
+struct OCB;
 struct ol_base {
     struct GfxBase *gfx;
     struct OInfo *infos;
     struct SignalSemaphore infolock;
+#ifdef OL_COMPOSITE
+    struct OCB *cb;             /* the composited mode's state (layers_comp.c), 0 until a screen is composited */
+#endif
 };
 
 /* Once, before any call. */
@@ -88,5 +92,13 @@ LONG ol_LayerOccluded(struct ol_base *olb, struct Layer *l);
 LONG ol_HideLayer(struct ol_base *olb, struct Layer *l);
 LONG ol_ShowLayer(struct ol_base *olb, struct Layer *l, struct Layer *in_front_of);
 LONG ol_SetLayerInfoBounds(struct ol_base *olb, struct Layer_Info *li, const struct Rectangle *bounds);
+
+#ifdef OL_COMPOSITE
+/* The composited mode (docs/design/compositing.md, layers_comp.c): our own
+ * calls after OS 3.2's last LVO, in include/graphics/openlayers.h. */
+LONG ol_ComposeLayerInfo(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, ULONG flags);
+LONG ol_SetLayerOpacity(struct ol_base *olb, struct Layer *l, ULONG opacity);
+ULONG ol_SetLayerLook(struct ol_base *olb, struct Layer *l, ULONG what, ULONG value);
+#endif
 
 #endif
