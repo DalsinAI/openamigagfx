@@ -38,7 +38,7 @@
 #define LIBNAME "layers.library"
 #endif
 #define LIB_VERSION  47
-#define LIB_REVISION 100                /* 47.100 and up: OpenLayers */
+#define LIB_REVISION 101                /* 47.100 and up: OpenLayers; 47.101: the composited mode */
 
 /* Everything the library keeps is here (or on the stack): no writable
  * globals, so it can run from ROM. Each call reaches it through A6. */
@@ -53,9 +53,9 @@ struct OLBase {
 int start(void) { return -1; }
 
 static const char lib_name[] = LIBNAME;
-static const char lib_id[] = "layers.library 47.100 (13.10.2026) OpenLayers, AmigaChrome Team\r\n";
+static const char lib_id[] = "layers.library 47.101 (17.10.2026) OpenLayers, AmigaChrome Team\r\n";
 static const char lib_ver[] __attribute__((used)) =
-    "\0$VER: layers.library 47.100 (13.10.2026) OpenLayers, AmigaChrome Team";
+    "\0$VER: layers.library 47.101 (17.10.2026) OpenLayers, AmigaChrome Team";
 static const char gfx_name[] = "graphics.library";
 
 /* A hook as utility.library calls one: A0 the hook, A2 the object, A1 the
@@ -271,6 +271,24 @@ static LONG L_SetLayerInfoBounds(REG(a0, struct Layer_Info *li), REG(a1, const s
     return ol_SetLayerInfoBounds(&base->ol, li, bounds);
 }
 
+#ifdef OL_COMPOSITE
+/* Our own calls (include/graphics/openlayers.h): the composited mode */
+static LONG L_ComposeLayerInfo(REG(a0, struct Layer_Info *li), REG(a1, struct BitMap *bm), REG(d0, ULONG flags), OB)
+{
+    return ol_ComposeLayerInfo(&base->ol, li, bm, flags);
+}
+
+static LONG L_SetLayerOpacity(REG(a0, struct Layer *l), REG(d0, ULONG opacity), OB)
+{
+    return ol_SetLayerOpacity(&base->ol, l, opacity);
+}
+
+static ULONG L_SetLayerLook(REG(a0, struct Layer *l), REG(d0, ULONG what), REG(d1, ULONG value), OB)
+{
+    return ol_SetLayerLook(&base->ol, l, what, value);
+}
+#endif
+
 #undef OB
 
 /* layers.library's LVO order; layers.lvo says the same, line for line. */
@@ -312,6 +330,11 @@ static const APTR lib_vectors[] = {
     (APTR)L_HideLayer,                  /* -228 */
     (APTR)L_ShowLayer,                  /* -234 */
     (APTR)L_SetLayerInfoBounds,         /* -240 */
+#ifdef OL_COMPOSITE
+    (APTR)L_ComposeLayerInfo,           /* -246, ours */
+    (APTR)L_SetLayerOpacity,            /* -252, ours */
+    (APTR)L_SetLayerLook,               /* -258, ours */
+#endif
     (APTR)-1
 };
 
