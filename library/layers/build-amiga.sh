@@ -23,7 +23,7 @@ FD=${FD:-"$P/m68k-amigaos/ndk/lib/fd/layers_lib.fd"}
 [ -f "$FD" ] || { echo "no $FD: set FD=" >&2; exit 1; }
 python3 "$GUEST/libraries/common/check_fd.py" "$FD" "$HERE/layers.lvo"
 
-LIBFLAGS="-m68000 $OPT -fno-strict-aliasing -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
+LIBFLAGS="-m68040 $OPT -fno-strict-aliasing -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
   -fno-lto -fno-builtin -fno-tree-loop-distribute-patterns -Wall -Wextra -Werror
   -Wno-unused-parameter -nostartfiles -nostdlib"
 # OL_COMPOSITE: the composited mode (layers_comp.c, docs/design/compositing.md);
@@ -33,14 +33,14 @@ COMP=${COMPOSITE:-1}
 for name in layers openlayers; do
   # shellcheck disable=SC2086
   "$CC" $LIBFLAGS $CDEF -DLIBNAME="\"$name.library\"" -I"$HERE" -I"$HERE/../../include" -o "$OUT/libs/$name.library" \
-    "$HERE/openlayers_lib.c" "$HERE/layers_lib.c" "$HERE/layers_core.c" "$HERE/layers_arith.c" -lgcc
+    "$HERE/openlayers_lib.c" "$HERE/layers_lib.c" "$HERE/layers_core.c" -lgcc
   echo "$OUT/libs/$name.library ($(wc -c < "$OUT/libs/$name.library") bytes)"
   und=$("$P/bin/m68k-amigaos-nm" -u "$OUT/libs/$name.library" || true)
   [ -z "$und" ] || { echo "undefined in $name.library: $und" >&2; exit 1; }
 done
 
 if [ -f "$HERE/../../tests/LayersABITest.c" ]; then
-  "$CC" -m68000 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
+  "$CC" -m68040 -specs="$HERE/../../build/m68k-soft-m68040.specs" -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
     -o "$OUT/tests/LayersABITest" "$HERE/../../tests/LayersABITest.c"
   echo "$OUT/tests/LayersABITest ($(wc -c < "$OUT/tests/LayersABITest") bytes)"
 fi

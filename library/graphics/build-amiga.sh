@@ -31,14 +31,14 @@ FD=${FD:-"$P/m68k-amigaos/ndk/lib/fd/graphics_lib.fd"}
 [ -f "$FD" ] || { echo "no $FD: set FD=" >&2; exit 1; }
 python3 "$GUEST/libraries/common/check_fd.py" "$FD" "$HERE/graphics.lvo"
 
-COMMON="-m68000 $OPT -fno-strict-aliasing -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
+COMMON="-m68040 $OPT -fno-strict-aliasing -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder
   -fno-lto -fno-builtin -fno-tree-loop-distribute-patterns -Wall -Wextra -Werror -Wno-unused-parameter
   -nostartfiles -nostdlib -I$HERE -I$LIB/core"
 CXXFLAGS="-std=gnu++23 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-asynchronous-unwind-tables
   -fno-unwind-tables -nostdlib++ -ffreestanding"
 
 # the sources: the face's and core's, then each area's list
-SRCS="$HERE/face_lvo.c $HERE/gfx_face.cpp $HERE/gfx_arith.c $LIB/core/gfx_core.c $LIB/core/gfx_rp.c $LIB/core/gfx_region.c"
+SRCS="$HERE/face_lvo.c $HERE/gfx_face.cpp $LIB/core/gfx_core.c $LIB/core/gfx_rp.c $LIB/core/gfx_region.c"
 for area in display text gels; do
   list="$LIB/$area/graphics.sources"
   [ -f "$list" ] || { echo "$area: no graphics.sources yet, stubbed"; continue; }
@@ -86,7 +86,7 @@ for name in graphics opengfx; do
   done
 done
 
-"$CC" -m68000 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
+"$CC" -m68040 -specs="$TOP/build/m68k-soft-m68040.specs" -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
   -o "$OUT/tests/GfxFaceABITest" "$TOP/tests/GfxFaceABITest.c"
 echo "$OUT/tests/GfxFaceABITest ($(wc -c < "$OUT/tests/GfxFaceABITest") bytes)"
 sha256sum "$OUT"/libs/* "$OUT"/tests/* 2>/dev/null || true

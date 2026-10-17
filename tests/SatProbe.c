@@ -5,7 +5,7 @@
  * after the releases (our PalExtra layout; OS 3.2.3's reads otherwise), then takes every free pen with new
  * colours and says whether that pen was among them, i.e. freed while still held. Then releases what is left.
  * Built with the os32-gcc16 stove:
- *   m68k-amigaos-gcc -noixemul -m68020 -O2 -o SatProbe tests/SatProbe.c
+ *   m68k-amigaos-gcc -noixemul -m68040 -O2 -o SatProbe tests/SatProbe.c
  * Measured on OS 3.2.3 (graphics 47.10, 24-bit ACRTG Workbench, W33): with 300 and 1000 obtains and one
  * fewer releases the pen stays held; with all released it is handed out again.
  * Team 5. MIT, Copyright (c) 2026 AmigaChrome Team. */
