@@ -51,3 +51,5 @@ jobs:
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_gels.sh
       - name: OpenGfx display
         run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_display.sh
+      - name: OpenGfx and OpenLayers 16- and 8-bit arguments
+        run: QEMU_M68K=qemu-m68k sh tests/m68k/test_gfx_narrow.sh

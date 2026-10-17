@@ -11,6 +11,10 @@
  * the display's. */
 #include "display.h"
 
+/* Arguments NDK 3.2's protos give as WORD, UWORD, BYTE, UBYTE or BOOL are
+ * cast to that width where they are handed on: a caller built with those
+ * inlines sets only the low part of the register (measured: OpenIntuition's
+ * WhichLayer call left d0's upper word as it was). */
 #ifndef GFX_REG
 #define GFX_REG(r, decl) decl
 #endif
@@ -114,13 +118,13 @@ void gfx_lvo_CBump(GFX_REG(a1, struct gd_ucoplist *ucl), GFX_REG(a6, struct gfx_
 void gfx_lvo_CMove(GFX_REG(a1, struct gd_ucoplist *ucl), GFX_REG(d0, void *reg), GFX_REG(d1, int32_t value),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gd_CMove(ENV, ucl, reg, value);
+    gd_CMove(ENV, ucl, reg, (int16_t)value);
 }
 
 void gfx_lvo_CWait(GFX_REG(a1, struct gd_ucoplist *ucl), GFX_REG(d0, int32_t v), GFX_REG(d1, int32_t h),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gd_CWait(ENV, ucl, v, h);
+    gd_CWait(ENV, ucl, (int16_t)v, (int16_t)h);
 }
 
 int32_t gfx_lvo_VBeamPos(GFX_REG(a6, struct gfx_base *gb))
@@ -179,7 +183,7 @@ void gfx_lvo_ScrollVPort(GFX_REG(a0, struct gd_viewport *vp), GFX_REG(a6, struct
 struct gd_coplist *gfx_lvo_UCopperListInit(GFX_REG(a0, struct gd_ucoplist *ucl), GFX_REG(d0, int32_t n),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gd_UCopperListInit(ENV, ucl, n);
+    return gd_UCopperListInit(ENV, ucl, (int16_t)n);
 }
 
 struct gd_extnode *gfx_lvo_GfxNew(GFX_REG(d0, uint32_t type), GFX_REG(a6, struct gfx_base *gb))
