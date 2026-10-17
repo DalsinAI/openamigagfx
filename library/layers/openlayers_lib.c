@@ -190,9 +190,12 @@ static void L_SwapBitsRastPortClipRect(REG(a0, struct RastPort *rp), REG(a1, str
     ol_SwapBitsRastPortClipRect(&base->ol, rp, cr);
 }
 
+/* x and y are WORDs (NDK 3.2's layers protos): a caller built with them
+ * sets only d0.w and d1.w, and OpenIntuition's click hit test was measured
+ * passing garbage in the upper halves, so only the low words are read. */
 static struct Layer *L_WhichLayer(REG(a0, struct Layer_Info *li), REG(d0, LONG x), REG(d1, LONG y), OB)
 {
-    return ol_WhichLayer(&base->ol, li, x, y);
+    return ol_WhichLayer(&base->ol, li, (WORD)x, (WORD)y);
 }
 
 static void L_UnlockLayerInfo(REG(a0, struct Layer_Info *li), OB) { ol_UnlockLayerInfo(&base->ol, li); }
@@ -243,9 +246,10 @@ static struct Hook *L_InstallLayerInfoHook(REG(a0, struct Layer_Info *li), REG(a
     return ol_InstallLayerInfoHook(&base->ol, li, hook);
 }
 
+/* dx and dy are WORDs (NDK 3.2): only the low words are read */
 static void L_SortLayerCR(REG(a0, struct Layer *l), REG(d0, LONG dx), REG(d1, LONG dy), OB)
 {
-    ol_SortLayerCR(&base->ol, l, dx, dy);
+    ol_SortLayerCR(&base->ol, l, (WORD)dx, (WORD)dy);
 }
 
 static void L_DoHookClipRects(REG(a0, struct Hook *hook), REG(a1, struct RastPort *rp),
