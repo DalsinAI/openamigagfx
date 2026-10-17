@@ -86,7 +86,7 @@ for name in graphics opengfx; do
   done
 done
 
-"$CC" -m68040 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
+"$CC" -m68040 -specs="$TOP/build/m68k-soft-m68040.specs" -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
   -o "$OUT/tests/GfxFaceABITest" "$TOP/tests/GfxFaceABITest.c"
 echo "$OUT/tests/GfxFaceABITest ($(wc -c < "$OUT/tests/GfxFaceABITest") bytes)"
 sha256sum "$OUT"/libs/* "$OUT"/tests/* 2>/dev/null || true

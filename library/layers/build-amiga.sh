@@ -36,7 +36,7 @@ for name in layers openlayers; do
 done
 
 if [ -f "$HERE/../../tests/LayersABITest.c" ]; then
-  "$CC" -m68040 -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
+  "$CC" -m68040 -specs="$HERE/../../build/m68k-soft-m68040.specs" -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
     -o "$OUT/tests/LayersABITest" "$HERE/../../tests/LayersABITest.c"
   echo "$OUT/tests/LayersABITest ($(wc -c < "$OUT/tests/LayersABITest") bytes)"
 fi
