@@ -12,6 +12,10 @@
  * check. No NDK header, no .data, no .bss. */
 #include "gels_core.h"
 
+/* Arguments NDK 3.2's protos give as WORD, UWORD, BYTE, UBYTE or BOOL are
+ * cast to that width where they are handed on: a caller built with those
+ * inlines sets only the low part of the register (measured: OpenIntuition's
+ * WhichLayer call left d0's upper word as it was). */
 #ifndef GFX_REG
 #define GFX_REG(r, decl) decl
 #endif
@@ -196,7 +200,7 @@ void gfx_lvo_BltTemplate(GFX_REG(a0, const void *source),
     GFX_REG(d5, int32_t h),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gels_BltTemplate(gels_of_base(gb), source, srcx, srcmod, rp, dx, dy, w, h);
+    gels_BltTemplate(gels_of_base(gb), source, (int16_t)srcx, (int16_t)srcmod, rp, (int16_t)dx, (int16_t)dy, (int16_t)w, (int16_t)h);
 }
 
 void gfx_lvo_AddBob(GFX_REG(a0, struct gl_bob *bob),
@@ -288,7 +292,7 @@ int32_t gfx_lvo_GetGBuffers(GFX_REG(a0, struct gl_animob *ob),
     GFX_REG(d0, int32_t db),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gels_GetGBuffers(gels_of_base(gb), ob, rp, db);
+    return gels_GetGBuffers(gels_of_base(gb), ob, rp, (int16_t)db);
 }
 
 void gfx_lvo_InitGMasks(GFX_REG(a0, struct gl_animob *ob),
@@ -337,7 +341,7 @@ void gfx_lvo_FreeGBuffers(GFX_REG(a0, struct gl_animob *ob),
     GFX_REG(d0, int32_t db),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gels_FreeGBuffers(gels_of_base(gb), ob, rp, db);
+    gels_FreeGBuffers(gels_of_base(gb), ob, rp, (int16_t)db);
 }
 
 void gfx_lvo_BltMaskBitMapRastPort(GFX_REG(a0, struct gfx_bitmap *src),
@@ -352,5 +356,5 @@ void gfx_lvo_BltMaskBitMapRastPort(GFX_REG(a0, struct gfx_bitmap *src),
     GFX_REG(a2, const void *mask),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gels_BltMaskBitMapRastPort(gels_of_base(gb), src, sx, sy, rp, dx, dy, w, h, minterm, mask);
+    gels_BltMaskBitMapRastPort(gels_of_base(gb), src, (int16_t)sx, (int16_t)sy, rp, (int16_t)dx, (int16_t)dy, (int16_t)w, (int16_t)h, (uint8_t)minterm, mask);
 }

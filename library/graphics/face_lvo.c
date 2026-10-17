@@ -10,6 +10,10 @@
  * the face's; the private slots answer 0. */
 #include "gfx_face.h"
 
+/* Arguments NDK 3.2's protos give as WORD, UWORD, BYTE, UBYTE or BOOL are
+ * cast to that width where they are handed on: a caller built with those
+ * inlines sets only the low part of the register (measured: OpenIntuition's
+ * WhichLayer call left d0's upper word as it was). */
 #ifndef GFX_REG
 #define GFX_REG(r, decl) decl
 #endif
@@ -27,7 +31,7 @@ int32_t gfx_lvo_BltBitMap(GFX_REG(a0, struct gfx_bitmap *src),
     GFX_REG(a2, uint8_t *temp),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_BltBitMap(gfx_env_of(gb), src, sx, sy, dst, dx, dy, w, h, minterm, mask, temp);
+    return gfx_BltBitMap(gfx_env_of(gb), src, (int16_t)sx, (int16_t)sy, dst, (int16_t)dx, (int16_t)dy, (int16_t)w, (int16_t)h, (uint8_t)minterm, (uint8_t)mask, temp);
 }
 
 void gfx_lvo_DrawEllipse(GFX_REG(a1, struct gfx_rastport *rp),
@@ -37,7 +41,7 @@ void gfx_lvo_DrawEllipse(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d3, int32_t b),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_DrawEllipse(gfx_env_of(gb), rp, xc, yc, a, b);
+    gfx_DrawEllipse(gfx_env_of(gb), rp, (int16_t)xc, (int16_t)yc, (int16_t)a, (int16_t)b);
 }
 
 int32_t gfx_lvo_AreaEllipse(GFX_REG(a1, struct gfx_rastport *rp),
@@ -47,7 +51,7 @@ int32_t gfx_lvo_AreaEllipse(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d3, int32_t b),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_AreaEllipse(gfx_env_of(gb), rp, xc, yc, a, b);
+    return gfx_AreaEllipse(gfx_env_of(gb), rp, (int16_t)xc, (int16_t)yc, (int16_t)a, (int16_t)b);
 }
 
 void gfx_lvo_LoadRGB4(GFX_REG(a0, void *vp),
@@ -55,7 +59,7 @@ void gfx_lvo_LoadRGB4(GFX_REG(a0, void *vp),
     GFX_REG(d0, int32_t count),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_LoadRGB4(gfx_env_of(gb), vp, colors, count);
+    gfx_LoadRGB4(gfx_env_of(gb), vp, colors, (int16_t)count);
 }
 
 void gfx_lvo_InitRastPort(GFX_REG(a1, struct gfx_rastport *rp),
@@ -68,7 +72,7 @@ void gfx_lvo_SetRast(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d0, uint32_t pen),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_SetRast(gfx_env_of(gb), rp, pen);
+    gfx_SetRast(gfx_env_of(gb), rp, (uint8_t)pen);
 }
 
 void gfx_lvo_Move(GFX_REG(a1, struct gfx_rastport *rp),
@@ -76,7 +80,7 @@ void gfx_lvo_Move(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d1, int32_t y),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_Move(gfx_env_of(gb), rp, x, y);
+    gfx_Move(gfx_env_of(gb), rp, (int16_t)x, (int16_t)y);
 }
 
 void gfx_lvo_Draw(GFX_REG(a1, struct gfx_rastport *rp),
@@ -84,7 +88,7 @@ void gfx_lvo_Draw(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d1, int32_t y),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_Draw(gfx_env_of(gb), rp, x, y);
+    gfx_Draw(gfx_env_of(gb), rp, (int16_t)x, (int16_t)y);
 }
 
 int32_t gfx_lvo_AreaMove(GFX_REG(a1, struct gfx_rastport *rp),
@@ -92,7 +96,7 @@ int32_t gfx_lvo_AreaMove(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d1, int32_t y),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_AreaMove(gfx_env_of(gb), rp, x, y);
+    return gfx_AreaMove(gfx_env_of(gb), rp, (int16_t)x, (int16_t)y);
 }
 
 int32_t gfx_lvo_AreaDraw(GFX_REG(a1, struct gfx_rastport *rp),
@@ -100,7 +104,7 @@ int32_t gfx_lvo_AreaDraw(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d1, int32_t y),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_AreaDraw(gfx_env_of(gb), rp, x, y);
+    return gfx_AreaDraw(gfx_env_of(gb), rp, (int16_t)x, (int16_t)y);
 }
 
 int32_t gfx_lvo_AreaEnd(GFX_REG(a1, struct gfx_rastport *rp),
@@ -114,7 +118,7 @@ void gfx_lvo_InitArea(GFX_REG(a0, struct gfx_areainfo *ai),
     GFX_REG(d0, int32_t maxvectors),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_InitArea(gfx_env_of(gb), ai, buffer, maxvectors);
+    gfx_InitArea(gfx_env_of(gb), ai, buffer, (int16_t)maxvectors);
 }
 
 void gfx_lvo_SetRGB4(GFX_REG(a0, void *vp),
@@ -124,7 +128,7 @@ void gfx_lvo_SetRGB4(GFX_REG(a0, void *vp),
     GFX_REG(d3, uint32_t b),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_SetRGB4(gfx_env_of(gb), vp, index, r, g, b);
+    gfx_SetRGB4(gfx_env_of(gb), vp, (int16_t)index, (uint8_t)r, (uint8_t)g, (uint8_t)b);
 }
 
 void gfx_lvo_RectFill(GFX_REG(a1, struct gfx_rastport *rp),
@@ -134,7 +138,7 @@ void gfx_lvo_RectFill(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d3, int32_t y1),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_RectFill(gfx_env_of(gb), rp, x0, y0, x1, y1);
+    gfx_RectFill(gfx_env_of(gb), rp, (int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1);
 }
 
 void gfx_lvo_BltPattern(GFX_REG(a1, struct gfx_rastport *rp),
@@ -146,7 +150,7 @@ void gfx_lvo_BltPattern(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d4, uint32_t maskbpr),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_BltPattern(gfx_env_of(gb), rp, mask, x0, y0, x1, y1, maskbpr);
+    gfx_BltPattern(gfx_env_of(gb), rp, mask, (int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1, (uint16_t)maskbpr);
 }
 
 int32_t gfx_lvo_ReadPixel(GFX_REG(a1, struct gfx_rastport *rp),
@@ -154,7 +158,7 @@ int32_t gfx_lvo_ReadPixel(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d1, int32_t y),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_ReadPixel(gfx_env_of(gb), rp, x, y);
+    return gfx_ReadPixel(gfx_env_of(gb), rp, (int16_t)x, (int16_t)y);
 }
 
 int32_t gfx_lvo_WritePixel(GFX_REG(a1, struct gfx_rastport *rp),
@@ -162,7 +166,7 @@ int32_t gfx_lvo_WritePixel(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d1, int32_t y),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_WritePixel(gfx_env_of(gb), rp, x, y);
+    return gfx_WritePixel(gfx_env_of(gb), rp, (int16_t)x, (int16_t)y);
 }
 
 int32_t gfx_lvo_Flood(GFX_REG(a1, struct gfx_rastport *rp),
@@ -171,7 +175,7 @@ int32_t gfx_lvo_Flood(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d1, int32_t y),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_Flood(gfx_env_of(gb), rp, mode, x, y);
+    return gfx_Flood(gfx_env_of(gb), rp, mode, (int16_t)x, (int16_t)y);
 }
 
 void gfx_lvo_PolyDraw(GFX_REG(a1, struct gfx_rastport *rp),
@@ -179,28 +183,28 @@ void gfx_lvo_PolyDraw(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(a0, const int16_t *xy),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_PolyDraw(gfx_env_of(gb), rp, count, xy);
+    gfx_PolyDraw(gfx_env_of(gb), rp, (int16_t)count, xy);
 }
 
 void gfx_lvo_SetAPen(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d0, uint32_t pen),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_SetAPen(gfx_env_of(gb), rp, pen);
+    gfx_SetAPen(gfx_env_of(gb), rp, (uint8_t)pen);
 }
 
 void gfx_lvo_SetBPen(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d0, uint32_t pen),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_SetBPen(gfx_env_of(gb), rp, pen);
+    gfx_SetBPen(gfx_env_of(gb), rp, (uint8_t)pen);
 }
 
 void gfx_lvo_SetDrMd(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d0, uint32_t mode),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_SetDrMd(gfx_env_of(gb), rp, mode);
+    gfx_SetDrMd(gfx_env_of(gb), rp, (uint8_t)mode);
 }
 
 void gfx_lvo_InitBitMap(GFX_REG(a0, struct gfx_bitmap *bm),
@@ -209,7 +213,7 @@ void gfx_lvo_InitBitMap(GFX_REG(a0, struct gfx_bitmap *bm),
     GFX_REG(d2, int32_t height),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_InitBitMap(gfx_env_of(gb), bm, depth, width, height);
+    gfx_InitBitMap(gfx_env_of(gb), bm, (int8_t)depth, (int16_t)width, (int16_t)height);
 }
 
 void gfx_lvo_ScrollRaster(GFX_REG(a1, struct gfx_rastport *rp),
@@ -221,7 +225,7 @@ void gfx_lvo_ScrollRaster(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d5, int32_t y1),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_ScrollRaster(gfx_env_of(gb), rp, dx, dy, x0, y0, x1, y1);
+    gfx_ScrollRaster(gfx_env_of(gb), rp, (int16_t)dx, (int16_t)dy, (int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1);
 }
 
 /* LockLayerRom, UnlockLayerRom and AttemptLockLayerRom take the layer in
@@ -308,7 +312,7 @@ uint8_t *gfx_lvo_AllocRaster(GFX_REG(d0, uint32_t width),
     GFX_REG(d1, uint32_t height),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_AllocRaster(gfx_env_of(gb), width, height);
+    return gfx_AllocRaster(gfx_env_of(gb), (uint16_t)width, (uint16_t)height);
 }
 
 void gfx_lvo_FreeRaster(GFX_REG(a0, uint8_t *p),
@@ -316,7 +320,7 @@ void gfx_lvo_FreeRaster(GFX_REG(a0, uint8_t *p),
     GFX_REG(d1, uint32_t height),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_FreeRaster(gfx_env_of(gb), p, width, height);
+    gfx_FreeRaster(gfx_env_of(gb), p, (uint16_t)width, (uint16_t)height);
 }
 
 void gfx_lvo_AndRectRegion(GFX_REG(a0, struct gfx_rgn *region),
@@ -368,7 +372,7 @@ void gfx_lvo_ClipBlit(GFX_REG(a0, struct gfx_rastport *src),
     GFX_REG(d6, uint32_t minterm),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_ClipBlit(gfx_env_of(gb), src, sx, sy, dst, dx, dy, w, h, minterm);
+    gfx_ClipBlit(gfx_env_of(gb), src, (int16_t)sx, (int16_t)sy, dst, (int16_t)dx, (int16_t)dy, (int16_t)w, (int16_t)h, (uint8_t)minterm);
 }
 
 int32_t gfx_lvo_XorRectRegion(GFX_REG(a0, struct gfx_rgn *region),
@@ -408,7 +412,7 @@ void gfx_lvo_BltBitMapRastPort(GFX_REG(a0, struct gfx_bitmap *src),
     GFX_REG(d6, uint32_t minterm),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_BltBitMapRastPort(gfx_env_of(gb), src, sx, sy, rp, dx, dy, w, h, minterm);
+    gfx_BltBitMapRastPort(gfx_env_of(gb), src, (int16_t)sx, (int16_t)sy, rp, (int16_t)dx, (int16_t)dy, (int16_t)w, (int16_t)h, (uint8_t)minterm);
 }
 
 int32_t gfx_lvo_OrRegionRegion(GFX_REG(a0, const struct gfx_rgn *src),
@@ -439,7 +443,7 @@ void gfx_lvo_SetRGB4CM(GFX_REG(a0, struct gfx_colormap *cm),
     GFX_REG(d3, uint32_t b),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_SetRGB4CM(gfx_env_of(gb), cm, index, r, g, b);
+    gfx_SetRGB4CM(gfx_env_of(gb), cm, (int16_t)index, (uint8_t)r, (uint8_t)g, (uint8_t)b);
 }
 
 /* private -642: a private slot of OS 3.2's; answers 0 */
@@ -459,7 +463,7 @@ uint32_t gfx_lvo_ScalerDiv(GFX_REG(d0, uint32_t factor),
     GFX_REG(d2, uint32_t denominator),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_ScalerDiv(gfx_env_of(gb), factor, numerator, denominator);
+    return gfx_ScalerDiv(gfx_env_of(gb), (uint16_t)factor, (uint16_t)numerator, (uint16_t)denominator);
 }
 
 /* private -738: a private slot of OS 3.2's; answers 0 */
@@ -479,7 +483,7 @@ int32_t gfx_lvo_ReadPixelLine8(GFX_REG(a0, struct gfx_rastport *rp),
     GFX_REG(a1, struct gfx_rastport *temprp),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_ReadPixelLine8(gfx_env_of(gb), rp, x, y, width, array, temprp);
+    return gfx_ReadPixelLine8(gfx_env_of(gb), rp, (uint16_t)x, (uint16_t)y, (uint16_t)width, array, temprp);
 }
 
 int32_t gfx_lvo_WritePixelLine8(GFX_REG(a0, struct gfx_rastport *rp),
@@ -490,7 +494,7 @@ int32_t gfx_lvo_WritePixelLine8(GFX_REG(a0, struct gfx_rastport *rp),
     GFX_REG(a1, struct gfx_rastport *temprp),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_WritePixelLine8(gfx_env_of(gb), rp, x, y, width, array, temprp);
+    return gfx_WritePixelLine8(gfx_env_of(gb), rp, (uint16_t)x, (uint16_t)y, (uint16_t)width, array, temprp);
 }
 
 int32_t gfx_lvo_ReadPixelArray8(GFX_REG(a0, struct gfx_rastport *rp),
@@ -502,7 +506,7 @@ int32_t gfx_lvo_ReadPixelArray8(GFX_REG(a0, struct gfx_rastport *rp),
     GFX_REG(a1, struct gfx_rastport *temprp),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_ReadPixelArray8(gfx_env_of(gb), rp, x0, y0, x1, y1, array, temprp);
+    return gfx_ReadPixelArray8(gfx_env_of(gb), rp, (uint16_t)x0, (uint16_t)y0, (uint16_t)x1, (uint16_t)y1, array, temprp);
 }
 
 int32_t gfx_lvo_WritePixelArray8(GFX_REG(a0, struct gfx_rastport *rp),
@@ -514,7 +518,7 @@ int32_t gfx_lvo_WritePixelArray8(GFX_REG(a0, struct gfx_rastport *rp),
     GFX_REG(a1, struct gfx_rastport *temprp),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    return gfx_WritePixelArray8(gfx_env_of(gb), rp, x0, y0, x1, y1, array, temprp);
+    return gfx_WritePixelArray8(gfx_env_of(gb), rp, (uint16_t)x0, (uint16_t)y0, (uint16_t)x1, (uint16_t)y1, array, temprp);
 }
 
 void gfx_lvo_EraseRect(GFX_REG(a1, struct gfx_rastport *rp),
@@ -524,7 +528,7 @@ void gfx_lvo_EraseRect(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d3, int32_t y1),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_EraseRect(gfx_env_of(gb), rp, x0, y0, x1, y1);
+    gfx_EraseRect(gfx_env_of(gb), rp, (int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1);
 }
 
 int32_t gfx_lvo_AttachPalExtra(GFX_REG(a0, struct gfx_colormap *cm),
@@ -693,7 +697,7 @@ void gfx_lvo_ScrollRasterBF(GFX_REG(a1, struct gfx_rastport *rp),
     GFX_REG(d5, int32_t y1),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_ScrollRasterBF(gfx_env_of(gb), rp, dx, dy, x0, y0, x1, y1);
+    gfx_ScrollRasterBF(gfx_env_of(gb), rp, (int16_t)dx, (int16_t)dy, (int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1);
 }
 
 int32_t gfx_lvo_FindColor(GFX_REG(a3, struct gfx_colormap *cm),
@@ -732,5 +736,5 @@ void gfx_lvo_WriteChunkyPixels(GFX_REG(a0, struct gfx_rastport *rp),
     GFX_REG(d4, int32_t bytesperrow),
     GFX_REG(a6, struct gfx_base *gb))
 {
-    gfx_WriteChunkyPixels(gfx_env_of(gb), rp, x0, y0, x1, y1, array, bytesperrow);
+    gfx_WriteChunkyPixels(gfx_env_of(gb), rp, (uint16_t)x0, (uint16_t)y0, (uint16_t)x1, (uint16_t)y1, array, bytesperrow);
 }

@@ -24,6 +24,10 @@
 #include "gfx_rp.h"
 #include "text_core.h"
 
+/* Arguments NDK 3.2's protos give as WORD, UWORD, BYTE, UBYTE or BOOL are
+ * cast to that width where they are handed on: a caller built with those
+ * inlines sets only the low part of the register (measured: OpenIntuition's
+ * WhichLayer call left d0's upper word as it was). */
 #ifndef GFX_REG
 #define GFX_REG(r, decl) decl
 #endif
@@ -234,7 +238,7 @@ void gfx_lvo_ClearScreen(GFX_REG(a1, struct RastPort *rp), GFX_REG(a6, struct Gf
 WORD gfx_lvo_TextLength(GFX_REG(a1, struct RastPort *rp), GFX_REG(a0, CONST_STRPTR string),
                         GFX_REG(d0, ULONG count), GFX_REG(a6, struct GfxBase *gb))
 {
-    return gt_TextLength(env_of(gb), rp, (const uint8_t *)string, count);
+    return gt_TextLength(env_of(gb), rp, (const uint8_t *)string, (uint16_t)count);
 }
 
 LONG gfx_lvo_Text(GFX_REG(a1, struct RastPort *rp), GFX_REG(a0, CONST_STRPTR string), GFX_REG(d0, ULONG count),
@@ -242,7 +246,7 @@ LONG gfx_lvo_Text(GFX_REG(a1, struct RastPort *rp), GFX_REG(a0, CONST_STRPTR str
 {
     LONG r;
     lock(gb, rp);
-    r = gt_Text(env_of(gb), rp, (const uint8_t *)string, count);
+    r = gt_Text(env_of(gb), rp, (const uint8_t *)string, (uint16_t)count);
     unlock(gb, rp);
     return r;
 }
@@ -293,7 +297,7 @@ LONG gfx_lvo_RemFont(GFX_REG(a1, struct TextFont *textFont), GFX_REG(a6, struct 
 void gfx_lvo_TextExtent(GFX_REG(a1, struct RastPort *rp), GFX_REG(a0, CONST_STRPTR string), GFX_REG(d0, ULONG count),
                         GFX_REG(a2, struct TextExtent *textExtent), GFX_REG(a6, struct GfxBase *gb))
 {
-    gt_TextExtent(env_of(gb), rp, (const uint8_t *)string, count, textExtent);
+    gt_TextExtent(env_of(gb), rp, (const uint8_t *)string, (int16_t)count, textExtent);
 }
 
 ULONG gfx_lvo_TextFit(GFX_REG(a1, struct RastPort *rp), GFX_REG(a0, CONST_STRPTR string), GFX_REG(d0, ULONG strLen),
@@ -302,8 +306,8 @@ ULONG gfx_lvo_TextFit(GFX_REG(a1, struct RastPort *rp), GFX_REG(a0, CONST_STRPTR
                       GFX_REG(d2, ULONG constrainingBitWidth), GFX_REG(d3, ULONG constrainingBitHeight),
                       GFX_REG(a6, struct GfxBase *gb))
 {
-    return gt_TextFit(env_of(gb), rp, (const uint8_t *)string, strLen, textExtent, constrainingExtent, strDirection,
-                      constrainingBitWidth, constrainingBitHeight);
+    return gt_TextFit(env_of(gb), rp, (const uint8_t *)string, (uint16_t)strLen, textExtent, constrainingExtent,
+                      (int16_t)strDirection, (uint16_t)constrainingBitWidth, (uint16_t)constrainingBitHeight);
 }
 
 void gfx_lvo_FontExtent(GFX_REG(a0, const struct TextFont *font), GFX_REG(a1, struct TextExtent *fontExtent),
