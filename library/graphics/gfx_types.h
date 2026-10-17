@@ -315,8 +315,10 @@ struct gfx_cliprect {                   /* struct ClipRect, 40 bytes */
     struct gfx_rectangle bounds;        /* on the screen */
     void *p1, *p2;
     int32_t reserved;
-    int32_t flags;
+    int32_t flags;                      /* layers': GFX_CR_COMPOSED */
 };
+/* a composited layer's piece (include/graphics/openlayers.h CR_OPENLAYERS_COMPOSED) */
+#define GFX_CR_COMPOSED 0x40000000L
 
 struct gfx_layer {                      /* struct Layer, 160 bytes */
     struct gfx_layer *front, *back;

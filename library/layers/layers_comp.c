@@ -863,6 +863,7 @@ static int oc_finish(struct change *ch, struct Layer *made, struct Layer *gone)
         p->cr.bounds = l->bounds;
         p->cr.BitMap = o->surf;
         p->cr.obscured = OBSCURED;
+        p->cr.Flags |= CR_OPENLAYERS_COMPOSED;  /* nothing covers it: EraseRect clears it (W49) */
         p->kind = K_SURF;
         if (l == made) {
             struct lc_rect r = lr(&l->bounds);

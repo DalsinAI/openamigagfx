@@ -42,6 +42,10 @@
  * Multicore: every call here is anchored (plan section 5): it runs where
  * the display's owner runs, holding the Layer_Info's and the layers'
  * semaphores as OS 3.2 does. */
+#define NEWCLIPRECTS_1_1                /* struct ClipRect's Flags: CR_OPENLAYERS_COMPOSED */
+#ifndef CR_OPENLAYERS_COMPOSED
+#define CR_OPENLAYERS_COMPOSED  0x40000000L   /* as include/graphics/openlayers.h */
+#endif
 #include <exec/types.h>
 #include <exec/memory.h>
 #include <exec/semaphores.h>
@@ -365,6 +369,7 @@ static int make_sub(struct ol_base *olb, struct Layer *l, struct OClip *list, co
             if (!(s = add_clip(&head, &tail, &m, c->kind == K_SURF ? K_BM : c->kind))) goto fail;
             s->parent = c;
             s->cr.obscured = c->cr.obscured;
+            if (c->kind == K_SURF) s->cr.Flags |= CR_OPENLAYERS_COMPOSED;
             if (s->kind == K_BM) {
                 struct place ps, pd;
                 if (!(s->cr.BitMap = backing(olb, l, &m))) goto fail;

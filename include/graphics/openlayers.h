@@ -45,6 +45,11 @@
 #define LAYERLOOK_QUERY         0x100UL /* answers opacity | look << 8 | 1 << 16, changes nothing */
 #define LAYERLOOK_ALL           0x200UL /* value: opacity | look << 8, all at once; answers as QUERY */
 
+/* struct ClipRect's Flags (graphics/clip.h with NEWCLIPRECTS_1_1, layers' own field): a composited layer's
+ * piece. It is obscured and its BitMap holds the layer's own pixels, which the compositor shows: nothing covers
+ * it, so graphics.library's default backfill (EraseRect) clears it as a piece that shows. */
+#define CR_OPENLAYERS_COMPOSED  0x40000000L
+
 #define LVO_ComposeLayerInfo    (-246)
 #define LVO_SetLayerOpacity     (-252)
 #define LVO_SetLayerLook        (-258)

@@ -524,8 +524,12 @@ void backfill(gfx_env *e, gfx_rastport *rp, int32_t x0, int32_t y0, int32_t x1, 
         // Measured on OS 3.2.3 (tests/DrawProbe.c EraseRect, 15 Oct 2026):
         // with the default backfill, EraseRect in a smart refresh window
         // leaves the part another window covers as it was, on an AGA
-        // screen and on OpenRTG ones alike; it clears what shows.
-        if (!hook && cr->lobs && !covered) continue;
+        // screen and on OpenRTG ones alike; it clears what shows. A
+        // composited layer's piece (OpenLayers) is obscured but shows:
+        // nothing covers it (lab t5-font, W49: EraseRect cleared none of a
+        // window on the composited Workbench, and OpenPrefs's pages were
+        // drawn over each other).
+        if (!hook && cr->lobs && !covered && !(cr->flags & GFX_CR_COMPOSED)) continue;
         if (!hook && foreign(e, bm)) {
             // a card's bitmap: pen 0 through the Mask with the RectFill
             // vector, on a RastPort with no layer on the piece's bitmap
