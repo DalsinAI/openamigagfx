@@ -25,8 +25,10 @@
 #include <dos/dos.h>
 #include <utility/tagitem.h>
 #include <utility/hooks.h>
+#include "../../include/oa_protos_begin.h"   /* the protos' unused varargs wrappers dropped */
 #include <proto/exec.h>
 #include <proto/utility.h>
+#include "../../include/oa_protos_end.h"
 
 #include "gfx_env.h"
 #include "gfx_vectors.h"

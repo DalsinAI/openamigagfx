@@ -38,12 +38,14 @@
  * ol_sysbase.h makes a macro) */
 #include <opengpu/opengpu.h>
 #include <openrtg/openrtg.h>
+#include "../../include/oa_protos_begin.h"   /* the protos' unused varargs wrappers dropped */
 #define OPENGPU_BASE_NAME (cb->ogpu)
 #include <inline/opengpu.h>
 #define OPENRTG_BASE_NAME (cb->ortg)
 #include <inline/openrtg.h>
 #define DOS_BASE_NAME dos
 #include <proto/dos.h>
+#include "../../include/oa_protos_end.h"
 
 #ifndef OGPU_FMT_XRGB32
 #define OGPU_FMT_XRGB32 10      /* stream v1.3's; used only where OGPU_Query answers FULL for it */
