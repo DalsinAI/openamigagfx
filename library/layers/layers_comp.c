@@ -754,6 +754,21 @@ static void oc_fill(struct ol_base *olb, struct Layer *l, const struct lc_rect *
         for (k = 0; k < nk; k++) backfill(olb, l, LAYERS_BACKFILL, &p, &out[k]);
     } else {
         backfill(olb, l, l->BackFill, &p, r);
+        /* The surface is not the screen, so the bounds are the surface's: a
+         * hook that draws through the RastPort's layer, with the bounds less
+         * the layer's place on the screen (OpenLook 0.9's, given to asl.library's
+         * windows and to every window opened without a hook), drew nothing there
+         * and the window was black inside (lab t5-asl2, a copy of Instance-32).
+         * It gets the area again with a bare RastPort, as
+         * EraseRect hands it and as OS 3.2 does for a new simple refresh
+         * layer (fill_fresh); its refresh bits up meanwhile then. */
+        if (l->BackFill != LAYERS_BACKFILL && l->BackFill != LAYERS_NOBACKFILL) {
+            UWORD f = l->Flags;
+            if (made && !(l->Flags & (LAYERSMART | LAYERSUPER)))
+                l->Flags |= LAYERREFRESH | LAYERIREFRESH | LAYERIREFRESH2;
+            backfill_with(olb, l, 0, l->BackFill, &p, r);
+            l->Flags = f;
+        }
     }
     if (!made) {
         struct Rectangle d;
