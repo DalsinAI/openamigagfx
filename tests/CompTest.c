@@ -2,7 +2,7 @@
 /* CompTest: OpenLayers' composited mode on the Workbench screen, from the
  * Shell. Copyright (c) 2026 AmigaChrome Team. MIT.
  *
- *   CompTest INFO         is the Workbench screen composited (and how)
+ *   CompTest INFO         is the Workbench screen composited (and how; with 47.102, why not)
  *   CompTest TIME [N]     the whole screen composed again, and a full-screen window behind and in front, N times
  *   CompTest DRAG [N]     a 640 x 400 layer moved N times by 7,3 and back, as a drag does
  *   CompTest SCREEN       draws on the screen's own RastPort outside every layer, composes,
@@ -61,6 +61,18 @@ static unsigned long long now_us(ULONG *freq)
     return (((unsigned long long)e.ev_hi << 32) | e.ev_lo) * 1000000ULL / *freq;
 }
 
+/* 47.102: why the screen is classic (ComposeLayerInfo(li, NULL, LAYERS_COMPOSE_WHY)); 0 while composited */
+static LONG why(struct Layer_Info *li)
+{
+    register struct Library *a6 __asm("a6") = LayersBase;
+    register void *a0 __asm("a0") = li;
+    register void *a1 __asm("a1") = 0;
+    register ULONG d0 __asm("d0") = 2;
+    if (LayersBase->lib_Version != 47 || LayersBase->lib_Revision < 102) return -1;
+    __asm__ volatile("jsr -246(%%a6)" : "+r"(d0), "+r"(a0), "+r"(a1) : "r"(a6) : "d1", "cc", "memory");
+    return (LONG)d0;
+}
+
 /* composited: the screen's bar layer answers LAYERLOOK_QUERY */
 static int composited(struct Screen *s)
 {
@@ -83,8 +95,12 @@ int main(int argc, char **argv)
            s->Width, s->Height, (int)GetBitMapAttr(s->RastPort.BitMap, BMA_DEPTH),
            composited(s) ? "composited" : "classic");
     if (!stricmp(cmd, "INFO")) {
+        static const char *const whys[] = { "composited", "not asked (a custom screen)", "switched off", "not RTG",
+                                            "8-bit", "pixel layout", "OpenGPU on the CPU only", "no OpenGPU", "no memory" };
         struct Layer *l;
         int k = 0;
+        LONG w = why(&s->LayerInfo);
+        if (w >= 0) printf("why: %ld (%s)\n", (long)w, w < 9 ? whys[w] : "?");
         for (l = s->LayerInfo.top_layer; l; l = l->back, k++) {
             ULONG q = ours() ? look(l, 0x100, 0) : ~0UL;
             printf("layer %d: %d,%d-%d,%d flags $%04x window %p look %s opacity %d bits %x\n", k, l->bounds.MinX,
