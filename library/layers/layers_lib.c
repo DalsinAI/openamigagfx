@@ -119,6 +119,7 @@ struct OInfo {
     UWORD fattened;             /* FattenLayerInfo less ThinLayerInfo */
 #ifdef OL_COMPOSITE
     struct OComp *comp;         /* composited: its state (layers_comp.c); 0 for classic layers */
+    UBYTE why;                  /* classic: why (LAYERS_WHY_), for LAYERS_COMPOSE_WHY; 0 when never asked */
 #endif
 };
 
