@@ -15,6 +15,39 @@ A `Layer_Info` is composited when all of these hold. Otherwise it is classic and
 
 A screen keeps its mode until it closes. A changed switch applies to the screens opened after it (the Workbench's next reset). If a layer's surface can't be had, the screen goes back to classic layers in that same call (below); a window's opening never fails because of compositing.
 
+### Every depth and pixel layout (W65, 18 October 2026)
+
+OpenRTG 0.18 drives ACRTG boards only and has three formats (`openrtg.h`): CLUT8, RGB565 and ARGB32 with its top byte 0. A screen's bitmap takes its mode's format whatever depth is asked, so the depth in ScreenMode prefs doesn't choose the layout: the ModeID does. Measured with W65's DepthProbe on a public screen of ACRTG's 1920x1080 modes (the open ROM of 18 October, ACRTG.gpu, runtime stream v1.4):
+
+| Mode | Depth asked | Bitmap | Composited |
+| --- | --- | --- | --- |
+| `0x610A1000` (8-bit) | 8 | CLUT8 | no: 8-bit |
+| `0x610A1100` (16-bit) | 15, 16 | RGB565 | yes |
+| `0x610A1100` (16-bit) | 24, 32 | the screen does not open | |
+| `0x610A1200` (32-bit) | 8, 15, 16, 24, 32 | ARGB32 (as XRGB32) | yes |
+| a custom screen on any of them | | as above | no: not asked |
+| AGA (`0x00029004`) | 4 | planar | no: not RTG |
+
+So every RTG depth of 15 bits and up composites, in both layouts OpenRTG has. ACRTG's board reports the 32-bit format as its format number 6 in the runtime's log; that is the board's register value for ARGB32, not an OpenRTG format. ACRTG.gpu answers `OGPU_Query(COMPOSITE)` FULL for RGB565, RGB565PC, RGB555, RGB555PC, ARGB32, BGRA32, XRGB32 and A8, so a board with one of those layouts needs only OpenRTG to make such bitmaps and layers to map the format; packed 24-bit, ABGR and RGBA have no OpenGPU format at all.
+
+### Why it is classic
+
+`ComposeLayerInfo(li, NULL, LAYERS_COMPOSE_WHY)` (47.102) answers why a Layer_Info isn't composited, and changes nothing. The reason is kept when Intuition asks (or when a screen goes back to classic):
+
+| Answer | When |
+| --- | --- |
+| `LAYERS_WHY_COMPOSITED` (0) | it is composited |
+| `LAYERS_WHY_NOT_ASKED` (1) | never switched on: a custom screen |
+| `LAYERS_WHY_SWITCHED_OFF` (2) | `composite off` when the screen opened, or `ComposeLayerInfo` without `LAYERS_COMPOSE_ON` |
+| `LAYERS_WHY_NOT_RTG` (3) | not an OpenRTG bitmap (AGA) |
+| `LAYERS_WHY_8BIT` (4) | an 8-bit (CLUT8) screen |
+| `LAYERS_WHY_LAYOUT` (5) | a format OpenGPU's driver doesn't composite fully |
+| `LAYERS_WHY_CPU_ONLY` (6) | OpenGPU has only its CPU back end |
+| `LAYERS_WHY_NO_OPENGPU` (7) | opengpu.library or openrtg.library would not open |
+| `LAYERS_WHY_NO_MEMORY` (8) | a surface could not be had and the screen went back to classic |
+
+OpenPrefs' Windows page (openamigaprefs, Windows 0.6.8) shows it beside "Transparency and shadows", as "Off on this screen: 8-bit". 47.101 takes the flag as "back to classic", so a program asks only when `lib_Revision >= 102`.
+
 ## How a composited screen works
 
 ### Surfaces
@@ -90,7 +123,7 @@ Public header: `include/graphics/openlayers.h`. These calls are in layers.librar
 
 | LVO | Call | What |
 | --- | --- | --- |
-| -246 | `ComposeLayerInfo(li, bm, flags)(a0,a1,d0)` | `LAYERS_COMPOSE_ON` switches a Layer_Info with no layers to the composited mode. Without it, back to classic. Answers TRUE while composited. (SetLayerInfoBounds on a composited Layer_Info composes all of it again.) |
+| -246 | `ComposeLayerInfo(li, bm, flags)(a0,a1,d0)` | `LAYERS_COMPOSE_ON` switches a Layer_Info with no layers to the composited mode. Without it, back to classic. Answers TRUE while composited. (SetLayerInfoBounds on a composited Layer_Info composes all of it again.) 47.102: `LAYERS_COMPOSE_WHY` alone answers why it is classic (above) |
 | -252 | `SetLayerOpacity(layer, opacity)(a0,d0)` | 0-255; answers the old one, or -1 for a classic layer |
 | -258 | `SetLayerLook(layer, what, value)(a0,d0,d1)` | `LAYERLOOK_OPACITY`, `_SHADOW`, `_DRAGGED`, `_INACTIVE`, `_ALPHA` (32-bit screens), `_ALL` (all at once), `_QUERY`. The layer is composed again only when what is seen of it changes |
 

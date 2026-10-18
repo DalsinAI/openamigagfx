@@ -21,6 +21,13 @@
  * classic layers. SetLayerInfoBounds on a composited Layer_Info composes
  * all of it again.
  *
+ * 47.102: ComposeLayerInfo(li, NULL, LAYERS_COMPOSE_WHY) changes nothing and
+ * answers why li is not composited: LAYERS_WHY_COMPOSITED (0) while it is,
+ * otherwise one of the LAYERS_WHY_ reasons below. A program asks it of a
+ * screen's &Screen->LayerInfo (OpenPrefs' Windows page does, for the
+ * Workbench). 47.101 would take the call as "back to classic layers", so
+ * ask only when lib_Revision >= 102.
+ *
  * SetLayerOpacity sets a composited layer's opacity, 0 (not seen) to 255
  * (opaque, the default), and answers the old one; -1 for a classic layer,
  * where it does nothing. SetLayerLook sets the rest of a layer's look:
@@ -36,6 +43,19 @@
 #define OPENLAYERS_COMPOSITE_REVISION 101
 
 #define LAYERS_COMPOSE_ON       1UL
+#define LAYERS_COMPOSE_WHY      2UL     /* 47.102: answers a LAYERS_WHY_, changes nothing */
+
+/* Why a Layer_Info is classic (LAYERS_COMPOSE_WHY's answers). */
+#define LAYERS_WHY_COMPOSITED   0       /* it is composited */
+#define LAYERS_WHY_NOT_ASKED    1       /* never switched on: a custom screen (Intuition asks for public ones only) */
+#define LAYERS_WHY_SWITCHED_OFF 2       /* "composite off" in ENV:OpenPrefs/Windows when it was asked, or put back */
+#define LAYERS_WHY_NOT_RTG      3       /* not an OpenRTG bitmap: the native chipset (AGA), or a board OpenRTG
+                                         * doesn't drive */
+#define LAYERS_WHY_8BIT         4       /* an 8-bit (CLUT) screen */
+#define LAYERS_WHY_LAYOUT       5       /* a pixel layout OpenGPU's driver doesn't composite fully */
+#define LAYERS_WHY_CPU_ONLY     6       /* OpenGPU has no driver, only its CPU back end */
+#define LAYERS_WHY_NO_OPENGPU   7       /* opengpu.library or openrtg.library would not open */
+#define LAYERS_WHY_NO_MEMORY    8       /* a layer's surface could not be had: it went back to classic layers */
 
 #define LAYERLOOK_OPACITY       0UL     /* 0-255 */
 #define LAYERLOOK_SHADOW        1UL     /* a shadow under it (windows and menus: intuition sets it) */

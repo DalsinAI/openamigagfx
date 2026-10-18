@@ -786,6 +786,7 @@ static void oc_demote(struct change *ch)
     struct OCB *cb = ch->olb->cb;
     struct OComp *c = ch->comp, **pp;
     c->inf->comp = 0;
+    c->inf->why = LAYERS_WHY_NO_MEMORY;     /* ComposeLayerInfo's "off" says so itself */
     for (pp = &cb->comps; *pp && *pp != c; pp = &(*pp)->next)
         ;
     if (*pp) *pp = c->next;
@@ -1053,16 +1054,25 @@ static struct OCB *oc_cb(struct ol_base *olb)
 
 /* A new composited Layer_Info's state, when its bitmap is an OpenRTG one
  * of 16 or 32 bits, OpenGPU's back end (not the CPU) does COMPOSITE fully
- * for it, and the prefs don't say "composite off". */
+ * for it, and the prefs don't say "composite off". Otherwise 0, and why
+ * in inf->why (LAYERS_WHY_). */
 static struct OComp *oc_new(struct OCB *cb, struct OInfo *inf, struct Layer_Info *li, struct BitMap *bm)
 {
     struct OpenRTGBitMapInfo bi;
     struct OComp *c;
     ULONG q, fmt;
-    if (!ORTG_BitMapInfo(bm, &bi) || (bi.format != 1 && bi.format != 2)) return 0;
+    inf->why = LAYERS_WHY_NOT_RTG;
+    if (!ORTG_BitMapInfo(bm, &bi)) return 0;
+    /* OpenRTG's formats (openrtg.h): 0 CLUT8, 1 RGB565, 2 ARGB32 (its top byte 0: XRGB32) */
+    inf->why = bi.format ? LAYERS_WHY_LAYOUT : LAYERS_WHY_8BIT;
+    if (bi.format != 1 && bi.format != 2) return 0;
     fmt = bi.format == 1 ? OGPU_FMT_RGB565 : OGPU_FMT_XRGB32;
     q = OGPU_Query(OGPU_OP_COMPOSITE, fmt);
+    /* the CPU back end answers for what the driver (index 1) doesn't do: a
+     * layout it can't, or no driver at all */
+    if (OGPU_BACKEND(q) == OGPU_BACKEND_CPU && !OGPU_BackEndName(1)) inf->why = LAYERS_WHY_CPU_ONLY;
     if (OGPU_ANSWER(q) != OGPU_FULL || OGPU_BACKEND(q) == OGPU_BACKEND_CPU) return 0;
+    inf->why = LAYERS_WHY_NO_MEMORY;
     if (!(c = zalloc(sizeof *c))) return 0;
     /* the defaults: on, shadows on, 8 pixels, 40%; dragged 75%, inactive 100% */
     c->set[SET_ON] = 1;
@@ -1073,6 +1083,7 @@ static struct OComp *oc_new(struct OCB *cb, struct OInfo *inf, struct Layer_Info
     c->set[SET_INACTIVE] = 255;
     if (!oc_prefs(c)) {
         FreeMem(c, sizeof *c);
+        inf->why = LAYERS_WHY_SWITCHED_OFF;
         return 0;
     }
     if (c->set[SET_SHADOWS]) c->shadow = oc_shadow_image(c->set[SET_SIZE]);
@@ -1090,12 +1101,17 @@ static struct OComp *oc_new(struct OCB *cb, struct OInfo *inf, struct Layer_Info
 
 LONG ol_ComposeLayerInfo(struct ol_base *olb, struct Layer_Info *li, struct BitMap *bm, ULONG flags)
 {
-    struct OInfo *inf = info_of(olb, li, 1);
+    struct OInfo *inf;
     struct OCB *cb;
     struct OComp *c;
     struct change ch;
 
-    if (!inf) return FALSE;
+    if (flags & LAYERS_COMPOSE_WHY) {
+        /* why it is classic, changing nothing (0 while it is composited) */
+        inf = li ? info_of(olb, li, 0) : 0;
+        return !inf || (!inf->comp && !inf->why) ? LAYERS_WHY_NOT_ASKED : inf->comp ? LAYERS_WHY_COMPOSITED : inf->why;
+    }
+    if (!(inf = info_of(olb, li, 1))) return FALSE;
     if (inf->comp) {
         cb = olb->cb;
         if (!(flags & LAYERS_COMPOSE_ON)) {
@@ -1103,6 +1119,7 @@ LONG ol_ComposeLayerInfo(struct ol_base *olb, struct Layer_Info *li, struct BitM
             if (begin(olb, li, &ch)) return TRUE;
             if (ch.comp) oc_demote(&ch);
             finish(&ch, 0, 0);
+            inf->why = LAYERS_WHY_SWITCHED_OFF;
             return inf->comp != 0;
         }
         return TRUE;
@@ -1110,6 +1127,7 @@ LONG ol_ComposeLayerInfo(struct ol_base *olb, struct Layer_Info *li, struct BitM
     if (!(flags & LAYERS_COMPOSE_ON) || !bm || li->top_layer) return FALSE;
     /* the first time only from a process: opengpu.library may come from
      * ROM:, through DOS, and OpenGPU loads its driver for a process */
+    inf->why = LAYERS_WHY_NO_OPENGPU;
     if (!olb->cb && FindTask(0)->tc_Node.ln_Type != NT_PROCESS) return FALSE;
     ObtainSemaphore(&olb->infolock);
     cb = oc_cb(olb);
