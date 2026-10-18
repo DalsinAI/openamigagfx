@@ -55,11 +55,13 @@
 #include <graphics/rastport.h>
 #include <graphics/regions.h>
 #include <utility/hooks.h>
+#include "../../include/oa_protos_begin.h"   /* the protos' unused varargs wrappers dropped */
 #include <proto/exec.h>
 /* graphics.library's base is the library's (struct ol_base), never a
  * global: every function here that calls graphics has olb in scope */
 #define GRAPHICS_BASE_NAME (olb->gfx)
 #include <proto/graphics.h>
+#include "../../include/oa_protos_end.h"
 
 #include "layers_core.h"
 #include "layers_lib.h"
