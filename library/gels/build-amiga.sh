@@ -3,7 +3,7 @@
 # into graphics.library through library/gels/graphics.sources, built by
 # library/graphics/build-amiga.sh; this builds that, then
 #   GelsABITest   the gels and blitter calls side by side with OS 3.2's
-#   GUEST=~/team2-labs/guest-main sh library/gels/build-amiga.sh
+#   GUEST=~/src/amigachrome-guest sh library/gels/build-amiga.sh
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 TOP=$(CDPATH= cd -- "$HERE/../.." && pwd)

@@ -8,7 +8,7 @@
 # from library/graphics (the face), library/core and each area's
 # library/<area>/graphics.sources (OWNERS.md); gen_stubs.py stubs whatever
 # no area defines yet.
-#   GUEST=~/team2-labs/guest-main sh library/graphics/build-amiga.sh
+#   GUEST=~/src/amigachrome-guest sh library/graphics/build-amiga.sh
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
