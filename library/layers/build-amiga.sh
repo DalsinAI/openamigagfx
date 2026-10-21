@@ -5,7 +5,7 @@
 #   openlayers.library   the same code under its own name, for the ABI test
 #   LayersABITest        runs the same calls through both and lists every difference
 # The amigachrome-guest checkout with libraries/common/check_fd.py:
-#   GUEST=~/team2-labs/guest-main sh library/layers/build-amiga.sh
+#   GUEST=~/src/amigachrome-guest sh library/layers/build-amiga.sh
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
