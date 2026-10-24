@@ -22,7 +22,11 @@
  * the Layer_Info's backfill, then each shown layer, back to front, its
  * shadow under it, is copied (opaque) or composited (with its opacity, or
  * its own alpha for an ARGB32 surface). Layers that are opaque hide what
- * is behind them, so nothing hidden is drawn.
+ * is behind them, so nothing hidden is drawn. 47.105 (the compositor's
+ * step 4): the batch is not waited for. It names only bitmaps (the screen,
+ * the surfaces, the pieces of clip regions) and the shadow's picture;
+ * OpenRTG waits for it before the CPU draws on or frees a bitmap, and
+ * layers before it frees the shadow's picture (oc_idle).
  *
  * Nothing here runs for a Layer_Info ComposeLayerInfo has not switched on:
  * those are classic layers, exactly as before. */
@@ -97,6 +101,7 @@ struct OCB {
     struct OComp *comps;
     UBYTE pending;
     ULONG composes;
+    ULONG fence;                        /* 47.105: the last compose's, not waited for (0: none) */
     ULONG marks;                        /* counts every mark, for oc_settle */
     struct OThunk *thunk[OC_NPATCH];    /* the newest thunk on each call */
 };
@@ -606,8 +611,8 @@ static int oc_compose(struct OCB *cb, struct OComp *c, struct lc_rects *a)
         }
     }
     if (!e) {
-        OGPU_Submit(b.w, b.n, &fence);
-        OGPU_Wait(fence);
+        /* 47.105: left running; the ring has its own copy of the batch */
+        if (OGPU_Submit(b.w, b.n, &fence) == OGPU_OK && fence) cb->fence = fence;
         cb->composes++;
         for (i = 0; i < n; i++) OL(ord[i])->soff = (UBYTE)(ord[i]->bounds.MinX & 15);
     }
@@ -815,8 +820,19 @@ static void oc_demote(struct change *ch)
     ch->comp = 0;
 }
 
-static void oc_free_comp(struct OComp *c)
+/* 47.105: the composes left running are done (opengpu.library 0.20 waits
+ * for an old fence as for the newest; batches finish in order). */
+static void oc_idle(struct OCB *cb)
 {
+    if (cb && cb->fence) {
+        OGPU_Wait(cb->fence);
+        cb->fence = 0;
+    }
+}
+
+static void oc_free_comp(struct OCB *cb, struct OComp *c)
+{
+    oc_idle(cb);                        /* a compose still running may read the shadow's picture */
     if (c->shadow) FreeMem(c->shadow, (4 * (ULONG)c->set[SET_SIZE] + 1) * (4 * (ULONG)c->set[SET_SIZE] + 1) * 4);
     FreeMem(c, sizeof *c);
 }
@@ -834,7 +850,7 @@ static void oc_demoted(struct change *ch, int ok)
                 FreeBitMap(OL(l)->surf);
                 OL(l)->surf = 0;
             }
-        oc_free_comp(c);
+        oc_free_comp(olb->cb, c);
     } else {
         c->inf->comp = c;
         c->next = olb->cb->comps;
@@ -859,7 +875,7 @@ static void oc_info_drop(struct ol_base *olb, struct OInfo *i)
         ;
     if (*pp) *pp = c->next;
     ReleaseSemaphore(&cb->lock);
-    oc_free_comp(c);
+    oc_free_comp(cb, c);
     i->comp = 0;
 }
 
