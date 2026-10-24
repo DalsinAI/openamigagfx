@@ -6,6 +6,8 @@
 # then on OS 3.2 with DEVS:Monitors empty and opengfx.library in LIBS: (or
 # LIB=dir):  DisplayABITest PROBE   records OS 3.2's answers;
 #            DisplayABITest         compares opengfx.library's with them.
+# It also builds tests/ScreenDepthProbe, which runs on any ROM (its header
+# says what it prints).
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 TOP=$(CDPATH= cd -- "$HERE/../.." && pwd)
@@ -16,3 +18,7 @@ mkdir -p "$OUT/tests"
 "$CC" -m68040 -specs="$TOP/build/m68k-soft-m68040.specs" -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
   -o "$OUT/tests/DisplayABITest" "$TOP/tests/DisplayABITest.c"
 echo "$OUT/tests/DisplayABITest ($(wc -c < "$OUT/tests/DisplayABITest") bytes)"
+# ScreenDepthProbe: the screens the running ROM opens by resolution and depth
+"$CC" -m68040 -specs="$TOP/build/m68k-soft-m68040.specs" -O2 -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
+  -o "$OUT/tests/ScreenDepthProbe" "$TOP/tests/ScreenDepthProbe.c"
+echo "$OUT/tests/ScreenDepthProbe ($(wc -c < "$OUT/tests/ScreenDepthProbe") bytes)"

@@ -5,9 +5,14 @@
  * does) and an Agnus/Denise/Lisa that fetches bitplanes between DDFSTRT and
  * DDFSTOP inside the vertical window and shows them inside DIWSTRT/DIWSTOP
  * with BPLCON1's scroll, HAM6, HAM8, EHB, dual playfield, AGA's palette
- * banks, LOCT, PF2OF and BPLAM. The registers a line uses are taken at
- * colour clock 0x20, before any fetch. What the frame shows is hashed over
- * each ViewPort's rectangle and compared with model.py's answer. */
+ * banks, LOCT, PF2OF and BPLAM, in lores, hires and superhires, with AGA's
+ * wider fetches (FMODE bits 0-1). A line fetched against the chips' rules
+ * (more planes than its fetch shows, a DDFSTOP off the fetch's cycle, a
+ * pointer or modulo off a wider fetch's width) is counted as a failure.
+ * The registers a line uses are taken at colour clock 0x20, before any
+ * fetch. The frame is kept in 35ns (superhires) pixels; what it shows is
+ * hashed over each ViewPort's rectangle and compared with model.py's
+ * answer. */
 #include <stdio.h>
 #include <string.h>
 #include "display.h"
@@ -77,7 +82,7 @@ static void *talloc(uint32_t n)
 }
 
 /* ---- the machine ---------------------------------------------------------- */
-enum { FBW = 920, LINES = 314 };
+enum { FBW = 1840, LINES = 314 };            /* 35ns pixels from lores 0 */
 static uint32_t fb[LINES][FBW];
 static uint32_t stamp[LINES], frameno;
 struct machine {
@@ -170,7 +175,8 @@ static void copper_run(int t1)
     }
 }
 
-static uint16_t fetched[8][128];
+static uint16_t fetched[8][256];
+static unsigned long misfetch;          /* lines fetched against the chips' rules */
 static void render_line(int v)
 {
     const bool aga = M.chip == 2;
@@ -182,16 +188,39 @@ static void render_line(int v)
     uint16_t ds = M.reg[GD_DIWSTRT >> 1], de = M.reg[GD_DIWSTOP >> 1];
     int vstart = ds >> 8, vs = de >> 8, vstop = (vs & 0x80) ? vs : vs | 0x100;
     if (!(planes > 0 && v >= vstart && v < vstop)) return;
-    const bool hires = (con0 & 0x8000) != 0;
-    int dstart = M.reg[GD_DDFSTRT >> 1] & (hires ? 0xFC : 0xF8), dstop = M.reg[GD_DDFSTOP >> 1] & 0xFC;
-    int blocks = dstop >= dstart ? ((dstop - dstart) >> 3) + 1 : 0;
-    int words = hires ? 2 * blocks : blocks;
-    if (words > 128) words = 128;
+    /* the resolution and the fetch (AGA's FMODE bits 0-1: 1x, 2x, 2x, 4x).
+     * The planes a fetch shows, and the colour clocks of DDFSTOP's cycle:
+     * 8 at 1x, and at 2x and 4x for hires and superhires; lores at 2x and
+     * 4x is 16 and 32 (the runtime's rule: the cycle DDFSTOP falls in and
+     * one more). Data shows from 2 * DDFSTRT + 17 lores pixels in lores,
+     * + 9 in hires and superhires at 1x, + 17 at 2x and 4x. */
+    const bool shres = M.chip > 0 && (con0 & 0x40) != 0, hires = !shres && (con0 & 0x8000) != 0;
+    const int res = shres ? 2 : hires ? 1 : 0;
+    const int fm = aga ? M.reg[GD_FMODE >> 1] & 3 : 0;
+    const int fi = fm == 3 ? 2 : fm ? 1 : 0, fw = 1 << fi;
+    static const int maxp[3][3] = { { 6, 4, 2 }, { 8, 8, 4 }, { 8, 8, 8 } }, unit[3][3] = { { 8, 8, 8 }, { 16, 8, 8 }, { 32, 16, 8 } };
+    if (planes > ((aga && !fi && !res) ? 8 : maxp[fi][res])) misfetch++;
+    const int u = unit[fi][res];
+    int dstart = M.reg[GD_DDFSTRT >> 1] & (res || fi ? 0xFC : 0xF8), dstop = M.reg[GD_DDFSTOP >> 1] & 0xFC;
+    if (fi && (dstart & 7)) misfetch++;
+    int cycles = 0, x = dstop - dstart;
+    if (x >= 0) {
+        if (u == 8) {
+            if (x & 7) misfetch++;
+            cycles = (x >> 3) + 1;
+        } else
+            cycles = (x + u - 1) / u + 1;
+    }
+    int words = cycles * u * (2 << res) / 16;
+    if (words > 256) words = 256;
     int16_t mod1 = (int16_t)M.reg[GD_BPL1MOD >> 1], mod2 = (int16_t)M.reg[GD_BPL2MOD >> 1];
+    const uint32_t amask = (uint32_t)(2 * fw - 1);
     for (int k = 0; k < planes; k++) {
-        const uint8_t *p = (const uint8_t *)(uintptr_t)M.bplpt[k];
+        int16_t mod = (k & 1) ? mod2 : mod1;
+        if ((M.bplpt[k] | (uint32_t)mod) & amask) misfetch++;
+        const uint8_t *p = (const uint8_t *)(uintptr_t)(M.bplpt[k] & ~amask);
         for (int i = 0; i < words; i++) fetched[k][i] = (uint16_t)(p[2 * i] << 8 | p[2 * i + 1]);
-        M.bplpt[k] += (uint32_t)(2 * words + ((k & 1) ? mod2 : mod1));
+        M.bplpt[k] += (uint32_t)(2 * words + mod);
     }
     int delay[2];
     for (int f = 0; f < 2; f++) {
@@ -199,14 +228,14 @@ static void render_line(int v)
         delay[f] = ((con1 >> sh) & 15) << 2;
         if (aga) delay[f] |= ((con1 >> (sh + 8)) & 3) | ((con1 >> (sh + 10)) & 3) << 6;
     }
-    const int base = hires ? 4 * (2 * dstart + 9) : 4 * (2 * dstart + 17), p = hires ? 2 : 4;
+    const int base = 4 * (2 * dstart + (res && !fi ? 9 : 17)), p = 4 >> res;
     const int hstart = ds & 0xFF, hstop = (de & 0xFF) | 0x100;
     const bool ham = (con0 & 0x800) != 0, dpf = (con0 & 0x400) != 0;
     uint32_t hold = M.palette[0];
     int off2 = 8;
     if (aga) { int code = (con3 >> 10) & 7; off2 = code ? 1 << code : 0; }
-    for (int X = 2 * hstart; X < 2 * hstop && X < FBW; X++) {
-        int su = 2 * X, val = 0;
+    for (int su = 4 * hstart; su < 4 * hstop && su < FBW; su++) {
+        int val = 0;
         for (int k = 0; k < planes; k++) {
             int s = su - base - delay[k & 1];
             if (s < 0) continue;
@@ -249,7 +278,7 @@ static void render_line(int v)
             if (aga) val ^= con4 >> 8;
             col = M.palette[val & 255];
         }
-        fb[v][X] = col;
+        fb[v][su] = col;
     }
     stamp[v] = frameno;
 }
@@ -404,6 +433,7 @@ static void run_scene(int si)
 {
     const sscene &S = SC[si];
     tused = 0;
+    misfetch = 0;
     boot(S.chip, S.pal);
     gd_view view;
     gd_InitView(&E, &view);
@@ -526,7 +556,7 @@ static void run_scene(int si)
                 if (R[0] != phase || R[1] != f) continue;
 #ifdef DUMP
                 if (si == DUMP0 && phase == DUMP1 && f == DUMP2 && R[2] == DUMP3) {
-                    int ppx = (SVP[S.vp0 + R[2]].modes & 0x8000) ? 1 : 2;
+                    int md = SVP[S.vp0 + R[2]].modes, ppx = (md & 0x20) ? 1 : (md & 0x8000) ? 2 : 4;
                     for (int l = R[3]; l < R[4]; l++) {
                         printf("L %d", l);
                         for (int x = R[5]; x < R[6] && x < R[5] + 400 / 7 * ppx; x += ppx) printf(" %06x", (unsigned)(stamp[l] == frameno ? fb[l][x] : 0x123457));
@@ -545,6 +575,8 @@ static void run_scene(int si)
         }
     }
     CHECK(M.copper_errors == 0, "no copper danger");
+    CHECK(misfetch == 0, "every line fetched by the chips' rules");
+    if (misfetch) printf("  scene %d: %lu lines fetched against the rules\n", si, misfetch);
     gd_LoadView(&E, 0);
     for (int i = 0; i < S.nvp; i++) {
         gd_FreeVPortCopLists(&E, &vps[i]);
@@ -609,7 +641,7 @@ static void misc(int chip, bool pal)
     {
         gfx_tagitem t[] = { T(GD_BIDTAG_Depth, 8), T(0, 0) };
         uint32_t b = gd_BestModeIDA(&E, t);
-        CHECK(chip == 2 ? (b != GD_INVALID_ID && (b & 0x8000) == 0) : b == GD_INVALID_ID, "BestModeIDA depth 8");
+        CHECK(chip == 2 ? (b & ~GD_MONITOR_ID_MASK) == GD_HIRES_KEY : b == GD_INVALID_ID, "BestModeIDA depth 8: AGA's hires (2x fetch)");
         gfx_tagitem t2[] = { T(GD_BIDTAG_NominalWidth, 640), T(GD_BIDTAG_NominalHeight, pal ? 512 : 400), T(0, 0) };
         CHECK(gd_BestModeIDA(&E, t2) == 0x8004, "BestModeIDA 640 x 400/512: hires laced");
         gfx_tagitem t3[] = { T(GD_BIDTAG_DIPFMustHave, GD_DIPF_IS_HAM), T(GD_BIDTAG_NominalWidth, 320), T(GD_BIDTAG_NominalHeight, pal ? 256 : 200), T(0, 0) };
@@ -810,7 +842,7 @@ static void misc(int chip, bool pal)
         CHECK(gd_MakeVPort(&E, &v, &p1) == GD_MVP_OK && !p1.dspins, "VP_HIDE");
         p1.modes = GD_HIRES;
         bm.depth = 5;
-        CHECK(gd_MakeVPort(&E, &v, &p1) == GD_MVP_NO_DISPLAY, "hires with 5 planes needs FMODE: not yet");
+        CHECK(gd_MakeVPort(&E, &v, &p1) == (chip == 2 ? GD_MVP_OK : GD_MVP_NO_DISPLAY), "hires with 5 planes: AGA's 2x fetch");
         p1.modes = 0;
         p1.dyoffset = 400;
         CHECK(gd_MakeVPort(&E, &v, &p1) == GD_MVP_OFF_BOTTOM, "a ViewPort below the display");
@@ -820,6 +852,167 @@ static void misc(int chip, bool pal)
     }
     shutdown();
     printf("misc chip %d pal %d done\n", chip, pal ? 1 : 0);
+}
+
+/* ---- the fetch: DDFSTRT, DDFSTOP, the modulos, BPLCON1 and FMODE --------- */
+struct regs { int n; uint16_t ddfstrt, ddfstop, mod1, mod2, con1, fmode; };
+static regs dsp_regs(gd_viewport *vp)
+{
+    regs r;
+    memset(&r, 0, sizeof r);
+    r.fmode = 0xEEEE;                   /* none */
+    gd_coplist *cl = vp->dspins;
+    for (int i = 1; cl && i < cl->count; i++) {
+        const gd_copins &ci = cl->copins[i];
+        if ((ci.opcode & 3) == GD_COPPER_WAIT) break;
+        uint16_t v = (uint16_t)ci.u.w.b;
+        switch (ci.u.w.a & 0x1FE) {
+        case GD_DDFSTRT: r.ddfstrt = v; break;
+        case GD_DDFSTOP: r.ddfstop = v; break;
+        case GD_BPL1MOD: r.mod1 = v; break;
+        case GD_BPL2MOD: r.mod2 = v; break;
+        case GD_BPLCON1: r.con1 = v; break;
+        case GD_FMODE: r.fmode = v; break;
+        }
+        r.n++;
+    }
+    return r;
+}
+
+/* a bitmap of rowbytes, planes at 64 bits plus off bytes */
+static gfx_bitmap *plain_bm(int depth, int rowbytes, int rows, int off)
+{
+    gfx_bitmap *bm = (gfx_bitmap *)talloc(sizeof(gfx_bitmap));
+    bm->depth = (uint8_t)depth;
+    bm->rows = (uint16_t)rows;
+    bm->bytesperrow = (uint16_t)rowbytes;
+    for (int k = 0; k < depth; k++) bm->planes[k] = (uint8_t *)talloc((uint32_t)(rowbytes * rows + 8)) + off;
+    return bm;
+}
+
+static void fetch_modes(int chip)
+{
+    tused = 0;
+    boot(chip, true);
+    static const char *const rn[3] = { "lores", "hires", "superhires" };
+    const int maxd[3] = { chip == 2 ? 8 : 6, chip == 2 ? 8 : 4, chip == 2 ? 8 : 2 };
+    /* the database's MaxDepth per chipset */
+    static const uint32_t keys[] = { 0x0000, 0x8000, 0x8020, 0x8004, 0x8024, 0x0080, 0x0800, 0x0400, 0x8400, 0x8080, 0x8800 };
+    const int ocs[] = { 5, 4, 2, 4, 2, 6, 6, 6, 4, 4, 4 }, agad[] = { 8, 8, 8, 8, 8, 6, 8, 8, 8, 6, 8 };
+    for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        gd_dimensioninfo dims;
+        CHECK(gd_GetDisplayInfoData(&E, 0, &dims, sizeof dims, GD_DTAG_DIMS, GD_PAL_MONITOR_ID | keys[i]) == 88, "DTAG_DIMS");
+        int want = chip == 2 ? agad[i] : ocs[i];
+        CHECK(dims.maxdepth == want, "MaxDepth per chipset");
+        if (dims.maxdepth != want) printf("  chip %d mode %04lx: MaxDepth %d, want %d\n", chip, (unsigned long)keys[i], dims.maxdepth, want);
+    }
+    /* full width ViewPorts of every resolution and depth, plain and laced:
+     * what MakeVPort answers, and the fetch it sets */
+    gd_view v;
+    gd_InitView(&E, &v);
+    for (int res = 0; res < 3; res++)
+        for (int lace = 0; lace < 2; lace++)
+            for (int depth = 1; depth <= 8; depth++) {
+                if (res == 2 && chip == 0) continue;
+                int w = 320 << res, rb = w / 8;
+                gfx_bitmap *bm = plain_bm(depth, rb, 32, 0);
+                gd_rasinfo ri;
+                memset(&ri, 0, sizeof ri);
+                ri.bitmap = bm;
+                gd_viewport vp;
+                gd_InitVPort(&E, &vp);
+                vp.rasinfo = &ri;
+                vp.dwidth = (int16_t)w;
+                vp.dheight = 16;
+                vp.modes = (uint16_t)((res == 1 ? GD_HIRES : res == 2 ? GD_HIRES | GD_SUPERHIRES : 0) | (lace ? GD_LACE : 0)
+                                      | (depth == 6 && res == 0 && chip < 2 ? GD_EXTRA_HALFBRITE : 0));
+                uint32_t r = gd_MakeVPort(&E, &v, &vp);
+                bool ok = depth <= maxd[res];
+                CHECK(r == (ok ? GD_MVP_OK : GD_MVP_NO_DISPLAY), "MakeVPort: the depths each chipset shows");
+                if (r != (ok ? GD_MVP_OK : GD_MVP_NO_DISPLAY))
+                    printf("  chip %d %s%s depth %d: MakeVPort %lu\n", chip, rn[res], lace ? " laced" : "", depth, (unsigned long)r);
+                if (r == GD_MVP_OK) {
+                    /* at 1x: lores 0x38-0xD0, hires and superhires 0x3C-0xD4
+                     * (HRM); hires at 2x and superhires at 4x: 0x38-0xD0
+                     * (their data shows from 2 * DDFSTRT + 17); the modulo the
+                     * rows the fetch skips: 0, or a row when laced */
+                    int wide = (res == 1 && depth > 4) || (res == 2 && depth > 2);
+                    regs g = dsp_regs(&vp);
+                    uint16_t ws = (res && !wide) ? 0x3C : 0x38, we = (uint16_t)(ws + 0x98);
+                    uint16_t wm = (uint16_t)(lace ? rb : 0), wf = (uint16_t)(chip < 2 ? 0xEEEE : !wide ? 0 : res == 1 ? 1 : 3);
+                    bool same = g.ddfstrt == ws && g.ddfstop == we && g.mod1 == wm && g.mod2 == wm && g.con1 == 0 && g.fmode == wf;
+                    CHECK(same, "the fetch per resolution and depth");
+                    if (!same)
+                        printf("  chip %d %s%s depth %d: DDF %02x-%02x mod %04x/%04x BPLCON1 %04x FMODE %04x; want %02x-%02x mod %04x FMODE %04x\n",
+                               chip, rn[res], lace ? " laced" : "", depth, g.ddfstrt, g.ddfstop, g.mod1, g.mod2, g.con1, g.fmode, ws, we, wm, wf);
+                }
+                gd_FreeVPortCopLists(&E, &vp);
+            }
+    if (chip == 2) {
+        gd_rasinfo ri;
+        memset(&ri, 0, sizeof ri);
+        gd_viewport vp;
+        gd_InitVPort(&E, &vp);
+        vp.rasinfo = &ri;
+        /* SysInfo 4.4's screen: 640 superhires pixels, 3 planes: 4x, 40 words */
+        ri.bitmap = plain_bm(3, 80, 32, 0);
+        vp.dwidth = 640;
+        vp.dheight = 16;
+        vp.modes = GD_HIRES | GD_SUPERHIRES;
+        CHECK(gd_MakeVPort(&E, &v, &vp) == GD_MVP_OK, "SysInfo's screen");
+        regs g = dsp_regs(&vp);
+        CHECK(g.ddfstrt == 0x38 && g.ddfstop == 0x80 && g.mod1 == 0 && g.mod2 == 0 && g.fmode == 3, "SysInfo's screen: 4x, 0x38-0x80");
+        /* hires, 8 planes, scrolled 5 pixels: the fetch a cycle earlier,
+         * 54 superhires pixels of delay (PF1H 13 and PF1H0-1 2), 42 words */
+        ri.bitmap = plain_bm(8, 80, 32, 0);
+        ri.rxoffset = 5;
+        vp.modes = GD_HIRES;
+        CHECK(gd_MakeVPort(&E, &v, &vp) == GD_MVP_OK, "hires 8 planes scrolled");
+        g = dsp_regs(&vp);
+        CHECK(g.ddfstrt == 0x30 && g.ddfstop == 0xD0 && g.mod1 == 0xFFFC && g.con1 == 0x22DD && g.fmode == 1, "hires 8 planes scrolled: 0x30-0xD0, BPLCON1 0x22DD");
+        ri.rxoffset = 0;
+        /* a wider fetch needs its planes and rows on its width */
+        ri.bitmap = plain_bm(8, 82, 32, 0);
+        CHECK(gd_MakeVPort(&E, &v, &vp) == GD_MVP_NO_DISPLAY, "hires 8 planes, rows of 82 bytes: no 2x");
+        ri.bitmap = plain_bm(8, 84, 32, 0);
+        CHECK(gd_MakeVPort(&E, &v, &vp) == GD_MVP_OK && dsp_regs(&vp).mod1 == 4, "hires 8 planes, rows of 84 bytes: 2x");
+        ri.bitmap = plain_bm(8, 80, 32, 2);
+        CHECK(gd_MakeVPort(&E, &v, &vp) == GD_MVP_NO_DISPLAY, "hires 8 planes off 32 bits: no 2x");
+        ri.bitmap = plain_bm(3, 84, 32, 0);
+        vp.modes = GD_HIRES | GD_SUPERHIRES;
+        CHECK(gd_MakeVPort(&E, &v, &vp) == GD_MVP_NO_DISPLAY, "superhires 3 planes, rows of 84 bytes: no 4x");
+        ri.bitmap = plain_bm(3, 88, 32, 4);
+        CHECK(gd_MakeVPort(&E, &v, &vp) == GD_MVP_NO_DISPLAY, "superhires 3 planes off 64 bits: no 4x");
+        ri.bitmap = plain_bm(2, 82, 32, 2);
+        CHECK(gd_MakeVPort(&E, &v, &vp) == GD_MVP_OK, "superhires 2 planes at 1x: any word");
+        /* the sprite width joins each shown ViewPort's FMODE */
+        ri.bitmap = plain_bm(8, 80, 32, 0);
+        vp.modes = GD_HIRES;
+        v.viewport = &vp;
+        CHECK(gd_MakeVPort(&E, &v, &vp) == GD_MVP_OK && gd_MrgCop(&E, &v) == GD_MCOP_OK, "a hires 8 plane View");
+        gd_LoadView(&E, &v);
+        frame(true);
+        CHECK(M.reg[GD_FMODE >> 1] == 0x0001, "the View's FMODE: 2x, 16 pixel sprites");
+        gfx_bitmap sb;
+        memset(&sb, 0, sizeof sb);
+        static uint8_t sp0[8], sp1[8];
+        sb.bytesperrow = 4; sb.rows = 2; sb.depth = 2; sb.planes[0] = sp0; sb.planes[1] = sp1;
+        gfx_tagitem t16[] = { T(0, 0) }, t32[] = { T(GD_SPRITEA_Width, 32), T(0, 0) }, g0[] = { T(GD_GSTAG_SPRITE_NUM, 0), T(0, 0) };
+        gd_extsprite *e1 = gd_AllocSpriteDataA(&E, &sb, t16), *e2 = gd_AllocSpriteDataA(&E, &sb, t32);
+        CHECK(e1 && e2 && gd_GetExtSpriteA(&E, e1, g0) == 0, "GetExtSpriteA 0");
+        CHECK(gd_ChangeExtSpriteA(&E, &vp, e1, e2, 0) == 1, "a 32 pixel sprite");
+        frame(true);
+        CHECK(M.reg[GD_FMODE >> 1] == 0x0005, "the View's FMODE: 2x, 32 pixel sprites");
+        gd_LoadView(&E, 0);
+        gd_FreeSprite(&E, 0);
+        gd_FreeSpriteData(&E, e1);
+        gd_FreeSpriteData(&E, e2);
+        gd_FreeVPortCopLists(&E, &vp);
+        gd_FreeCprList(&E, v.lofcprlist);
+        v.lofcprlist = v.shfcprlist = 0;
+    }
+    shutdown();
+    printf("fetch chip %d done\n", chip);
 }
 
 /* opengfx.library next to OS 3.2's graphics.library: the same calls, no
@@ -846,6 +1039,7 @@ int main(void)
     for (int i = 0; i < NSCENES; i++) run_scene(i);
     for (int c = 0; c < 3; c++)
         for (int p = 0; p < 2; p++) misc(c, p != 0);
+    for (int c = 0; c < 3; c++) fetch_modes(c);
     side_by_side();
     printf("%lu checks, %lu failed\n", checks, fails);
     return fails != 0;

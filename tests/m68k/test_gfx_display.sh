@@ -3,18 +3,23 @@
 # the lean C++ core built with an m68k cross GCC for the 68040
 # at -O0 and -O2, each run on that CPU by test_gfx_display.cpp on a
 # simulated machine (exec's memory, the custom chips' registers, a copper
-# running the lists, an Agnus/Denise/Lisa showing the bitplanes).
-# test_gfx_display_model.py, written apart from the library, makes random
-# scenes (OCS, ECS, AGA; PAL, NTSC; Views laced or not, with a ViewExtra's
-# monitor or not; one to three ViewPorts of lores, hires, interlace, EHB,
+# running the lists, an Agnus/Denise/Lisa showing the bitplanes in 35ns
+# pixels, with AGA's 1x, 2x and 4x fetches).
+# test_gfx_display_model.py, written apart from the library, makes scenes
+# (first AGA's hires and superhires at every depth 1 to 8 and lores at 8,
+# plain and laced; then random ones: OCS, ECS, AGA; PAL, NTSC; Views laced
+# or not, with a ViewExtra's monitor or not; one to three ViewPorts of
+# lores, hires, superhires, interlace, EHB,
 # HAM6, HAM8, dual playfield, scrolled, clipped by the monitor or a
 # DisplayClip, with user copper lists, palettes of 32 to 256 colours, PF2OF
 # and BPLAM) and says what each ViewPort must show from graphics.library's
 # documented View and ViewPort rules, with no copper: every ViewPort's
 # pixels after MakeVPort, MrgCop and LoadView, after ScrollVPort, and after
 # ChangeVPBitMap, in each field. The harness adds the database, monitors,
-# VideoControl, sprites, the beam, WaitTOF, running out of memory and
-# memory given back. Then the library checks: the register entries
+# VideoControl, sprites, the beam, WaitTOF, running out of memory, memory
+# given back, and the fetch per chipset (MaxDepth; MakeVPort's answer and
+# DDFSTRT, DDFSTOP, modulos, BPLCON1 and FMODE for each resolution, depth
+# and interlace). Then the library checks: the register entries
 # (check_regs.py), display_lvo.c compiled, and nm: the core calls nothing
 # but libgcc and its own files, with no .data, .bss or C++ runtime.
 #   sh tests/m68k/test_gfx_display.sh           (SEED=n SCENES=n to vary)
@@ -28,7 +33,7 @@ cxx=${M68K_CXX:-m68k-linux-gnu-g++}
 nm=${M68K_NM:-m68k-linux-gnu-nm}
 qemu=${QEMU_M68K:-qemu-m68k}
 seed=${SEED:-20261013}
-scenes=${SCENES:-60}
+scenes=${SCENES:-120}
 command -v "$cxx" >/dev/null || { echo "skipped: no $cxx"; exit 0; }
 command -v python3 >/dev/null || { echo "skipped: no python3"; exit 0; }
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT

@@ -106,12 +106,13 @@ uint32_t props(gfx_env *env, const mode &m)
 
 int maxdepth(gfx_env *env, const mode &m)
 {
-    bool a = aga(env);
     uint8_t f = m.k->flags;
-    if (m.k->res == 2) return 2;        /* 1x fetch (display_view.cpp) */
+    /* AGA: 8 planes in every resolution (hires at 2x, superhires at 4x:
+     * display_view.cpp), 6 for EHB */
+    if (aga(env)) return (f & K_EHB) ? 6 : 8;
+    if (m.k->res == 2) return 2;        /* OCS and ECS: the 1x fetch */
     if (m.k->res == 1) return 4;
-    if (f & (K_HAM | K_EHB)) return a && (f & K_HAM) ? 8 : 6;
-    return a ? 8 : (f & K_DPF) ? 6 : 5;
+    return (f & (K_HAM | K_EHB | K_DPF)) ? 6 : 5;
 }
 
 void rect(gfx_rectangle &r, int x0, int y0, int x1, int y1)
