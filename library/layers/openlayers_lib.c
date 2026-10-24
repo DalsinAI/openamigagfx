@@ -38,7 +38,7 @@
 #define LIBNAME "layers.library"
 #endif
 #define LIB_VERSION  47
-#define LIB_REVISION 102                /* 47.100 and up: OpenLayers; 47.101: the composited mode; 47.102: LAYERS_COMPOSE_WHY */
+#define LIB_REVISION 103                /* 47.100 and up: OpenLayers; 47.101: the composited mode; 47.102: LAYERS_COMPOSE_WHY; 47.103: surfaces in video RAM */
 
 /* Everything the library keeps is here (or on the stack): no writable
  * globals, so it can run from ROM. Each call reaches it through A6. */
@@ -53,9 +53,9 @@ struct OLBase {
 int start(void) { return -1; }
 
 static const char lib_name[] = LIBNAME;
-static const char lib_id[] = "layers.library 47.102 (18.10.2026) OpenLayers, AmigaChrome Team\r\n";
+static const char lib_id[] = "layers.library 47.103 (24.10.2026) OpenLayers, AmigaChrome Team\r\n";
 static const char lib_ver[] __attribute__((used)) =
-    "\0$VER: layers.library 47.102 (18.10.2026) OpenLayers, AmigaChrome Team";
+    "\0$VER: layers.library 47.103 (24.10.2026) OpenLayers, AmigaChrome Team";
 static const char gfx_name[] = "graphics.library";
 
 /* A hook as utility.library calls one: A0 the hook, A2 the object, A1 the
