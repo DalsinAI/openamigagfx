@@ -28,6 +28,17 @@
  * OpenRTG waits for it before the CPU draws on or frees a bitmap, and
  * layers before it frees the shadow's picture (oc_idle).
  *
+ * 47.106 (decision D7(b)): a program that writes the screen's bitmap by
+ * address (its window's RastPort's bitmap is the screen's) writes past
+ * the compositor, which would draw over it from the window's surface.
+ * OpenRTG 0.23's ORTG_WrittenSpans tells exactly what the CPU itself
+ * wrote there (the runtime's watch, acrtg-v9); those pixels are copied
+ * into the surface of the front layer there before anything composes
+ * over them, and composed again (oc_pull). Before every drawing call into
+ * a composited layer too (oc_pre), so the call's drawing lands on them,
+ * never under. A long the board keeps in memory says whether there is
+ * anything: nothing costs a register read while nobody writes.
+ *
  * Nothing here runs for a Layer_Info ComposeLayerInfo has not switched on:
  * those are classic layers, exactly as before. */
 #include <exec/tasks.h>
@@ -64,7 +75,7 @@ enum { SET_ON, SET_SHADOWS, SET_SIZE, SET_STRENGTH, SET_DRAG, SET_INACTIVE };
 #define OC_STACK 16384
 #define OC_SIG SIGBREAKF_CTRL_F
 #define OC_NPATCH 37
-#define OC_THUNK 25
+#define OC_THUNK 39
 /* What is drawn is composed once nothing more has been drawn for
  * OC_SETTLE microseconds, and at most OC_SETTLE_MAX after the first mark
  * (a program drawing all the time). Composing at the next WaitTOF instead
@@ -72,6 +83,12 @@ enum { SET_ON, SET_SHADOWS, SET_SIZE, SET_STRENGTH, SET_DRAG, SET_INACTIVE };
  * click brings waited for it, a click that makes two waited twice. */
 #define OC_SETTLE 1000
 #define OC_SETTLE_MAX 8000
+
+/* 47.106: rectangles in no order, in an array that grows */
+struct oc_rl {
+    struct lc_rect *r;
+    ULONG n, cap;
+};
 
 /* One composited Layer_Info. */
 struct OComp {
@@ -84,7 +101,10 @@ struct OComp {
     UBYTE fmt, depth;           /* OGPU format of the screen and the surfaces; 16 or 32 */
     UBYTE set[6];               /* the prefs (oc_prefs): SET_ */
     UBYTE full;                 /* the compositor composes all of it next */
+    UBYTE pull;                 /* 47.106: OpenRTG has ORTG_WrittenSpans (0.23) */
     ULONG *shadow;              /* ARGB32, (4R + 1) square: the shadow's corners and edges */
+    volatile ULONG *flag;       /* 47.106: the board's long, not 0 while it has something written; 0: no watch */
+    struct oc_rl pend;          /* 47.106: written before a drawing call that found the lock taken (oc_pre) */
 };
 
 struct OThunk {
@@ -217,9 +237,9 @@ static void oc_touch(struct ol_base *olb, struct Layer *l, const struct lc_rect 
     oc_add(olb->cb, OL(l), a.x0, a.y0, a.x1, a.y1);
 }
 
-/* Called by a thunk after the call it stands on: what the call drew, if it
- * drew into a composited layer. regs: d0-d7, a0, a1 as they were. */
-static void oc_mark(struct OCB *cb, ULONG kind, const ULONG *regs)
+/* What a drawing call draws, if into a composited layer: the layer, and a
+ * rectangle from its top left. regs: d0-d7, a0, a1 as the caller set them. */
+static int oc_what(ULONG kind, const ULONG *regs, struct Layer **lp, struct lc_rect *out)
 {
     const struct omark *k = &marks[kind];
     struct RastPort *rp = (struct RastPort *)regs[k->rp];
@@ -227,9 +247,9 @@ static void oc_mark(struct OCB *cb, ULONG kind, const ULONG *regs)
     struct OLayer *o;
     LONG x0, y0, x1, y1, w, h, t;
 
-    if (!rp || !(l = rp->Layer)) return;
+    if (!rp || !(l = rp->Layer)) return 0;
     o = OL(l);
-    if (o->magic != OL_MAGIC || !o->surf) return;
+    if (o->magic != OL_MAGIC || !o->surf) return 0;
     w = l->bounds.MaxX - l->bounds.MinX + 1;
     h = l->bounds.MaxY - l->bounds.MinY + 1;
     x0 = y0 = 0;
@@ -256,17 +276,35 @@ static void oc_mark(struct OCB *cb, ULONG kind, const ULONG *regs)
     if (y0 < 0) y0 = 0;
     if (x1 >= w) x1 = w - 1;
     if (y1 >= h) y1 = h - 1;
-    if (x0 > x1 || y0 > y1) return;
-    oc_add(cb, o, x0, y0, x1, y1);
+    if (x0 > x1 || y0 > y1) return 0;
+    *lp = l;
+    out->x0 = x0; out->y0 = y0; out->x1 = x1; out->y1 = y1;
+    return 1;
 }
 
-/* A thunk, in memory, for each call: the call's own code runs first, with
- * every register as its caller set it, then oc_mark(cb, kind, regs).
- *   movem.l d0-d7/a0-a1,-(sp); jsr old; movem.l d0-d1,-(sp); pea 8(sp);
+/* Called by a thunk after the call it stands on: what the call drew, if it
+ * drew into a composited layer. */
+static void oc_mark(struct OCB *cb, ULONG kind, const ULONG *regs)
+{
+    struct Layer *l;
+    struct lc_rect r;
+    if (oc_what(kind, regs, &l, &r)) oc_add(cb, OL(l), r.x0, r.y0, r.x1, r.y1);
+}
+
+/* 47.106: called by a thunk before the call (below) */
+static void oc_pre(struct OCB *cb, ULONG kind, const ULONG *regs);
+
+/* A thunk, in memory, for each call: oc_pre(cb, kind, regs) (47.106), then
+ * the call's own code, with every register as its caller set it, then
+ * oc_mark(cb, kind, regs).
+ *   movem.l d0-d7/a0-a1,-(sp); pea (sp); move.l #kind,-(sp);
+ *   move.l #cb,-(sp); jsr oc_pre; lea 12(sp),sp; movem.l (sp),d0-d7/a0-a1;
+ *   jsr old; movem.l d0-d1,-(sp); pea 8(sp);
  *   move.l #kind,-(sp); move.l #cb,-(sp); jsr oc_mark; lea 12(sp),sp;
  *   movem.l (sp)+,d0-d1; lea 40(sp),sp; rts */
 static const UWORD thunk_code[OC_THUNK] = {
-    0x48E7, 0xFFC0, 0x4EB9, 0, 0, 0x48E7, 0xC000, 0x486F, 0x0008, 0x2F3C, 0, 0, 0x2F3C,
+    0x48E7, 0xFFC0, 0x4857, 0x2F3C, 0, 0, 0x2F3C, 0, 0, 0x4EB9, 0, 0, 0x4FEF, 0x000C, 0x4CD7, 0x03FF,
+    0x4EB9, 0, 0, 0x48E7, 0xC000, 0x486F, 0x0008, 0x2F3C, 0, 0, 0x2F3C,
     0, 0, 0x4EB9, 0, 0, 0x4FEF, 0x000C, 0x4CDF, 0x0003, 0x4FEF, 0x0028, 0x4E75,
 };
 
@@ -295,10 +333,13 @@ static void oc_patch_all(struct OCB *cb)
         cur = *(APTR *)(vec + 2);
         if (cur != (APTR)cb->thunk[i] && (t = AllocMem(sizeof *t, MEMF_PUBLIC))) {
             for (j = 0; j < OC_THUNK; j++) t->w[j] = thunk_code[j];
-            put32(&t->w[3], (ULONG)cur);
-            put32(&t->w[10], patches[i].mark);
-            put32(&t->w[13], (ULONG)cb);
-            put32(&t->w[16], (ULONG)oc_mark);
+            put32(&t->w[4], patches[i].mark);
+            put32(&t->w[7], (ULONG)cb);
+            put32(&t->w[10], (ULONG)oc_pre);
+            put32(&t->w[17], (ULONG)cur);
+            put32(&t->w[24], patches[i].mark);
+            put32(&t->w[27], (ULONG)cb);
+            put32(&t->w[30], (ULONG)oc_mark);
             CacheClearU();
             SetFunction(lib, patches[i].lvo, (APTR)t);
             cb->thunk[i] = t;
@@ -532,6 +573,193 @@ static void oc_build(struct OCB *cb, const struct OComp *c, struct oc_batch *b, 
     }
 }
 
+/* ---- what programs write into the screen by address (47.106) ------------ */
+
+/* OpenRTG 0.23's ORTG_WrittenSpans (openrtg.h's struct OpenRTGSpan: a row,
+ * its pixels x0 to x1), here so layers builds with an older openrtg.h */
+struct oc_span {
+    UWORD y, x0, x1;
+};
+#define oc_written_spans(bm, s, max) \
+    LP3(0x84, ULONG, ORTG_WrittenSpans, struct BitMap *, bm, a0, struct oc_span *, s, a1, ULONG, max, d0, , OPENRTG_BASE_NAME)
+#define OC_SPANS 16             /* spans asked for at a time (on a drawing program's stack) */
+
+static void oc_rl_add(struct oc_rl *a, const struct lc_rect *r)
+{
+    if (a->n == a->cap) {
+        ULONG cap = a->cap ? 2 * a->cap : 16, i;
+        struct lc_rect *p = AllocMem(cap * sizeof *p, MEMF_PUBLIC);
+        if (!p) return;                         /* no memory: lost, as before 47.106 */
+        for (i = 0; i < a->n; i++) p[i] = a->r[i];
+        if (a->r) FreeMem(a->r, a->cap * sizeof *p);
+        a->r = p;
+        a->cap = cap;
+    }
+    a->r[a->n++] = *r;
+}
+
+static void oc_rl_free(struct oc_rl *a)
+{
+    if (a->r) FreeMem(a->r, a->cap * sizeof *a->r);
+    a->r = 0;
+    a->n = a->cap = 0;
+}
+
+/* Everything the board has of what the CPU wrote into c's screen, as
+ * rectangles into out: a row under the last one with its columns grows
+ * it, a span next to a one-row one in its row widens it. Under Forbid. */
+static void oc_fetch(struct OCB *cb, struct OComp *c, struct oc_rl *out)
+{
+    struct oc_span s[OC_SPANS];
+    struct lc_rect cur;
+    ULONG n, i;
+    cur.x0 = 1;
+    cur.x1 = 0;
+    do {
+        n = oc_written_spans(c->screen, s, OC_SPANS);
+        for (i = 0; i < n; i++) {
+            LONG y = s[i].y, x0 = s[i].x0, x1 = s[i].x1;
+            if (cur.x0 <= cur.x1 && x0 == cur.x0 && x1 == cur.x1 && y == cur.y1 + 1) cur.y1 = y;
+            else if (cur.x0 <= cur.x1 && cur.y0 == y && cur.y1 == y && x0 == cur.x1 + 1) cur.x1 = x1;
+            else {
+                if (cur.x0 <= cur.x1) oc_rl_add(out, &cur);
+                cur.x0 = x0;
+                cur.x1 = x1;
+                cur.y0 = cur.y1 = y;
+            }
+        }
+    } while (n == OC_SPANS);
+    if (cur.x0 <= cur.x1) oc_rl_add(out, &cur);
+}
+
+/* r (the screen's) as it is on the screen, into the surface of the front
+ * layer at each of its pixels; pixels no layer covers stay the screen's,
+ * and an ARGB32 layer (LAYERLOOK_ALPHA) keeps its own. after: r was
+ * written before drawing a layer's after holds, which is newer: left. On
+ * the second pass each piece is marked, so what is over it (a translucent
+ * layer, a shadow) is composed again from the layers. */
+static void oc_copy_in(struct OCB *cb, const struct OComp *c, struct oc_batch *b, const struct lc_rect *r0, int after,
+                       ULONG pass)
+{
+    struct lc_rect r, scr;
+    struct lc_rects rem, v;
+    struct Layer *l;
+    ULONG j;
+    scr.x0 = scr.y0 = 0;
+    scr.x1 = c->w - 1;
+    scr.y1 = c->h - 1;
+    if (!lc_meet(r0, &scr, &r)) return;
+    lc_init(&rem, &mem);
+    if (!lc_set(&rem, &r))
+        for (l = c->li->top_layer; l && rem.n; l = l->back) {
+            struct OLayer *o = OL(l);
+            struct lc_rect bb = lr(&l->bounds);
+            if (o->hidden || !o->surf) continue;
+            lc_init(&v, &mem);
+            if (!(o->look & LAYERLOOK_ALPHA) && !lc_copy(&v, &rem)) {
+                lc_and_rect(&v, &bb);
+                if (after && o->after.x0 <= o->after.x1) lc_sub_rect(&v, &o->after);
+                if (v.n) {
+                    LONG ox = o->soff - l->bounds.MinX, oy = -l->bounds.MinY;
+                    op_surface(b, S_SURF, o->saddr, o->sbpr, o->sw, o->sh, c->fmt);
+                    op_target(b, S_SURF);
+                    put(b, OGPU_HDR(OGPU_OP_CLIP, 3));
+                    put(b, 0);
+                    put(b, 0);
+                    for (j = 0; j < v.n; j++) {
+                        struct lc_rect d = shift(v.r[j], ox, oy);
+                        op_copy(b, S_SCREEN, v.r[j].x0, v.r[j].y0, &d);
+                        if (pass) oc_add(cb, o, v.r[j].x0 - l->bounds.MinX, v.r[j].y0 - l->bounds.MinY,
+                                         v.r[j].x1 - l->bounds.MinX, v.r[j].y1 - l->bounds.MinY);
+                    }
+                }
+            }
+            lc_free(&v);
+            if (lc_sub_rect(&rem, &bb)) break;
+        }
+    lc_free(&rem);
+}
+
+/* What programs wrote into c's screen by address since the last pull goes
+ * into the windows there: one batch of COPYs, not waited for, ahead of
+ * anything submitted after. What oc_pre kept goes first, less the drawing
+ * newer than it; then what the board has now. Under Forbid from asking to
+ * submitting, so no drawing call or compose of another task's gets into
+ * the ring between them. Holds cb->lock. Nothing to do: one long read. */
+static void oc_pull(struct OCB *cb, struct OComp *c)
+{
+    struct oc_rl now;
+    struct oc_batch b;
+    struct Layer *l;
+    ULONG pass, i, fence = 0, head;
+    if (!c->flag) return;
+    Forbid();
+    if (*c->flag || c->pend.n) {
+        now.r = 0;
+        now.n = now.cap = 0;
+        oc_fetch(cb, c, &now);
+        b.w = 0;
+        b.cap = 0;
+        for (pass = 0; pass < 2; pass++) {
+            b.n = 0;
+            op_surface(&b, S_SCREEN, c->saddr, c->sbpr, c->w, c->h, c->fmt);
+            head = b.n;
+            for (i = 0; i < c->pend.n; i++) oc_copy_in(cb, c, &b, &c->pend.r[i], 1, pass);
+            for (i = 0; i < now.n; i++) oc_copy_in(cb, c, &b, &now.r[i], 0, pass);
+            if (pass || b.n == head) break;
+            b.cap = b.n;
+            if (!(b.w = AllocMem(b.cap * 4, MEMF_PUBLIC))) break;
+        }
+        if (b.w) {
+            if (OGPU_Submit(b.w, b.n, &fence) == OGPU_OK && fence) cb->fence = fence;
+            FreeMem(b.w, b.cap * 4);
+        }
+        c->pend.n = 0;
+        for (l = c->li->top_layer; l; l = l->back) {
+            OL(l)->after.x0 = 1;
+            OL(l)->after.x1 = 0;
+        }
+        oc_rl_free(&now);
+    }
+    Permit();
+}
+
+/* Called by a thunk before the call it stands on. When the call draws into
+ * a composited layer and a program has written into that screen by
+ * address, what it wrote goes into the windows first (oc_pull), so the
+ * call draws on it, never under it. When another task holds the lock (a
+ * compose, a stack change), what was written is taken from the board now
+ * and kept, with this call's rectangle as newer than it; the next pull
+ * leaves that rectangle of the layer alone. Nothing written: a long read. */
+static void oc_pre(struct OCB *cb, ULONG kind, const ULONG *regs)
+{
+    struct OComp *c;
+    struct Layer *l;
+    struct lc_rect r;
+    if (!oc_what(kind, regs, &l, &r)) return;
+    Forbid();
+    for (c = cb->comps; c && c->li != l->LayerInfo; c = c->next)
+        ;
+    if (c && c->flag && (*c->flag || c->pend.n) && cb->lock.ss_Owner != FindTask(0)) {
+        if (AttemptSemaphore(&cb->lock)) {
+            oc_pull(cb, c);
+            ReleaseSemaphore(&cb->lock);
+        } else {
+            struct lc_rect *a = &OL(l)->after;
+            oc_fetch(cb, c, &c->pend);
+            r = shift(r, l->bounds.MinX, l->bounds.MinY);
+            if (c->pend.n && a->x0 > a->x1) *a = r;
+            else if (c->pend.n) {
+                if (r.x0 < a->x0) a->x0 = r.x0;
+                if (r.y0 < a->y0) a->y0 = r.y0;
+                if (r.x1 > a->x1) a->x1 = r.x1;
+                if (r.y1 > a->y1) a->y1 = r.y1;
+            }
+        }
+    }
+    Permit();
+}
+
 /* Composes area a (the screen's coordinates; it is cut to the screen) of
  * c's screen, as the stack is now. Holds cb->lock. Answers 0; 1 when a
  * layer's lock was busy, so its part must be composed again; -1 when there
@@ -611,8 +839,14 @@ static int oc_compose(struct OCB *cb, struct OComp *c, struct lc_rects *a)
         }
     }
     if (!e) {
-        /* 47.105: left running; the ring has its own copy of the batch */
+        /* 47.105: left running; the ring has its own copy of the batch.
+         * 47.106: what programs wrote into the screen goes into the windows
+         * first, with nothing between: once handed over, this batch draws
+         * over it on the screen */
+        Forbid();
+        oc_pull(cb, c);
         if (OGPU_Submit(b.w, b.n, &fence) == OGPU_OK && fence) cb->fence = fence;
+        Permit();
         cb->composes++;
         for (i = 0; i < n; i++) OL(ord[i])->soff = (UBYTE)(ord[i]->bounds.MinX & 15);
     }
@@ -647,6 +881,11 @@ static void oc_run(struct OCB *cb)
     for (c = cb->comps; c; c = c->next) {
         int r = 0;
         lc_clear(&a);
+        /* 47.106: the watch on this screen when the board can (OpenRTG moves
+         * it to the screen shown), then what programs wrote into it, into the
+         * windows, marked to be composed now */
+        if (c->pull) c->flag = (volatile ULONG *)oc_written_spans(c->screen, 0, 0);
+        oc_pull(cb, c);
         if (c->full) {
             struct lc_rect all;
             all.x0 = all.y0 = 0;
@@ -833,6 +1072,7 @@ static void oc_idle(struct OCB *cb)
 static void oc_free_comp(struct OCB *cb, struct OComp *c)
 {
     oc_idle(cb);                        /* a compose still running may read the shadow's picture */
+    oc_rl_free(&c->pend);
     if (c->shadow) FreeMem(c->shadow, (4 * (ULONG)c->set[SET_SIZE] + 1) * (4 * (ULONG)c->set[SET_SIZE] + 1) * 4);
     FreeMem(c, sizeof *c);
 }
@@ -1133,6 +1373,11 @@ static struct OComp *oc_new(struct OCB *cb, struct OInfo *inf, struct Layer_Info
     c->h = bi.height;
     c->fmt = (UBYTE)fmt;
     c->depth = bi.format == 1 ? 16 : 32;
+    /* 47.106: OpenRTG 0.23's ORTG_WrittenSpans; the board watches the
+     * screen's bitmap from now when it can (0: it can't, and nothing of
+     * this runs) */
+    c->pull = cb->ortg->lib_Version > 0 || cb->ortg->lib_Revision >= 23;
+    if (c->pull) c->flag = (volatile ULONG *)oc_written_spans(bm, 0, 0);
     return c;
 }
 
