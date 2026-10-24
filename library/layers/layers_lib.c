@@ -134,6 +134,8 @@ static void oc_demoted(struct change *ch, int ok);
 static void oc_gone(struct ol_base *olb, struct Layer *l);
 static void oc_info_drop(struct ol_base *olb, struct OInfo *i);
 static void oc_lock(struct ol_base *olb, int on);
+struct OCB;
+static void oc_pull(struct OCB *cb, struct OComp *c);
 #define OL_MAGIC 0x4F4C4159UL   /* 'OLAY' */
 #endif
 
@@ -555,6 +557,9 @@ static int begin(struct ol_base *olb, struct Layer_Info *li, struct change *ch)
     ch->subject = 0;
     ch->full = 0;
     if ((ch->locked = ch->comp != 0)) oc_lock(olb, 1);
+    /* 47.106: what programs wrote into the screen by address, into the
+     * windows where they are before anything moves */
+    if (ch->comp) oc_pull(olb->cb, ch->comp);
 #endif
     ch->have_screen = 0;
     if (inf && inf->have_bounds) {
