@@ -3,9 +3,10 @@
 # OpenGfx text: builds topaz_data.cpp, the ROM fonts topaz 8 and topaz 9,
 # from romfont8.txt and romfont9.txt. Copyright (c) 2026 AmigaChrome Team. MIT.
 #
-# The glyphs are OpenGfx's own drawing: romfont8.txt (8 x 8 cells, baseline
-# row 6) and romfont9.txt (10 x 9 cells, baseline row 7), each drawn by hand
-# for this ROM, not taken from any other font. The Latin-1 accented letters
+# The glyphs are DejaVu Sans Mono's letters (DEJAVU-LICENCE.txt), drawn one
+# bit deep with the font's own hinting and finished by hand for this ROM:
+# romfont8.txt (8 x 8 cells, baseline row 6) and romfont9.txt (10 x 9 cells,
+# baseline row 7), one-pixel strokes only. The Latin-1 accented letters
 # are composed here: a mark from the file's "accent.NAME" glyphs above a
 # short capital ("cap.X", the capital drawn again two rows lower) or above
 # the small letter's own rows (the dotless i for i).
@@ -122,8 +123,9 @@ def build(size):
 def emit(out):
     w = out.write
     w('// SPDX-License-Identifier: MIT\n')
-    w('// OpenGfx text: the ROM fonts topaz 8 and topaz 9, OpenGfx\'s own drawing\n')
-    w('// (romfont8.txt, romfont9.txt). Copyright (c) 2026 AmigaChrome Team. MIT.\n')
+    w('// OpenGfx text: the ROM fonts topaz 8 and topaz 9, DejaVu Sans Mono\'s letters\n')
+    w('// finished by hand (romfont8.txt, romfont9.txt; DEJAVU-LICENCE.txt).\n')
+    w('// Copyright (c) 2026 AmigaChrome Team. MIT; the letters as DEJAVU-LICENCE.txt.\n')
     w('// Made by mkfont.py; do not edit.\n')
     w('#include "topaz_data.h"\n\n')
     w('extern "C" const char gt_topaz_name[] = "topaz.font";\n\n')
