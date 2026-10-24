@@ -713,18 +713,33 @@ static void oc_task(void)
 
 /* ---- a composited Layer_Info's changes --------------------------------- */
 
+/* OpenRTG 0.20's AllocBitMap tag (openrtg.h): a displayable friend only
+ * drawing commands read, for video RAM's card part. */
+#ifndef ORTG_BMA_CARD
+#define ORTG_BMA_CARD 0x804F5201UL
+#endif
+
 /* A surface for a layer w x h: room for MinX & 15 more, and some to grow
  * into, so sizing a window does not make a new one at every step.
  * 47.103: asked for as displayable, so OpenRTG (0.19 and up) puts it in the
  * screen's board's video RAM while displayable friends take at most half of
  * it, and in fast RAM after that. In video RAM the GPU reaches it: drawing in
- * it and composing from it need no copy into OpenGPU's upload arena. */
+ * it and composing from it need no copy into OpenGPU's upload arena.
+ * 47.104: also with ORTG_BMA_CARD, as only drawing commands read a surface
+ * (layers never hands one to a program, and composes from it with OpenGPU):
+ * OpenRTG 0.20 puts it in the board's card part, the PC graphics card's own
+ * memory, where there is one (acrtg-v7), and other graphics libraries ignore
+ * the tag. */
 static int oc_surface(struct OCB *cb, struct OComp *c, LONG w, LONG h, struct OLayer *o)
 {
     struct ol_base *olb = cb->olb;
     struct OpenRTGBitMapInfo bi;
     ULONG sw = (ULONG)(w + 15 + 63) & ~63UL, sh = (ULONG)(h + 31) & ~31UL;
-    struct BitMap *bm = AllocBitMap(sw, sh, c->depth, BMF_CLEAR | BMF_DISPLAYABLE, c->screen);
+    struct TagItem tags[] = {
+        { BMATags_Friend, (ULONG)c->screen }, { BMATags_Clear, TRUE }, { BMATags_Displayable, TRUE },
+        { ORTG_BMA_CARD, TRUE }, { TAG_DONE, 0 }
+    };
+    struct BitMap *bm = AllocBitMap(sw, sh, c->depth, BMF_CHECKVALUE, (struct BitMap *)tags);
     if (!bm) return 0;
     if (!ORTG_BitMapInfo(bm, &bi) || bi.format != (c->depth == 16 ? 1 : 2) || bi.width < sw || bi.height < sh) {
         FreeBitMap(bm);
