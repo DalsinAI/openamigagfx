@@ -124,6 +124,7 @@ struct OCB {
     ULONG fence;                        /* 47.105: the last compose's, not waited for (0: none) */
     ULONG marks;                        /* counts every mark, for oc_settle */
     struct OThunk *thunk[OC_NPATCH];    /* the newest thunk on each call */
+    ULONG lab_pulls, lab_stashes, lab_pre;   /* LAB ONLY: pulls that copied, oc_pre's kept with the lock taken, oc_pre's pulls */
 };
 
 struct oc_batch {
@@ -714,6 +715,7 @@ static void oc_pull(struct OCB *cb, struct OComp *c)
             if (OGPU_Submit(b.w, b.n, &fence) == OGPU_OK && fence) cb->fence = fence;
             FreeMem(b.w, b.cap * 4);
         }
+        cb->lab_pulls++;
         c->pend.n = 0;
         for (l = c->li->top_layer; l; l = l->back) {
             OL(l)->after.x0 = 1;
@@ -742,10 +744,12 @@ static void oc_pre(struct OCB *cb, ULONG kind, const ULONG *regs)
         ;
     if (c && c->flag && (*c->flag || c->pend.n) && cb->lock.ss_Owner != FindTask(0)) {
         if (AttemptSemaphore(&cb->lock)) {
+            cb->lab_pre++;
             oc_pull(cb, c);
             ReleaseSemaphore(&cb->lock);
         } else {
             struct lc_rect *a = &OL(l)->after;
+            cb->lab_stashes++;
             oc_fetch(cb, c, &c->pend);
             r = shift(r, l->bounds.MinX, l->bounds.MinY);
             if (c->pend.n && a->x0 > a->x1) *a = r;
@@ -1439,6 +1443,9 @@ ULONG ol_SetLayerLook(struct ol_base *olb, struct Layer *l, ULONG what, ULONG va
     struct lc_rects a;
     ULONG old, seen;
 
+    if (cb && what == 0x400) return cb->lab_stashes;   /* LAB ONLY: the counters */
+    if (cb && what == 0x401) return cb->lab_pulls;
+    if (cb && what == 0x402) return cb->lab_pre;
     if (!cb || !l) return ~0UL;
     ObtainSemaphore(&cb->lock);
     for (c = cb->comps; c && c->li != l->LayerInfo; c = c->next)
