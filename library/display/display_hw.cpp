@@ -97,6 +97,9 @@ void set_fmode(gfx_env *env)
     s->copinit->fm0[1] = s->fmode;
     base(env)->spritefmode = s->fmode;
     base(env)->spritewidth = static_cast<uint16_t>(16 * s->spritewords);
+    /* each ViewPort's FMODE carries the sprite width too: the shown ones anew */
+    if (gd_view *v = static_cast<gd_view *>(base(env)->actiview))
+        for (gd_viewport *vp = v->viewport; vp; vp = vp->next) patch_vp(env, vp, false);
 }
 
 } // namespace gd

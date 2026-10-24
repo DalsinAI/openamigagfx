@@ -14,7 +14,7 @@
  *   MakeVPort writes vp->DspIns as three blocks, each a WAIT and MOVEs:
  *     1. the registers and colours, some lines before the ViewPort (the
  *        intermediate vertical gap, CalcIVG), with bitplanes still off:
- *        BPLCON0..4, DIWSTRT/STOP, DDFSTRT/STOP, the modulos, the plane
+ *        BPLCON0..4, FMODE (AGA), DIWSTRT/STOP, DDFSTRT/STOP, the modulos, the plane
  *        pointers (a long and a short frame copy for an interlaced
  *        ViewPort), the palette (bank by bank on AGA, high then low);
  *     2. at the ViewPort's first line, BPLCON0 with its planes;
@@ -138,6 +138,7 @@ struct layout {
     int row[2];                         /* the bitmap row (before RyOffset) at first */
     int step;                           /* rows per line */
     int ddfstrt, ddfstop, words;
+    uint16_t fmode;                     /* FMODE's bitplane bits: 0 (1x), 1 (2x), 3 (4x) */
     uint16_t diwstrt, diwstop;
     playfield pf[2];
     int npf;
@@ -180,10 +181,26 @@ uint32_t vp_layout(gfx_env *env, gd_view *view, gd_viewport *vp, layout &L)
         L.npf = 1;
         L.depth = ri->bitmap->depth;
     }
-    /* The fetch mode stays 1x: lores to 6 planes (8 on AGA), hires to 4,
-     * superhires to 2. Deeper needs FMODE's wider fetches: not yet. */
-    const int maxdepth = shres ? 2 : hires ? 4 : isaga ? 8 : 6;
-    if (L.depth > maxdepth) return GD_MVP_NO_DISPLAY;
+    /* The bitplane fetch. At 1x each plane's word takes a bus cycle, so an
+     * 8 colour clock fetch cycle shows lores 6 planes (8 on AGA), hires 4
+     * and superhires 2. AGA's wider fetch (FMODE bits 0-1) takes 2 or 4
+     * words a cycle: hires at 2x and superhires at 4x show 8 planes, still
+     * in 8 colour clock cycles. The narrowest fetch that shows the planes
+     * is used, so whatever showed at 1x is made as before. A wider fetch
+     * needs its bitmap's planes and rows on 32 (2x) or 64 (4x) bits, as
+     * AllocBitMap gives displayable bitmaps on AGA. */
+    int fw = 1;                                     /* words of a plane a fetch */
+    if (L.depth > (shres ? 2 : hires ? 4 : isaga ? 8 : 6)) {
+        if (!isaga || L.depth > 8) return GD_MVP_NO_DISPLAY;
+        fw = hires ? 2 : 4;
+        for (int i = 0; i < L.npf; i++) {
+            const gfx_bitmap *bm = L.pf[i].bm;
+            uintptr_t a = bm->bytesperrow;
+            for (int k = 0; k < L.pf[i].depth; k++) a |= reinterpret_cast<uintptr_t>(bm->planes[k]);
+            if (a & static_cast<uintptr_t>(2 * fw - 1)) return GD_MVP_NO_DISPLAY;
+        }
+    }
+    L.fmode = static_cast<uint16_t>(fw - 1);
 
     /* BPLCON0..4 */
     const bool vlace = view && (view->modes & GD_LACE);
@@ -278,10 +295,15 @@ uint32_t vp_layout(gfx_env *env, gd_view *view, gd_viewport *vp, layout &L)
     if (xlo >= xhi || w <= 0 || h <= 0) L.visible[0] = L.visible[1] = false;
     if (!L.visible[0] && !L.visible[1]) return GD_MVP_OK;
     const int hstart = xlo / 4, hstop = (xhi + 3) / 4;
-    const int c = hires || shres ? 9 : 17;          /* data starts at 2 * DDFSTRT + c (HRM) */
-    const int gran = shres ? 2 : hires ? 4 : 8;     /* DDFSTRT's step: one word of each plane */
-    const int blk = 16 * p;                         /* one word of the ViewPort's pixels, in 35ns */
-    /* each playfield's stream: where its words start on the line, the
+    /* data starts at 2 * DDFSTRT + c: 17 in lores (HRM), 9 in hires and
+     * superhires at 1x (HRM), 17 at 2x and 4x, whose planes come in a whole
+     * 8 clock cycle (so AGA's hires screens fetch from 0x38 for 0x81) */
+    const int c = fw == 1 && (hires || shres) ? 9 : 17;
+    /* DDFSTRT's step: a fetch of each plane at 1x (4 clocks in superhires,
+     * DDFSTRT's finest), the 8 clock cycle when wider */
+    const int gran = fw == 1 && (hires || shres) ? 4 : 8;
+    const int blk = 16 * fw * p;                    /* one fetch of a plane, in 35ns pixels */
+    /* each playfield's stream: where its fetches start on the line, the
      * last such place at or left of the window; the fetch starts at the
      * last DDFSTRT at or left of them all, the rest is BPLCON1's delay */
     int S[2];
@@ -292,21 +314,23 @@ uint32_t vp_layout(gfx_env *env, gd_view *view, gd_viewport *vp, layout &L)
         if (!isaga) rx &= ~(res - 1);               /* OCS/ECS scroll in lores pixels */
         int col0 = vx0 - p * rx;                    /* where the bitmap's column 0 would be */
         S[i] = 4 * hstart - floormod(4 * hstart - col0, blk);
-        L.pf[i].w0 = (S[i] - col0) / blk;
+        L.pf[i].w0 = (S[i] - col0) / blk * fw;
         smin = imin(smin, S[i]);
     }
     L.ddfstrt = floordiv(smin - 4 * c, 8 * gran) * gran;
     const int base0 = 4 * (2 * L.ddfstrt + c);
     for (int i = 0; i < L.npf; i++) {
         int d = S[i] - base0;
-        while (d >= blk) {                          /* the other playfield started the fetch earlier */
+        while (d >= blk) {                          /* the fetch starts earlier: the other playfield's, or 8 clocks */
             d -= blk;
-            L.pf[i].w0--;
+            L.pf[i].w0 -= fw;
         }
         L.pf[i].delay = d;
     }
-    int words = floordiv(4 * hstop - 1 - base0, blk) + 1;
-    const int per8 = shres ? 4 : hires ? 2 : 1;     /* words per plane in an 8 cycle fetch */
+    int words = (floordiv(4 * hstop - 1 - base0, blk) + 1) * fw;
+    /* words per plane in an 8 clock cycle, at any fetch used here; DDFSTOP
+     * is the last cycle's start */
+    const int per8 = shres ? 4 : hires ? 2 : 1;
     words = (words + per8 - 1) / per8 * per8;
     while (words > per8 && L.ddfstrt + 8 * (words / per8 - 1) > 0xD8) words -= per8;
     L.words = words;
@@ -363,7 +387,12 @@ void emit_vp(gfx_env *env, gd_viewport *vp, const layout &L, emitter &e, int gap
     e.move(GD_BPLCON1, L.con1);
     e.move(GD_BPLCON2, L.con2);
     if (ecs) e.move(GD_BPLCON3, L.con3);
-    if (isaga) e.move(GD_BPLCON4, L.con4);
+    if (isaga) {
+        e.move(GD_BPLCON4, L.con4);
+        /* every AGA ViewPort sets its fetch, with copinit's sprite width */
+        state *s = st(env);
+        e.move(GD_FMODE, static_cast<unsigned>((s ? s->fmode : 0) | L.fmode));
+    }
     e.move(GD_DIWSTRT, L.diwstrt);
     e.move(GD_DIWSTOP, L.diwstop);
     e.move(GD_DDFSTRT, static_cast<unsigned>(L.ddfstrt));

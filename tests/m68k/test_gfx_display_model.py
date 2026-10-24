@@ -32,9 +32,16 @@ class BM:
         if c < 0 or c >= s.rowbytes * 8 or r < 0 or r >= s.rows: return 0
         return s.planes[k][r * s.rowbytes + (c >> 3)] >> (7 - (c & 7)) & 1
 
+# The first scenes sweep AGA's fetches: one ViewPort of hires and of
+# superhires at every depth from 1 to 8, and lores at 8, plain and laced;
+# the rest are random.
+SWEEP = [(res, depth, lace) for lace in (0, 1) for res in (1, 2) for depth in range(1, 9)] + [(0, 8, 0), (0, 8, 1)]
+
 def gen_scene(n):
     sc = {}
+    force = SWEEP[n] if n < len(SWEEP) else None
     chip = R.choice([OCS, ECS, AGA]); sc['chip'] = chip
+    if force: chip = sc['chip'] = AGA
     pal = R.random() < 0.5; sc['pal'] = pal
     sc['vex'] = 0
     if chip != OCS and R.random() < 0.3:
@@ -43,37 +50,47 @@ def gen_scene(n):
     sc['rows'] = 312 if monpal else 262
     sc['minrow'] = 29 if monpal else 21
     sc['vlace'] = R.random() < 0.4
+    if force: sc['vlace'] = force[2] == 1
     sc['vx'] = R.randint(0x70, 0x90); sc['vy'] = R.randint(0x1c, 0x30)
-    nvp = R.randint(1, 3)
+    nvp = 1 if force else R.randint(1, 3)
     vps = []
     line = sc['vy'] + R.randint(-14, 20)    # frame line of the first ViewPort's top
     for i in range(nvp):
         v = {}
-        hires = R.random() < 0.4
+        # 0 lores, 1 hires, 2 superhires (ECS Denise and up)
+        res = 1 if R.random() < 0.35 else 0
+        if chip != OCS and R.random() < 0.25: res = 2
+        if force: res = force[0]
+        hires = res != 0
         lace = sc['vlace'] and R.random() < 0.7 or (not sc['vlace'] and R.random() < 0.08)
         kind = 'n'
         r = R.random()
-        if not hires and r < 0.12: kind = 'ehb'
-        elif not hires and r < 0.24 and chip != AGA: kind = 'ham6'
-        elif not hires and r < 0.24 and chip == AGA: kind = 'ham8'
+        # AGA: 8 planes in every resolution (hires at 2x, superhires at 4x),
+        # so EHB and HAM8 in hires and superhires too
+        if (res == 0 or chip == AGA) and r < 0.12: kind = 'ehb'
+        elif res == 0 and r < 0.24 and chip != AGA: kind = 'ham6'
+        elif r < 0.24 and chip == AGA: kind = 'ham8'
         elif r < 0.36: kind = 'dpf'
-        maxd = 4 if hires else (8 if chip == AGA else 6)
+        maxd = 8 if chip == AGA else (6, 4, 2)[res]
+        if force:
+            lace = force[2] == 1
+            kind = 'ehb' if force[1] == 6 and R.random() < 0.5 else 'n'
         if kind == 'ehb': depth = 6
         elif kind == 'ham6': depth = 6
         elif kind == 'ham8': depth = 8
         elif kind == 'dpf': depth = R.randint(2, maxd)
         else: depth = R.randint(1, maxd)
-        if kind == 'n' and depth == 6 and not hires and chip != AGA: depth = 5   # 6 planes alone is EHB (AGA: KILLEHB)
-        v.update(hires=hires, lace=lace, kind=kind, depth=depth)
-        ppx = 1 if hires else 2
-        w = R.randint(8, 360) * (2 if hires else 1)
+        if force: depth = force[1]
+        if kind == 'n' and depth == 6 and res == 0 and chip != AGA: depth = 5   # 6 planes alone is EHB (AGA: KILLEHB)
+        v.update(hires=hires, res=res, lace=lace, kind=kind, depth=depth)
+        w = R.randint(8, 360) << res
         h = R.randint(3, 60)
         v['w'], v['h'] = w, h
         nocliplft = kind.startswith('ham')
         dxl = R.randint(-50, 60)            # in lores pixels
         if nocliplft:
             dxl = max(dxl, LEGAL0 - sc['vx'] + 1)
-        v['dx'] = dxl * (2 if hires else 1) + (R.randint(0, 1) if hires else 0)
+        v['dx'] = (dxl << res) + R.randint(0, (1 << res) - 1)
         # top line from line; dy in the ViewPort's lines
         if lace:
             dyl = (line - sc['vy']) * 2 + R.randint(0, 1)
@@ -83,8 +100,13 @@ def gen_scene(n):
         nl = (h + 1) // 2 if lace else h
         line = line + nl + R.randint(14, 30)
         # playfields
+        # a wider fetch (AGA: hires over 4 planes at 2x, superhires over 2 at
+        # 4x) wants rows and planes on 32 or 64 bits, as AllocBitMap's
+        # displayable bitmaps are on AGA; the others may be any words
+        wide = (res == 1 and depth > 4) or (res == 2 and depth > 2)
+        align = 8 if (res == 2 and wide) or (chip == AGA and R.random() < 0.5) else 4 if wide else 2
         def mkbm(d, extra):
-            rowbytes = ((R.randint(0, 40) + w + 64) // 16) * 2
+            rowbytes = ((R.randint(0, 40) + w + 64) // (8 * align) + 1) * align
             rows = h + R.randint(0, 12) + extra
             return dict(depth=d, rowbytes=rowbytes, rows=rows, inter=R.random() < 0.3, seed=R.randint(1, 1 << 30))
         if kind == 'dpf':
@@ -135,21 +157,21 @@ def show(sc, phase, field):
     out = []
     chip = sc['chip']
     for vi, v in enumerate(sc['vps']):
-        lace = v['lace']; hires = v['hires']; ppx = 1 if hires else 2; res = 2 if hires else 1
+        lace = v['lace']; res = v['res']; ppx = 4 >> res      # 35ns pixels a ViewPort pixel
         if phase == 2: bms = [v['bmB']] + v['bm'][1:]
         else: bms = v['bm']
         B = [BM(b['depth'], b['rowbytes'], b['rows'], b['inter'], b['seed']) for b in bms]
         rx = v['rx2'] if phase else v['rx']; ry = v['ry2'] if phase else v['ry']
-        rxe = [x if (chip == AGA or not hires) else x & ~1 for x in rx]
+        rxe = [x if chip == AGA else x & ~((1 << res) - 1) for x in rx]   # OCS/ECS scroll in lores pixels
         top = sc['vy'] + (v['dy'] >> 1 if lace else v['dy'])
-        X0 = 2 * sc['vx'] + (2 * v['dx'] if not hires else (v['dx'] & ~1))
+        X0 = 4 * sc['vx'] + 4 * (v['dx'] >> res)          # 35ns pixels
         cols = range(v['w'])
         rows = range(v['h'])
         if v['clip']:
             cx0, cy0, cx1, cy1 = v['clip']
             cols = range(max(0, cx0 - v['dx']), min(v['w'], cx1 + 1 - v['dx']))
             rows = range(max(0, cy0 - v['dy']), min(v['h'], cy1 + 1 - v['dy']))
-        cols = [c for c in cols if X0 + c * ppx >= 2 * LEGAL0 and X0 + c * ppx + ppx <= 2 * LEGAL1]
+        cols = [c for c in cols if X0 + c * ppx >= 4 * LEGAL0 and X0 + c * ppx + ppx <= 4 * LEGAL1]
         sel = []
         for r in rows:
             if lace and (r & 1) != field: continue
@@ -261,7 +283,7 @@ H.write('static const struct svp SVP[] = {\n'); vpi = 0; ui = 0
 for si, sc in enumerate(scenes):
     sc['_vp'] = vpi
     for v in sc['vps']:
-        modes = (0x8000 if v['hires'] else 0) | (4 if v['lace'] else 0)
+        modes = (0x8000 if v['res'] else 0) | (0x20 if v['res'] == 2 else 0) | (4 if v['lace'] else 0)
         if v['kind'] == 'ehb': modes |= 0x80
         if v['kind'].startswith('ham'): modes |= 0x800
         if v['kind'] == 'dpf': modes |= 0x400 | (0x40 if v['pfba'] else 0)
@@ -297,3 +319,5 @@ with open(exp, 'a') as E2:
     for c in range(3):
         for p in range(2):
             E2.write('misc chip %d pal %d done\n' % (c, p))
+    for c in range(3):
+        E2.write('fetch chip %d done\n' % c)
