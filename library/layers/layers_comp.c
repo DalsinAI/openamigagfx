@@ -714,13 +714,17 @@ static void oc_task(void)
 /* ---- a composited Layer_Info's changes --------------------------------- */
 
 /* A surface for a layer w x h: room for MinX & 15 more, and some to grow
- * into, so sizing a window does not make a new one at every step. */
+ * into, so sizing a window does not make a new one at every step.
+ * 47.103: asked for as displayable, so OpenRTG (0.19 and up) puts it in the
+ * screen's board's video RAM while displayable friends take at most half of
+ * it, and in fast RAM after that. In video RAM the GPU reaches it: drawing in
+ * it and composing from it need no copy into OpenGPU's upload arena. */
 static int oc_surface(struct OCB *cb, struct OComp *c, LONG w, LONG h, struct OLayer *o)
 {
     struct ol_base *olb = cb->olb;
     struct OpenRTGBitMapInfo bi;
     ULONG sw = (ULONG)(w + 15 + 63) & ~63UL, sh = (ULONG)(h + 31) & ~31UL;
-    struct BitMap *bm = AllocBitMap(sw, sh, c->depth, BMF_CLEAR, c->screen);
+    struct BitMap *bm = AllocBitMap(sw, sh, c->depth, BMF_CLEAR | BMF_DISPLAYABLE, c->screen);
     if (!bm) return 0;
     if (!ORTG_BitMapInfo(bm, &bi) || bi.format != (c->depth == 16 ? 1 : 2) || bi.width < sw || bi.height < sh) {
         FreeBitMap(bm);
