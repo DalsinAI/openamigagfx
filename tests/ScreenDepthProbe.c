@@ -23,8 +23,9 @@
  *
  *   ScreenDepthProbe MODES=8020 DEPTH=3 [WIDTH=640] [HEIGHT=256] [SECS=10]
  * opens that screen in front, draws one bar for each of its colours (pens
- * 0 to 2^depth - 1, at most 256), a frame round the screen and a line of
- * text naming it, and keeps it SECS seconds for a screenshot. MODES is the
+ * 0 to 2^depth - 1, at most 256, across the screen; pens 2 up coloured as
+ * RGB 3-3-2, so a wrong plane shows), a frame round the screen and a line
+ * of text naming it, and keeps it SECS seconds for a screenshot. MODES is the
  * old ViewModes word in hex, as SysInfo gives it. It prints "shown" or the
  * failure. */
 #include <exec/types.h>
@@ -109,11 +110,16 @@ static void show(UWORD vm, UWORD depth, WORD w, WORD h, LONG secs)
     }
     rp = &s->RastPort;
     n = 1L << (depth > 8 ? 8 : depth);
-    bw = s->Width / n;
-    if (bw < 1) bw = 1;
+    /* pens 2 up: RGB 3-3-2 of the pen scaled to 8 bits, so each plane
+     * moves a gun visibly and a wrong plane shows */
+    for (i = 2; i < n; i++) {
+        ULONG j = (ULONG)(i * 256 / n);
+        SetRGB32(&s->ViewPort, (ULONG)i, ((j >> 5) & 7) * 0x24924924UL, ((j >> 2) & 7) * 0x24924924UL, (j & 3) * 0x55555555UL);
+    }
     for (i = 0; i < n; i++) {
+        bw = (i + 1) * s->Width / n - 1;
         SetAPen(rp, (UBYTE)i);
-        RectFill(rp, i * bw, 20, i * bw + bw - 1 < s->Width - 1 ? i * bw + bw - 1 : s->Width - 1, s->Height - 21);
+        RectFill(rp, i * s->Width / n, 20, bw > i * s->Width / n ? bw : i * s->Width / n, s->Height - 21);
     }
     SetAPen(rp, 1);
     Move(rp, 0, 0);
