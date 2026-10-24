@@ -125,6 +125,7 @@ struct OCB {
     ULONG fence;                        /* 47.105: the last compose's, not waited for (0: none) */
     ULONG marks;                        /* counts every mark, for oc_settle */
     struct OThunk *thunk[OC_NPATCH];    /* the newest thunk on each call */
+    ULONG lab_waits, lab_pulls, lab_pre;   /* LAB ONLY: oc_pre's waits for the lock, pulls that copied, oc_pre's pulls */
 };
 
 struct oc_batch {
@@ -706,6 +707,7 @@ static void oc_pull(struct OCB *cb, struct OComp *c)
             if (!(b.w = AllocMem(b.cap * 4, MEMF_PUBLIC))) break;
         }
         if (b.w) {
+            cb->lab_pulls++;
             if (OGPU_Submit(b.w, b.n, &fence) == OGPU_OK && fence) cb->fence = fence;
             FreeMem(b.w, b.cap * 4);
         }
@@ -741,9 +743,13 @@ static void oc_pre(struct OCB *cb, ULONG kind, const ULONG *regs)
     if (!go) return;
     if (SysBase->TDNestCnt >= 0 || SysBase->IDNestCnt >= 0) {
         if (!AttemptSemaphore(&cb->lock)) return;
-    } else ObtainSemaphore(&cb->lock);
+    } else if (!AttemptSemaphore(&cb->lock)) {
+        cb->lab_waits++;
+        ObtainSemaphore(&cb->lock);
+    }
     for (c = cb->comps; c && c->li != l->LayerInfo; c = c->next)    /* again: it may have gone meanwhile */
         ;
+    cb->lab_pre++;
     if (c) oc_pull(cb, c);
     ReleaseSemaphore(&cb->lock);
 }
@@ -1428,6 +1434,9 @@ ULONG ol_SetLayerLook(struct ol_base *olb, struct Layer *l, ULONG what, ULONG va
     struct lc_rects a;
     ULONG old, seen;
 
+    if (cb && what == 0x400) return cb->lab_waits;   /* LAB ONLY: the counters */
+    if (cb && what == 0x401) return cb->lab_pulls;
+    if (cb && what == 0x402) return cb->lab_pre;
     if (!cb || !l) return ~0UL;
     ObtainSemaphore(&cb->lock);
     for (c = cb->comps; c && c->li != l->LayerInfo; c = c->next)

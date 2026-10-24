@@ -53,9 +53,9 @@ struct OLBase {
 int start(void) { return -1; }
 
 static const char lib_name[] = LIBNAME;
-static const char lib_id[] = "layers.library 47.106 (24.10.2026) OpenLayers, AmigaChrome Team\r\n";
+static const char lib_id[] = "layers.library 47.106 (24.10.2026, lab counters) OpenLayers, AmigaChrome Team\r\n";
 static const char lib_ver[] __attribute__((used)) =
-    "\0$VER: layers.library 47.106 (24.10.2026) OpenLayers, AmigaChrome Team";
+    "\0$VER: layers.library 47.106 (24.10.2026, lab counters) OpenLayers, AmigaChrome Team";
 static const char gfx_name[] = "graphics.library";
 
 /* A hook as utility.library calls one: A0 the hook, A2 the object, A1 the
