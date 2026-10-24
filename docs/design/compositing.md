@@ -83,7 +83,7 @@ Thunks are never taken out, since others may have called on to them. A patch put
 
 ### A compose
 
-A compose is one OpenGPU batch (stream v1.2's SURFACE, TARGET, CLIP, FILL, COPY and COMPOSITE) and one fence: `OGPU_Submit`, then `OGPU_Wait`. The steps:
+A compose is one OpenGPU batch (stream v1.2's SURFACE, TARGET, CLIP, FILL, COPY and COMPOSITE) and one fence: `OGPU_Submit`, and (47.105, the compositor's step 4) no `OGPU_Wait`. The Cradle's ring carries the batch out on its own thread while the 68k goes on; the batch names only bitmaps and the shadow's picture, which outlive it (below, *Not waited for*). The steps:
 
 1. **The area** (a set of rectangles) is cut to the screen.
 2. **Front to back,** each shown layer's part is what of the area is not behind an opaque layer in front. An opaque layer then takes its bounds out of what is left. A layer is opaque at opacity 255 without its own alpha.
@@ -100,6 +100,17 @@ A compose is one OpenGPU batch (stream v1.2's SURFACE, TARGET, CLIP, FILL, COPY 
    COMPOSITE's MASK reads its A8 mask 1:1 against the destination, so a masked shadow would need a mask as long as the screen. The stretched ARGB32 source needs 4.4 KB for R = 8.
 
 A program that draws on the screen's own RastPort, outside every layer, draws into the screen's bitmap. That shows until the next compose of that place, which draws over it.
+
+### Not waited for (47.105)
+
+Until 47.104 a compose waited for its fence. From 47.105 it is sent and layers goes on, so a window drag's composes, and the drawing between them, follow one another on the ring (the Cradle's runtime has a worker thread for it, the compositor's step 4). What a compose reads must outlive it:
+
+- **The screen's bitmap and the surfaces:** freed with FreeBitMap, which OpenRTG 0.21 makes wait for every batch still running first; so does the CPU drawing on, or reading, any OpenRTG bitmap, and ORTG_BitMapInfo, which hands its address out.
+- **The pieces of clip regions and updates** (`oc_sync`): bitmaps too, freed the same way.
+- **The shadow's picture:** layers' own memory. `oc_idle` waits for the last compose before it is freed (the screen going, or back to classic).
+- **The batch itself:** ACRTG.gpu copies it into the ring at `OGPU_Submit`, so it is freed at once, as before.
+
+With opengpu.library 0.20, `OGPU_Wait` on a fence older than the 16 whose results it keeps waits for the newest batch (they finish in order); 0.19 returned at once.
 
 ### Locks
 
@@ -165,6 +176,7 @@ Team 4 owns OpenGPU (openamigartg) and the host back ends. Team 5 owns layers, g
 - A friend of an OpenRTG bitmap is an OpenRTG bitmap of the friend's format, and ORTG_BitMapInfo answers for it.
 - COPY within one slot is overlap safe.
 - A batch's commands run in order, and `OGPU_Wait` on its fence returns when every one is done.
+- From 47.105: a batch not waited for is done before OpenRTG lets the CPU draw on, read or free a bitmap it names, or hands its address out (OpenRTG 0.21's `ortg_ogpu_settle`).
 - OpenGPU's back ends read surfaces in fast RAM by their Amiga addresses.
 
 **What Team 5 would like from Team 4.** These are not needed for this change; they would make it smaller or faster.
