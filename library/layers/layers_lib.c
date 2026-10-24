@@ -108,7 +108,6 @@ struct OLayer {
     UBYTE look;                 /* OLOOK_ bits (layers_comp.c) */
     UBYTE grown;
     struct lc_rect dirty;       /* drawn since the last compose, from the layer's top left; x0 > x1 for none */
-    struct lc_rect after;       /* 47.106: drawn after pokes kept for later (oc_pre), the screen's coordinates; x0 > x1 none */
 #endif
 };
 
@@ -1183,8 +1182,6 @@ static struct Layer *create(struct ol_base *olb, struct Layer_Info *li, struct B
     o->opacity = 255;
     o->dirty.x0 = 1;            /* nothing drawn */
     o->dirty.x1 = 0;
-    o->after.x0 = 1;
-    o->after.x1 = 0;
 #endif
 
     if (begin(olb, li, &ch)) goto fail;
