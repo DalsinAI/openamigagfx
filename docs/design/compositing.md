@@ -91,7 +91,8 @@ A compose is one OpenGPU batch (stream v1.2's SURFACE, TARGET, CLIP, FILL, COPY 
 4. **Back to front,** each layer's shadow, then the layer:
    - an opaque layer is a COPY from its surface;
    - a translucent one is a COMPOSITE with its opacity;
-   - an ARGB32 one is a COMPOSITE with `OGPU_COMP_SRCALPHA`.
+   - an ARGB32 one is a COMPOSITE with `OGPU_COMP_SRCALPHA`;
+   - a keyed one (47.107, `LAYERLOOK_KEYED`) less than opaque is two: a COMPOSITE with its opacity, as a translucent one, then a COMPOSITE of the same surface as ARGB32 with `OGPU_COMP_SRCALPHA` at 255. A pixel whose alpha is 255 comes out opaque, one whose alpha is 0 at the layer's opacity. Opaque, it is a COPY, as before.
 5. **Shadows** are COMPOSITE with `OGPU_COMP_SRCALPHA` from one small ARGB32 picture, a (4R + 1) square of black whose alpha ramps linearly over 2R + 1 pixels at each side, multiplied across:
    - the four corners come from it 1:1;
    - the four edges come from its opaque middle row or column, stretched;
@@ -136,15 +137,27 @@ Public header: `include/graphics/openlayers.h`. These calls are in layers.librar
 | --- | --- | --- |
 | -246 | `ComposeLayerInfo(li, bm, flags)(a0,a1,d0)` | `LAYERS_COMPOSE_ON` switches a Layer_Info with no layers to the composited mode. Without it, back to classic. Answers TRUE while composited. (SetLayerInfoBounds on a composited Layer_Info composes all of it again.) 47.102: `LAYERS_COMPOSE_WHY` alone answers why it is classic (above) |
 | -252 | `SetLayerOpacity(layer, opacity)(a0,d0)` | 0-255; answers the old one, or -1 for a classic layer |
-| -258 | `SetLayerLook(layer, what, value)(a0,d0,d1)` | `LAYERLOOK_OPACITY`, `_SHADOW`, `_DRAGGED`, `_INACTIVE`, `_ALPHA` (32-bit screens), `_ALL` (all at once), `_QUERY`. The layer is composed again only when what is seen of it changes |
+| -258 | `SetLayerLook(layer, what, value)(a0,d0,d1)` | `LAYERLOOK_OPACITY`, `_SHADOW`, `_DRAGGED`, `_INACTIVE`, `_ALPHA` (32-bit screens), `_KEYED` (47.107, 32-bit screens), `_ALL` (all at once), `_QUERY`. The layer is composed again only when what is seen of it changes: from 47.107 its own box, and its shadow's only when it had or has one |
 
 Intuition (amigachrome-guest `libraries/openintuition`):
 
 - `WA_Opacity` (`TAG_USER + 0x41430001`) sets a window's opacity, 0-255, at OpenWindowTagList. Later, `IntuitionControlA(window, tags)` takes the same tag; OS 4's SetWindowAttr has its LVO in the OS 4 SDK, which we don't use.
 - `WA_AlphaSurface` (`TAG_USER + 0x41430002`): the window's own alpha shapes it (32-bit screens; the program draws the alpha).
 - Intuition gives a shadow to every window with a frame (not backdrop, not borderless) and to menus.
+- `IntuitionControlA(screen, tags)` with `ICTRL_BarOpacity` (`TAG_USER + 0x41430003`) sets how solid the screen's bar's background is, 0-255 (below).
 - It marks a window dragged (solid moves, the default feel) and inactive, with one SetLayerLook for each of a new window's layers.
 - OpenWindows (openamigaprefs) marks the windows it drags itself (`drag.solid on`) the same way.
+
+## The see-through bar (47.107)
+
+Dale, 24 October 2026: "make the title bar translucent until moused over then it goes its blue colour". OpenTitle (openamigaprefs) fades the Workbench's bar; the bar is Intuition's, so Intuition takes the opacity (`ICTRL_BarOpacity`) and layers composes it.
+
+- **The look.** `LAYERLOOK_KEYED` makes a layer's opacity its background's. Composed less than opaque, the layer goes on at its opacity, then its own alpha over that at full (above, *A compose*). What its alpha keys at 255 stays opaque; what it leaves at 0 fades.
+- **Intuition keys the bar.** Below 255 it draws the bar off screen, notes the background, draws the title, its shadow and the depth gadget, and writes the bar into the BarLayer in one `ORTG_WritePixels` of the bitmap's own pixels (`ORTG_PIX_RAW`, CyberGraphX's `RECTFMT_RAW`), with alpha 255 where a pixel differs from the background and across the depth gadget, and 0 elsewhere. One write is one compose, so the title never shows unkeyed. It does this for every redraw of its own while the bar is below 255.
+- **255 is the bar as before.** At 255 Intuition takes the look off; the layer is opaque and copied, and its alpha is not read.
+- **One layer.** Nothing is added behind the bar, so a program that looks behind the BarLayer for a window (OpenTitle's `see_backed()`) finds what it found before. What a program draws into the BarLayer with pens fades with the background until Intuition next redraws the bar.
+- **Cost.** A change of opacity composes the bar's own box: two COMPOSITEs over it and what is behind it, no CPU work on the pixels. A hover's 12 changes took 6.3 to 8.0 ms in all, 0.5 to 0.7 ms each (lab t4-baropacity-20261025, 25 October 2026, `BarOpacityTest TIME`). A redraw below 255 reads the bar twice and writes it once (1920 x 26 pixels on that lab's Workbench).
+- **Checked** on that lab's Workbench (1920 x 1200, 32-bit) by amigachrome-guest's `BarOpacityTest`: at 255, 102 and 0, through a change of title and a screen to front, every pixel of the bar on the screen is the layer's own where it is keyed and the layer mixed with what is behind at the opacity elsewhere, within 2 a channel; back at 255 the bar is the first picture exactly.
 
 ## The look's defaults
 
