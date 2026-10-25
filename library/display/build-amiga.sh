@@ -15,10 +15,16 @@ STOVE=${STOVE:-"$HOME/AmigaChrome/stoves/os32-gcc16"}
 CC=${CC:-"$STOVE/prefix/bin/m68k-amigaos-gcc"}
 OUT=${OUT:-"$HERE/build-amiga"}
 mkdir -p "$OUT/tests"
-"$CC" -m68040 -specs="$TOP/build/m68k-soft-m68040.specs" -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
+# OpenAmigaGCC 16.2.0-open3's late-combine pass can store a copy one place late (GCC PR 123853;
+# GfxCoreABITest's font tables came out so): this script's tests are built with the pass off until OpenAmigaGCC open4
+# (openamigagcc #29), on a compiler that knows the option. library/graphics/build-amiga.sh (the ROM's build)
+# is left as it is.
+LATE=""
+if "$CC" -fno-late-combine-instructions -S -o /dev/null -x c /dev/null 2>/dev/null; then LATE="-fno-late-combine-instructions"; fi
+"$CC" $LATE -m68040 -specs="$TOP/build/m68k-soft-m68040.specs" -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
   -o "$OUT/tests/DisplayABITest" "$TOP/tests/DisplayABITest.c"
 echo "$OUT/tests/DisplayABITest ($(wc -c < "$OUT/tests/DisplayABITest") bytes)"
 # ScreenDepthProbe: the screens the running ROM opens by resolution and depth
-"$CC" -m68040 -specs="$TOP/build/m68k-soft-m68040.specs" -O2 -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
+"$CC" $LATE -m68040 -specs="$TOP/build/m68k-soft-m68040.specs" -O2 -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
   -o "$OUT/tests/ScreenDepthProbe" "$TOP/tests/ScreenDepthProbe.c"
 echo "$OUT/tests/ScreenDepthProbe ($(wc -c < "$OUT/tests/ScreenDepthProbe") bytes)"
