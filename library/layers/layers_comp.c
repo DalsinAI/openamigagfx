@@ -420,6 +420,15 @@ static int oc_opaque(const struct OComp *c, const struct OLayer *o)
     return oc_alpha(c, o) == 255 && !(o->look & LAYERLOOK_ALPHA);
 }
 
+/* 47.107: a keyed layer (LAYERLOOK_KEYED) less than opaque is composed
+ * twice: at its opacity as any translucent one, then its own alpha over
+ * that at full, so what its alpha keys stays opaque. Opaque, it is copied
+ * as before. */
+static int oc_keyed(const struct OComp *c, const struct OLayer *o)
+{
+    return (o->look & (LAYERLOOK_KEYED | LAYERLOOK_ALPHA)) == LAYERLOOK_KEYED && oc_alpha(c, o) < 255;
+}
+
 /* Where l's shadow falls, its bounds b: the box moved R/4 right and R/2
  * down, grown by R. Answers 0 when it has none (or is too small for one:
  * at least 2R + 1 a side). force: as if its shadow were on. */
@@ -557,6 +566,7 @@ static void oc_build(struct OCB *cb, const struct OComp *c, struct oc_batch *b, 
         LONG ox = (l->bounds.MinX & 15) - l->bounds.MinX, oy = -l->bounds.MinY;
         UBYTE a = oc_alpha(c, o);
         ULONG argb = o->look & LAYERLOOK_ALPHA;
+        int keyed = oc_keyed(c, o);
         if (s[i].n) {
             struct lc_rect sr;
             oc_shadow_rect(c, l, &l->bounds, &sr, 0);
@@ -570,6 +580,14 @@ static void oc_build(struct OCB *cb, const struct OComp *c, struct oc_batch *b, 
             if (a == 255 && !argb) op_copy(b, S_SURF, r->x0 + ox, r->y0 + oy, r);
             else op_comp(b, S_SURF, r->x0 + ox, r->y0 + oy, r->x1 - r->x0 + 1, r->y1 - r->y0 + 1, r, a,
                          argb ? OGPU_COMP_SRCALPHA : 0);
+        }
+        if (keyed) {    /* 47.107: its keyed pixels over that, opaque */
+            op_surface(b, S_SURF, o->saddr, o->sbpr, o->sw, o->sh, OGPU_FMT_ARGB32);
+            for (k = 0; k < v[i].n; k++) {
+                const struct lc_rect *r = &v[i].r[k];
+                op_comp(b, S_SURF, r->x0 + ox, r->y0 + oy, r->x1 - r->x0 + 1, r->y1 - r->y0 + 1, r, 255,
+                        OGPU_COMP_SRCALPHA);
+            }
         }
     }
 }
@@ -635,7 +653,8 @@ static void oc_fetch(struct OCB *cb, struct OComp *c, struct oc_rl *out)
 
 /* r (the screen's) as it is on the screen, into the surface of the front
  * layer at each of its pixels; pixels no layer covers stay the screen's,
- * and an ARGB32 layer (LAYERLOOK_ALPHA) keeps its own. On the second pass
+ * and an ARGB32 layer (LAYERLOOK_ALPHA) keeps its own, as a keyed one
+ * (LAYERLOOK_KEYED, 47.107) keeps its keys. On the second pass
  * each piece is marked, so what is over it (a translucent layer, a
  * shadow) is composed again from the layers. */
 static void oc_copy_in(struct OCB *cb, const struct OComp *c, struct oc_batch *b, const struct lc_rect *r0, ULONG pass)
@@ -655,7 +674,7 @@ static void oc_copy_in(struct OCB *cb, const struct OComp *c, struct oc_batch *b
             struct lc_rect bb = lr(&l->bounds);
             if (o->hidden || !o->surf) continue;
             lc_init(&v, &mem);
-            if (!(o->look & LAYERLOOK_ALPHA) && !lc_copy(&v, &rem)) {
+            if (!(o->look & (LAYERLOOK_ALPHA | LAYERLOOK_KEYED)) && !lc_copy(&v, &rem)) {
                 lc_and_rect(&v, &bb);
                 if (v.n) {
                     LONG ox = o->soff - l->bounds.MinX, oy = -l->bounds.MinY;
@@ -1414,10 +1433,11 @@ LONG ol_ComposeLayerInfo(struct ol_base *olb, struct Layer_Info *li, struct BitM
 }
 
 /* What a layer looks like: its opacity as composed, and whether it has a
- * shadow and its own alpha. A change of anything else draws nothing. */
+ * shadow, its own alpha or its keys. A change of anything else draws
+ * nothing. */
 static ULONG oc_seen(const struct OComp *c, const struct OLayer *o)
 {
-    return oc_alpha(c, o) | (ULONG)(o->look & (LAYERLOOK_SHADOW | LAYERLOOK_ALPHA)) << 8;
+    return oc_alpha(c, o) | (ULONG)(o->look & (LAYERLOOK_SHADOW | LAYERLOOK_ALPHA | LAYERLOOK_KEYED)) << 8;
 }
 
 ULONG ol_SetLayerLook(struct ol_base *olb, struct Layer *l, ULONG what, ULONG value)
@@ -1448,11 +1468,13 @@ ULONG ol_SetLayerLook(struct ol_base *olb, struct Layer *l, ULONG what, ULONG va
         if (value) o->look |= (UBYTE)what;
         else o->look &= (UBYTE)~what;
     }
-    /* an ARGB32 surface only where the surfaces are 32-bit already */
-    if (c->depth != 32) o->look &= (UBYTE)~LAYERLOOK_ALPHA;
+    /* an ARGB32 surface, or keys, only where the surfaces are 32-bit already */
+    if (c->depth != 32) o->look &= (UBYTE)~(LAYERLOOK_ALPHA | LAYERLOOK_KEYED);
     if (!o->hidden && oc_seen(c, o) != seen) {
         lc_init(&a, &mem);
-        if (!oc_ext(c, l, &l->bounds, &a, 1)) oc_compose(cb, c, &a);
+        /* the layer, and its shadow if it had one before or has one now (47.107: a layer with none, such as
+         * the screen's bar, composes no more than its own box) */
+        if (!oc_ext(c, l, &l->bounds, &a, (seen >> 8 & LAYERLOOK_SHADOW) != 0)) oc_compose(cb, c, &a);
         lc_free(&a);
     }
     ReleaseSemaphore(&cb->lock);

@@ -36,11 +36,26 @@
  * the answer is the old state (0 or 1). LAYERLOOK_ALL sets them all at
  * once (value: opacity | the LAYERLOOK_ bits << 8), as one compose. ~0 for
  * a classic layer. A layer is composed again only when what is seen of it
- * changes. */
+ * changes; 47.107: then its own box, and its shadow's only when it had or
+ * has one.
+ *
+ * 47.107: LAYERLOOK_KEYED (32-bit screens) makes a layer's opacity its
+ * background's. A keyed layer less than opaque is composed at its opacity
+ * as any translucent layer, then its own alpha over that at full: a pixel
+ * with alpha 255 stays opaque, one with 0 shows at the layer's opacity, and
+ * one between mixes the two. Opaque, it is copied as before, its alpha not
+ * read. Intuition keys the screen's bar this way (amigachrome-guest
+ * libraries/openintuition: IntuitionControlA's ICTRL_BarOpacity), with the
+ * title and the depth gadget at 255 and the background at 0. Pens leave a
+ * 32-bit pixel's alpha 0, so what is drawn into a keyed layer with pens
+ * fades with it until it is keyed again. With LAYERLOOK_ALPHA as well,
+ * ALPHA wins. Ask for it only when lib_Revision >= 107: earlier revisions
+ * keep the bit and compose the layer as before. */
 #ifndef GRAPHICS_OPENLAYERS_H
 #define GRAPHICS_OPENLAYERS_H
 
 #define OPENLAYERS_COMPOSITE_REVISION 101
+#define OPENLAYERS_KEYED_REVISION     107      /* LAYERLOOK_KEYED */
 
 #define LAYERS_COMPOSE_ON       1UL
 #define LAYERS_COMPOSE_WHY      2UL     /* 47.102: answers a LAYERS_WHY_, changes nothing */
@@ -62,6 +77,7 @@
 #define LAYERLOOK_DRAGGED       2UL     /* being dragged: the look's drag opacity times its own */
 #define LAYERLOOK_INACTIVE      4UL     /* an inactive window: the look's inactive opacity times its own */
 #define LAYERLOOK_ALPHA         8UL     /* its surface is ARGB32 and its own alpha counts (32-bit screens) */
+#define LAYERLOOK_KEYED         0x10UL  /* 47.107: its opacity fades only what its own alpha leaves clear (32-bit screens) */
 #define LAYERLOOK_QUERY         0x100UL /* answers opacity | look << 8 | 1 << 16, changes nothing */
 #define LAYERLOOK_ALL           0x200UL /* value: opacity | look << 8, all at once; answers as QUERY */
 
