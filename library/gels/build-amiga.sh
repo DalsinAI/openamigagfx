@@ -13,6 +13,12 @@ CC=${CC:-"$P/bin/m68k-amigaos-gcc"}
 OUT=${OUT:-"$TOP/library/graphics/build-amiga"}
 sh "$TOP/library/graphics/build-amiga.sh"
 mkdir -p "$OUT/tests"
-"$CC" -m68040 -specs="$TOP/build/m68k-soft-m68040.specs" -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
+# OpenAmigaGCC 16.2.0-open3's late-combine pass can store a copy one place late (GCC PR 123853;
+# GfxCoreABITest's font tables came out so): GelsABITest is built with the pass off until OpenAmigaGCC open4
+# (openamigagcc #29), on a compiler that knows the option. library/graphics/build-amiga.sh (run above; the ROM's build)
+# is left as it is.
+LATE=""
+if "$CC" -fno-late-combine-instructions -S -o /dev/null -x c /dev/null 2>/dev/null; then LATE="-fno-late-combine-instructions"; fi
+"$CC" $LATE -m68040 -specs="$TOP/build/m68k-soft-m68040.specs" -O2 -fno-delete-null-pointer-checks -Wall -Wextra -Werror -Wno-pointer-sign -Wno-format -noixemul \
   -o "$OUT/tests/GelsABITest" "$TOP/tests/GelsABITest.c"
 echo "$OUT/tests/GelsABITest ($(wc -c < "$OUT/tests/GelsABITest") bytes)"
